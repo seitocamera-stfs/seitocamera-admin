@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   FileInput,
@@ -8,21 +8,38 @@ import {
   Landmark,
   GitCompare,
   Bell,
-  Settings,
+  LogOut,
+  UserCog,
 } from 'lucide-react';
+import useAuthStore from '../../stores/authStore';
+import { canAccessSection } from '../../lib/permissions';
 
 const navItems = [
-  { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/invoices/received', icon: FileInput, label: 'Factures rebudes' },
-  { to: '/invoices/issued', icon: FileOutput, label: 'Factures emeses' },
-  { to: '/suppliers', icon: Truck, label: 'Proveïdors' },
-  { to: '/clients', icon: Users, label: 'Clients' },
-  { to: '/bank', icon: Landmark, label: 'Moviments bancaris' },
-  { to: '/conciliation', icon: GitCompare, label: 'Conciliació' },
-  { to: '/reminders', icon: Bell, label: 'Recordatoris' },
+  { to: '/', icon: LayoutDashboard, label: 'Dashboard', section: 'dashboard' },
+  { to: '/invoices/received', icon: FileInput, label: 'Factures rebudes', section: 'receivedInvoices' },
+  { to: '/invoices/issued', icon: FileOutput, label: 'Factures emeses', section: 'issuedInvoices' },
+  { to: '/suppliers', icon: Truck, label: 'Proveïdors', section: 'suppliers' },
+  { to: '/clients', icon: Users, label: 'Clients', section: 'clients' },
+  { to: '/bank', icon: Landmark, label: 'Moviments bancaris', section: 'bank' },
+  { to: '/conciliation', icon: GitCompare, label: 'Conciliació', section: 'conciliation' },
+  { to: '/reminders', icon: Bell, label: 'Recordatoris', section: 'reminders' },
+  { to: '/users', icon: UserCog, label: 'Usuaris', section: 'users' },
 ];
 
 export default function Sidebar() {
+  const user = useAuthStore((s) => s.user);
+  const logout = useAuthStore((s) => s.logout);
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login');
+  };
+
+  const visibleItems = navItems.filter((item) =>
+    canAccessSection(user?.role, item.section)
+  );
+
   return (
     <aside className="w-64 border-r bg-card flex flex-col">
       {/* Logo */}
@@ -35,7 +52,7 @@ export default function Sidebar() {
 
       {/* Navegació */}
       <nav className="flex-1 p-4 space-y-1">
-        {navItems.map(({ to, icon: Icon, label }) => (
+        {visibleItems.map(({ to, icon: Icon, label }) => (
           <NavLink
             key={to}
             to={to}
@@ -54,14 +71,19 @@ export default function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="p-4 border-t">
-        <NavLink
-          to="/settings"
-          className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent"
+      <div className="p-4 border-t space-y-1">
+        {user && (
+          <div className="px-3 py-2 text-xs text-muted-foreground">
+            {user.name} ({user.role})
+          </div>
+        )}
+        <button
+          onClick={handleLogout}
+          className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
         >
-          <Settings size={18} />
-          Configuració
-        </NavLink>
+          <LogOut size={18} />
+          Tancar sessió
+        </button>
       </div>
     </aside>
   );

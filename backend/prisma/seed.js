@@ -7,10 +7,11 @@ async function main() {
   console.log('Seeding database...');
 
   // Crear usuari admin per defecte
-  const adminPassword = await bcrypt.hash('admin123', 12);
+  // IMPORTANT: Canvia aquesta contrasenya després del primer login!
+  const adminPassword = await bcrypt.hash('Admin2026!', 12);
   const admin = await prisma.user.upsert({
     where: { email: 'admin@seitocamera.com' },
-    update: {},
+    update: { passwordHash: adminPassword },
     create: {
       email: 'admin@seitocamera.com',
       name: 'Sergi (Admin)',

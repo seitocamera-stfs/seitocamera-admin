@@ -138,3 +138,12 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .DS_Store
+
+# Google Service Account keys (NEVER commit)
+backend/google-service-account.json
+backend/seitocamera-admin-*.json
+*.service-account.json
+
+# Cleanup scripts
+backend/cleanup.js
+

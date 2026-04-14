@@ -93,6 +93,7 @@ model Client {
 
 enum InvoiceStatus {
   PENDING
+  PDF_PENDING
   REVIEWED
   APPROVED
   REJECTED
@@ -100,10 +101,18 @@ enum InvoiceStatus {
   PARTIALLY_PAID
 }
 
+enum InvoiceSource {
+  MANUAL          // Creada manualment des del panell
+  EMAIL_WITH_PDF  // Via Zoho Mail amb PDF adjunt
+  EMAIL_NO_PDF    // Via Zoho Mail sense PDF (notificació)
+  GDRIVE_SYNC     // Pujada manualment a Google Drive i sincronitzada
+  BANK_DETECTED   // Detectada a partir d'un moviment bancari
+}
+
 model ReceivedInvoice {
   id                String        @id @default(cuid())
   invoiceNumber     String
-  supplierId        String
+  supplierId        String?
   issueDate         DateTime
   dueDate           DateTime?
   subtotal          Decimal       @db.Decimal(12, 2)
@@ -112,22 +121,27 @@ model ReceivedInvoice {
   totalAmount       Decimal       @db.Decimal(12, 2)
   currency          String        @default("EUR")
   status            InvoiceStatus @default(PENDING)
+  source            InvoiceSource @default(MANUAL)
   category          String?
   description       String?
   ocrRawData        Json?
   ocrConfidence     Float?
   originalFileName  String?
   filePath          String?
+  gdriveFileId      String?       // ID del fitxer a Google Drive
   emailMessageId    String?
+  isDuplicate       Boolean       @default(false)
+  duplicateOfId     String?       // ID de la factura original si és duplicat
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 
   // Relacions
-  supplier       Supplier        @relation(fields: [supplierId], references: [id])
+  supplier       Supplier?       @relation(fields: [supplierId], references: [id])
   conciliations  Conciliation[]
 
-  @@unique([invoiceNumber, supplierId])
+  @@unique([invoiceNumber, supplierId])  // Permet nulls: dues factures amb supplierId=null i diferent invoiceNumber no xoquen
   @@index([status])
+  @@index([source])
   @@index([issueDate])
   @@index([supplierId])
   @@map("received_invoices")

@@ -17,15 +17,55 @@ const PORT = process.env.PORT || 4000;
 // Middleware global
 // ===========================================
 
-app.use(helmet());
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
-  credentials: true,
+// Headers de seguretat estrictes
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:"],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+    },
+  },
+  crossOriginEmbedderPolicy: true,
+  crossOriginOpenerPolicy: true,
+  crossOriginResourcePolicy: { policy: 'same-site' },
+  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+  noSniff: true,
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 }));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+
+// CORS estricte: només el frontend autoritzat
+const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173').split(',');
+app.use(cors({
+  origin: (origin, callback) => {
+    // Permetre peticions sense origin (curl, apps mòbils en dev)
+    if (!origin && process.env.NODE_ENV !== 'production') return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error('CORS no permès'));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  maxAge: 600, // Cache preflight 10 min
+}));
+
+// Limitar mida del body per prevenir DoS
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 app.use(cookieParser());
-app.use(morgan('combined', { stream: { write: (msg) => logger.info(msg.trim()) } }));
+
+// Logging (no loguejar en test)
+if (process.env.NODE_ENV !== 'test') {
+  app.use(morgan('combined', { stream: { write: (msg) => logger.info(msg.trim()) } }));
+}
+
+// Desactivar header X-Powered-By (helmet ja ho fa, però per si de cas)
+app.disable('x-powered-by');
 
 // Rate limiting global
 const limiter = rateLimit({
@@ -60,15 +100,20 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-// Placeholder per les rutes que crearem als blocs següents
-// app.use('/api/auth', require('./routes/auth'));
-// app.use('/api/invoices', require('./routes/invoices'));
-// app.use('/api/suppliers', require('./routes/suppliers'));
-// app.use('/api/clients', require('./routes/clients'));
-// app.use('/api/bank', require('./routes/bank'));
-// app.use('/api/conciliation', require('./routes/conciliation'));
-// app.use('/api/notes', require('./routes/notes'));
-// app.use('/api/reminders', require('./routes/reminders'));
+// Rutes actives
+app.use('/api/auth', require('./routes/auth'));
+app.use('/api/suppliers', require('./routes/suppliers'));
+app.use('/api/clients', require('./routes/clients'));
+app.use('/api/invoices', require('./routes/invoices'));
+app.use('/api/bank', require('./routes/bank'));
+app.use('/api/conciliation', require('./routes/conciliation'));
+app.use('/api/notes', require('./routes/notes'));
+app.use('/api/reminders', require('./routes/reminders'));
+app.use('/api/users', require('./routes/users'));
+app.use('/api/gdrive', require('./routes/gdrive'));
+app.use('/api/rentman', require('./routes/rentman'));
+app.use('/api/zoho', require('./routes/zoho'));
+app.use('/api/export', require('./routes/export'));
 
 // ===========================================
 // Gestió d'errors
@@ -97,6 +142,12 @@ async function start() {
   try {
     await prisma.$connect();
     logger.info('Connectat a PostgreSQL');
+
+    // Iniciar cron jobs
+    const { startZohoEmailSync } = require('./jobs/zohoEmailSync');
+    const { startGdriveSyncJob } = require('./jobs/gdriveSyncJob');
+    startZohoEmailSync();
+    startGdriveSyncJob();
 
     app.listen(PORT, () => {
       logger.info(`Servidor escoltant al port ${PORT}`);
