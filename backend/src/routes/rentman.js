@@ -109,8 +109,20 @@ router.get('/invoices/:id', async (req, res, next) => {
  */
 router.post('/sync/invoices', authorize('ADMIN'), async (req, res, next) => {
   try {
-    const rentmanInvoices = await rentman.getInvoices({ limit: 1500 });
-    const invoices = Array.isArray(rentmanInvoices) ? rentmanInvoices : [];
+    // Paginació automàtica: Rentman limita a 1500 per consulta
+    let invoices = [];
+    let offset = 0;
+    const pageSize = 500;
+    let hasMore = true;
+
+    while (hasMore) {
+      const batch = await rentman.getInvoices({ limit: pageSize, offset });
+      const batchArray = Array.isArray(batch) ? batch : [];
+      invoices = invoices.concat(batchArray);
+      offset += pageSize;
+      hasMore = batchArray.length === pageSize;
+      logger.info(`Rentman sync: carregades ${invoices.length} factures (offset: ${offset})`);
+    }
 
     let created = 0;
     let skipped = 0;
@@ -119,7 +131,7 @@ router.post('/sync/invoices', authorize('ADMIN'), async (req, res, next) => {
     for (const inv of invoices) {
       try {
         // Comprovar si ja existeix pel número de factura
-        const invoiceNumber = inv.number || inv.invoice_number || `RM-${inv.id}`;
+        const invoiceNumber = inv.number || `RM-${inv.id}`;
         const existing = await prisma.issuedInvoice.findFirst({
           where: { invoiceNumber },
         });
@@ -130,73 +142,88 @@ router.post('/sync/invoices', authorize('ADMIN'), async (req, res, next) => {
         }
 
         // Buscar o crear client pel contacte de Rentman
+        // El camp "customer" conté una URL com "/contacts/4642"
         let clientId = null;
-        if (inv.contact || inv.contact_id) {
-          const contactId = inv.contact_id || inv.contact;
-          try {
-            const contact = await rentman.getContact(contactId);
-            const contactData = contact.data || contact;
-            const contactName = contactData.name || contactData.company || `Rentman Contact ${contactId}`;
+        const customerRef = inv.customer;
+        if (customerRef) {
+          const contactIdMatch = String(customerRef).match(/\/contacts\/(\d+)/);
+          const contactId = contactIdMatch ? contactIdMatch[1] : null;
+          if (contactId) {
+            try {
+              const contactData = await rentman.getContact(contactId);
+              const contactName = contactData.displayname || contactData.name || `Rentman Contact ${contactId}`;
+              const contactNif = contactData.VAT_code || null;
+              const contactEmail = contactData.email_1 || null;
+              const contactPhone = contactData.phone_1 || null;
+              const contactCity = contactData.invoice_city || contactData.mailing_city || null;
+              const contactAddress = [contactData.invoice_street, contactData.invoice_number].filter(Boolean).join(' ') || null;
+              const contactPostalCode = contactData.invoice_postalcode || null;
 
-            // Buscar client existent pel nom
-            let client = await prisma.client.findFirst({
-              where: {
-                OR: [
-                  { name: contactName },
-                  { email: contactData.email || undefined },
-                ],
-              },
-            });
+              // Buscar client existent pel NIF o nom
+              let client = null;
+              if (contactNif) {
+                client = await prisma.client.findFirst({
+                  where: { nif: { equals: contactNif, mode: 'insensitive' } },
+                });
+              }
+              if (!client) {
+                client = await prisma.client.findFirst({
+                  where: { name: { equals: contactName, mode: 'insensitive' } },
+                });
+              }
 
-            if (!client) {
-              client = await prisma.client.create({
-                data: {
-                  name: contactName,
-                  email: contactData.email || null,
-                  phone: contactData.phone || null,
-                  nif: contactData.tax_number || `RM-${contactId}`,
-                },
-              });
-              logger.info(`Client creat des de Rentman: ${contactName}`);
+              if (!client) {
+                client = await prisma.client.create({
+                  data: {
+                    name: contactName,
+                    nif: contactNif || null,
+                    email: contactEmail,
+                    phone: contactPhone,
+                    city: contactCity,
+                    address: contactAddress,
+                    postalCode: contactPostalCode,
+                  },
+                });
+                logger.info(`Client creat des de Rentman: ${contactName} (NIF: ${contactNif || '-'})`);
+              }
+
+              clientId = client.id;
+            } catch (contactError) {
+              logger.warn(`No s'ha pogut obtenir contacte Rentman ${contactId}: ${contactError.message}`);
             }
-
-            clientId = client.id;
-          } catch (contactError) {
-            logger.warn(`No s'ha pogut obtenir contacte Rentman ${contactId}: ${contactError.message}`);
           }
         }
 
         if (!clientId) {
-          // Crear un client genèric per factures sense contacte
           let genericClient = await prisma.client.findFirst({
             where: { name: 'Rentman (sense contacte)' },
           });
           if (!genericClient) {
             genericClient = await prisma.client.create({
-              data: { name: 'Rentman (sense contacte)', nif: 'RM-GENERIC' },
+              data: { name: 'Rentman (sense contacte)' },
             });
           }
           clientId = genericClient.id;
         }
 
-        // Calcular imports
-        const totalAmount = parseFloat(inv.total || inv.amount || 0);
-        const taxRate = parseFloat(inv.tax_percentage || inv.vat || 21);
-        const subtotal = totalAmount / (1 + taxRate / 100);
-        const taxAmount = totalAmount - subtotal;
+        // Imports directes de Rentman (ja venen calculats)
+        const totalAmount = parseFloat(inv.price_invat || 0);  // Total amb IVA
+        const subtotal = parseFloat(inv.price || 0);           // Base imposable
+        const vatAmount = parseFloat(inv.vat_amount || 0);     // IVA
+        const taxRate = subtotal > 0 ? Math.round((vatAmount / subtotal) * 100 * 100) / 100 : 21;
 
         await prisma.issuedInvoice.create({
           data: {
             invoiceNumber,
             clientId,
             issueDate: inv.date ? new Date(inv.date) : new Date(),
-            dueDate: inv.due_date ? new Date(inv.due_date) : null,
+            dueDate: inv.expiration ? new Date(inv.expiration) : null,
             subtotal,
             taxRate,
-            taxAmount,
+            taxAmount: vatAmount,
             totalAmount,
-            status: inv.status === 'paid' ? 'PAID' : 'PENDING',
-            description: inv.subject || inv.description || `Importada de Rentman (ID: ${inv.id})`,
+            status: inv.is_paid ? 'PAID' : 'PENDING',
+            description: inv.subject || inv.displayname || `Importada de Rentman (ID: ${inv.id})`,
           },
         });
 

@@ -60,13 +60,7 @@ async function syncZohoEmails() {
       if (!email.hasPdf && !email.isRelevantByKeyword) continue;
 
       try {
-        let gdriveFileId = null;
-        let filePath = null;
-        let originalFileName = null;
-        let source = email.hasPdf ? 'EMAIL_WITH_PDF' : 'EMAIL_NO_PDF';
-        let pdfAnalysis = null;
-
-        // Descarregar PDF
+        // Si té PDF → pujar a inbox de GDrive (el gdriveSyncJob s'encarregarà de tot)
         if (email.hasPdf && email.pdfAttachments[0]) {
           const att = email.pdfAttachments[0];
           try {
@@ -78,105 +72,67 @@ async function syncZohoEmails() {
             const tmpPath = path.join(tmpDir, `${Date.now()}_${safeName}`);
             fs.writeFileSync(tmpPath, buffer);
 
-            filePath = tmpPath;
-            originalFileName = att.fileName;
+            // Pujar a factures-rebudes/inbox/ → el gdriveSyncJob l'analitzarà i organitzarà
+            const facturesId = await gdrive.getSubfolderId('factures-rebudes');
+            const inboxFolder = await gdrive.findOrCreateFolder('inbox', facturesId);
+            const drive = gdrive.getDriveClient();
+            await drive.files.create({
+              resource: { name: att.fileName, parents: [inboxFolder.id] },
+              media: { mimeType: 'application/pdf', body: fs.createReadStream(tmpPath) },
+              fields: 'id',
+            });
 
-            // Pujar a GDrive
-            try {
-              const gFile = await gdrive.uploadFile(tmpPath, 'factures-rebudes', att.fileName, email.emailMeta.date || new Date());
-              gdriveFileId = gFile.id;
-            } catch (gErr) {
-              logger.warn(`Zoho cron: Error pujant a GDrive: ${gErr.message}`);
-            }
-
-            // Analitzar contingut del PDF
-            try {
-              const analysis = await pdfExtract.analyzePdf(tmpPath);
-              if (analysis.hasText) {
-                pdfAnalysis = analysis;
-                logger.info(`Zoho cron: PDF analitzat ${att.fileName} → nº: ${analysis.invoiceNumber || '-'}, total: ${analysis.totalAmount || '-'}`);
-              }
-            } catch (parseErr) {
-              logger.warn(`Zoho cron: Error analitzant PDF: ${parseErr.message}`);
-            }
+            logger.info(`Zoho cron: PDF pujat a inbox: ${att.fileName}`);
 
             // Netejar temporal
             setTimeout(() => { try { fs.unlinkSync(tmpPath); } catch {} }, 5000);
           } catch (dlErr) {
-            logger.warn(`Zoho cron: Error descarregant PDF: ${dlErr.message}`);
-            source = 'EMAIL_NO_PDF';
+            logger.warn(`Zoho cron: Error descarregant/pujant PDF: ${dlErr.message}`);
           }
-        }
-
-        // Detecció de duplicats pel número de factura del PDF
-        let isDuplicate = false;
-        let duplicateOfId = null;
-        if (pdfAnalysis?.invoiceNumber) {
-          const dup = await pdfExtract.checkDuplicateByContent(pdfAnalysis.invoiceNumber);
-          if (dup) {
-            isDuplicate = true;
-            duplicateOfId = dup.id;
-            logger.warn(`Zoho cron: DUPLICAT detectat! ${pdfAnalysis.invoiceNumber} ja existeix (${dup.id})`);
-          }
-        }
-
-        // Trobar proveïdor pel NIF
-        const matchedSupplier = pdfAnalysis?.nifCif ? await pdfExtract.findSupplierByNif(pdfAnalysis.nifCif) : null;
-
-        // Dades extretes del PDF
-        const invoiceNumber = pdfAnalysis?.invoiceNumber || `ZOHO-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-        const totalAmount = pdfAnalysis?.totalAmount || 0;
-        const taxRate = 21;
-        const subtotal = totalAmount > 0 ? totalAmount / (1 + taxRate / 100) : 0;
-        const taxAmount = totalAmount - subtotal;
-
-        // Crear factura
-        const invoice = await prisma.receivedInvoice.create({
-          data: {
-            invoiceNumber,
-            source,
-            status: source === 'EMAIL_WITH_PDF' ? 'PENDING' : 'PDF_PENDING',
-            filePath,
-            originalFileName,
-            gdriveFileId,
-            supplierId: matchedSupplier?.id || null,
-            isDuplicate,
-            duplicateOfId,
-            description: `[Auto] ${email.emailMeta.from} — ${email.emailMeta.subject}`,
-            issueDate: pdfAnalysis?.invoiceDate || email.emailMeta.date || new Date(),
-            subtotal: Math.round(subtotal * 100) / 100,
-            taxRate,
-            taxAmount: Math.round(taxAmount * 100) / 100,
-            totalAmount: Math.round(totalAmount * 100) / 100,
-            currency: 'EUR',
-          },
-        });
-
-        // Recordatori si no té PDF
-        if (source === 'EMAIL_NO_PDF') {
-          // Obtenir el primer admin per l'authorId del recordatori
-          const admin = await prisma.user.findFirst({
-            where: { role: 'ADMIN', isActive: true },
-            select: { id: true },
+        } else {
+          // Sense PDF → crear factura amb estat PDF_PENDING + recordatori
+          const invoiceNumber = `ZOHO-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+          const invoice = await prisma.receivedInvoice.create({
+            data: {
+              invoiceNumber,
+              source: 'EMAIL_NO_PDF',
+              status: 'PDF_PENDING',
+              description: `[Auto] ${email.emailMeta.from} — ${email.emailMeta.subject}`,
+              issueDate: email.emailMeta.date || new Date(),
+              subtotal: 0,
+              taxRate: 21,
+              taxAmount: 0,
+              totalAmount: 0,
+              currency: 'EUR',
+            },
           });
 
-          if (admin) {
-            await prisma.reminder.create({
-              data: {
-                title: `Completar factura: ${invoice.invoiceNumber}`,
-                description: `Factura detectada automàticament per email.\nDe: ${email.emailMeta.from}\nAssumpte: ${email.emailMeta.subject}`,
-                dueAt: new Date(Date.now() + 3 * 24 * 3600 * 1000),
-                priority: 'HIGH',
-                entityType: 'received_invoice',
-                entityId: invoice.id,
-                authorId: admin.id,
-              },
+          // Recordatori per completar
+          try {
+            const admin = await prisma.user.findFirst({
+              where: { role: 'ADMIN', isActive: true },
+              select: { id: true },
             });
+            if (admin) {
+              await prisma.reminder.create({
+                data: {
+                  title: `Completar factura: ${invoice.invoiceNumber}`,
+                  description: `Factura detectada per email sense PDF.\nDe: ${email.emailMeta.from}\nAssumpte: ${email.emailMeta.subject}`,
+                  dueAt: new Date(Date.now() + 3 * 24 * 3600 * 1000),
+                  priority: 'HIGH',
+                  entityType: 'received_invoice',
+                  entityId: invoice.id,
+                  authorId: admin.id,
+                },
+              });
+            }
+          } catch (remErr) {
+            logger.warn(`Zoho cron: Error creant recordatori: ${remErr.message}`);
           }
         }
 
         // Marcar com a processat i llegit
-        await redis.set(`zoho:processed:${email.messageId}`, invoice.id, 'EX', 90 * 24 * 3600);
+        await redis.set(`zoho:processed:${email.messageId}`, 'done', 'EX', 90 * 24 * 3600);
         try { await zohoMail.markAsRead(email.messageId); } catch {}
 
         processedCount++;

@@ -120,64 +120,157 @@ async function extractTextFromBuffer(buffer) {
 // ===========================================
 // Patrons de detecció de número de factura
 // ===========================================
-// Les factures a Espanya solen tenir formats com:
-//   Factura nº: FRA-2026/001
-//   Nº Factura: 2026-0042
-//   Invoice Number: INV-00123
-//   Factura: A-123/2026
-//   Fra. Nº 2026/001
-//   Núm. Factura: FC2026-001
-// ===========================================
-
-const INVOICE_NUMBER_PATTERNS = [
-  // "Factura nº: XXX" / "Factura núm: XXX" / "Factura número: XXX"
-  /(?:factura|fra\.?)\s*(?:n[ºúo°]\.?|n[uú]m(?:ero)?\.?)\s*[:\s]?\s*([A-Z0-9][\w\-\/\.]+)/i,
-
-  // "Nº Factura: XXX" / "Núm. Factura: XXX"
-  /(?:n[ºúo°]\.?|n[uú]m(?:ero)?\.?)\s*(?:de\s+)?(?:factura|fra\.?)\s*[:\s]?\s*([A-Z0-9][\w\-\/\.]+)/i,
-
-  // "Invoice (?:Number|No|#): XXX"
-  /invoice\s*(?:number|no\.?|n[ºo°]\.?|#)\s*[:\s]?\s*([A-Z0-9][\w\-\/\.]+)/i,
-
-  // "Factura: XXX" (directe)
-  /factura\s*[:\s]\s*([A-Z0-9][\w\-\/\.]{2,})/i,
-
-  // "FRA-XXXX" / "FRA/XXXX" (codi directe)
-  /\b(FRA[\-\/][A-Z0-9][\w\-\/\.]+)/i,
-
-  // "Nº: XXX" quan apareix prop de "factura" al context
-  /n[ºúo°]\.?\s*[:\s]\s*([A-Z0-9][\w\-\/\.]{3,})/i,
-
-  // "Albarà nº: XXX"
-  /(?:albar[àa]|albaran)\s*(?:n[ºúo°]\.?|n[uú]m\.?)\s*[:\s]?\s*([A-Z0-9][\w\-\/\.]+)/i,
-];
 
 /**
- * Detecta el número de factura dins del text extret d'un PDF
+ * Detecta el número de factura dins del text extret d'un PDF.
+ * Prova múltiples estratègies per cobrir formats espanyols, catalans i anglesos.
  * @param {string} text - Text complet del PDF
  * @returns {string|null} Número de factura detectat, o null
  */
 function detectInvoiceNumber(text) {
   if (!text || text.trim().length < 10) return null;
 
-  // Normalitzar espais i salts de línia
+  // Treballar línia per línia per evitar barrejar camps de columnes diferents
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   const normalized = text.replace(/\r\n/g, '\n').replace(/\s+/g, ' ');
 
-  for (const pattern of INVOICE_NUMBER_PATTERNS) {
-    const match = normalized.match(pattern);
-    if (match && match[1]) {
-      // Netejar el resultat
-      let num = match[1].trim();
-      // Eliminar puntuació final
-      num = num.replace(/[.,;:]+$/, '');
-      // Validar que sembla un número de factura (mínim 3 caràcters)
-      if (num.length >= 3 && num.length <= 50) {
-        return num;
+  // ESTRATÈGIA 1: Patrons línia per línia (més precís)
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    let m;
+
+    // "Nº Factura: A26 / " → buscar el número a la línia següent si està tallat
+    m = line.match(/n[ºúo°]\.?\s*factura\s*[:\s]\s*([A-Z0-9][\w\-]*)\s*\/\s*$/i);
+    if (m && i + 1 < lines.length) {
+      // El número continua a la línia següent: "A26 / \n3275" → buscar número a prop
+      const nextLine = lines[i + 1].trim();
+      const nextNum = nextLine.match(/^(\w+)/);
+      if (nextNum) return m[1] + '/' + nextNum[1];
+    }
+
+    // "Nº Factura: A26 / 3275" (tot a la mateixa línia)
+    m = line.match(/n[ºúo°]\.?\s*factura\s*[:\s]\s*([A-Z0-9][\w\-]*)\s*\/\s*(\w+)/i);
+    if (m) return m[1] + '/' + m[2];
+
+    // "Nº Factura: A26 /" (sense res després del /)
+    m = line.match(/n[ºúo°]\.?\s*factura\s*[:\s]\s*([A-Z0-9][\w\-\/\.]{2,})/i);
+    if (m && !isGenericWord(m[1])) return cleanInvoiceNumber(m[1]);
+
+    // "Factura Nº" seguit de número a la mateixa línia
+    m = line.match(/factura\s*n[ºúo°]\.?\s*[:\s]?\s*([A-Z0-9][\w\-\/\.]{2,})/i);
+    if (m && !isGenericWord(m[1])) return cleanInvoiceNumber(m[1]);
+
+    // "Invoice numberUZQPSJGM0002" (Stripe/Anthropic sense espai — capturar TOT incloent números)
+    m = line.match(/invoice\s*number\s*([A-Z][A-Z0-9\-]{4,})/i);
+    if (m) return cleanInvoiceNumber(m[1]);
+
+    // "Invoice number: XXX" / "Invoice no: XXX"
+    m = line.match(/invoice\s*(?:number|no\.?|n[ºo°]\.?|#)\s*[:\s]\s*([A-Z0-9][\w\-\/\.]+)/i);
+    if (m) return cleanInvoiceNumber(m[1]);
+
+    // "Factura:20260489" (sense espai) / "Factura: 20260489"
+    m = line.match(/^factura\s*:\s*([A-Z0-9][\w\-\/\.]{3,})/i);
+    if (m && !isDateLike(m[1]) && !isGenericWord(m[1])) return cleanInvoiceNumber(m[1]);
+
+    // "FACTURA: 26-00265" que pot tenir data enganxada - separar amb regex
+    m = line.match(/factura\s*:\s*(\d{2,4}[\-]\d{3,6})(?:\d{2}[\-]\d{2}[\-]\d{2,4})?/i);
+    if (m) return cleanInvoiceNumber(m[1]);
+
+    // "Núm : FA2604-0129"
+    m = line.match(/^n[ºúo°u]m\.?\s*[:\s]\s*([A-Z][A-Z0-9][\w\-\/\.]{2,})/i);
+    if (m && !isDateLike(m[1]) && !isGenericWord(m[1])) return cleanInvoiceNumber(m[1]);
+  }
+
+  // ESTRATÈGIA 2: Patrons multi-línia — buscar etiquetes seguides del valor a la línia següent
+  for (let i = 0; i < lines.length; i++) {
+    // "Núm.factura" a una línia i el valor a alguna línia posterior (Aigües BCN)
+    // Aigües BCN: "Núm.factura" és una etiqueta de columna, el valor real és unes línies avall
+    if (/^n[ºúo°u]m\.?\s*factura$/i.test(lines[i])) {
+      // Buscar el primer número llarg (5+ dígits) a les línies properes
+      for (let j = i + 1; j < Math.min(lines.length, i + 10); j++) {
+        const numMatch = lines[j].match(/^(\d{5,})$/);
+        if (numMatch) return numMatch[1];
+      }
+    }
+
+    // "Nº Factura: A26 /" on la línia següent és "C/ ..." (adreça, no el número)
+    // Buscar el número real a la línia ANTERIOR (JUPE: "3275" està abans de "Nº Factura")
+    const jupeMatch = lines[i].match(/n[ºúo°]\.?\s*factura\s*:\s*([A-Z0-9]+)\s*\/\s*$/i);
+    if (jupeMatch) {
+      // Buscar un número sol a les línies anteriors properes
+      for (let j = i - 1; j >= Math.max(0, i - 5); j--) {
+        const prevNum = lines[j].match(/^(\d{3,})$/);
+        if (prevNum) return jupeMatch[1] + '/' + prevNum[1];
+      }
+      // Si no trobem el número anterior, retornar el que tenim
+      return jupeMatch[1];
+    }
+
+    // "Factura Nº" a una línia, valor a una altra (GRAU format)
+    if (/^factura\s*n[ºúo°]/i.test(lines[i])) {
+      // Buscar "Referencia" + "X / Y.YYY.YYY" (GRAU usa referència com a número)
+      for (let j = i + 1; j < Math.min(lines.length, i + 15); j++) {
+        if (/^referencia$/i.test(lines[j]) && j + 1 < lines.length) {
+          const refMatch = lines[j + 1].match(/^(\d+\s*\/\s*[\d.]+)/);
+          if (refMatch) return refMatch[1].replace(/\s+/g, '');
+        }
       }
     }
   }
 
+  // ESTRATÈGIA 3: Patrons sobre text normalitzat (fallback)
+  const fallbackPatterns = [
+    // "FRA-XXXX" / "FRA/XXXX"
+    /\b(FRA[\-\/][A-Z0-9][\w\-\/\.]+)/i,
+    // "Albarà nº: XXX"
+    /(?:albar[àa]|albaran)\s*(?:n[ºúo°]\.?|n[uú]m\.?)\s*[:\s]?\s*([A-Z0-9][\w\-\/\.]+)/i,
+  ];
+
+  for (const pattern of fallbackPatterns) {
+    const match = normalized.match(pattern);
+    if (match && match[1]) {
+      const num = cleanInvoiceNumber(match[1]);
+      if (num && num.length >= 3) return num;
+    }
+  }
+
   return null;
+}
+
+/**
+ * Neteja un número de factura detectat
+ */
+function cleanInvoiceNumber(num) {
+  if (!num) return null;
+  let clean = num.trim();
+  // Eliminar puntuació final
+  clean = clean.replace(/[.,;:\s]+$/, '');
+  // Separar número de factura de data enganxada
+  // Ex: "26-0026513-04-2026" → el patró és "XX-XXXXX" + "DD-MM-YYYY"
+  const dateAtEnd = clean.match(/^(.+?)(\d{2}[\-\/]\d{2}[\-\/]\d{2,4})$/);
+  if (dateAtEnd && dateAtEnd[1].length >= 3) {
+    clean = dateAtEnd[1].replace(/[\-\/]+$/, '');
+  }
+  // Eliminar "/" final
+  clean = clean.replace(/\/+$/, '');
+  // Validar longitud
+  if (clean.length >= 3 && clean.length <= 50) return clean;
+  return null;
+}
+
+/**
+ * Comprova si un string sembla una data (no un número de factura)
+ */
+function isDateLike(str) {
+  return /^\d{1,2}[\-\/\.]\d{1,2}[\-\/\.]\d{2,4}$/.test(str);
+}
+
+/**
+ * Comprova si és una paraula genèrica que no és un número de factura
+ */
+function isGenericWord(str) {
+  const words = ['fecha', 'fechac', 'page', 'pagina', 'total', 'per', 'periodo', 'periode'];
+  return words.includes(str.toLowerCase());
 }
 
 // ===========================================
@@ -217,6 +310,28 @@ function detectSupplierName(text) {
 
   const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
+  // Llista de noms propis de Seito Camera (per excloure)
+  const ownNames = ['seito camera', 'seitocamera'];
+
+  function isOwnName(name) {
+    const lower = name.toLowerCase();
+    return ownNames.some(own => lower.includes(own));
+  }
+
+  function isValidSupplierName(name) {
+    if (!name || name.length < 3 || name.length > 100) return false;
+    if (isOwnName(name)) return false;
+    // Descartar línies que són clarament adreces, emails, o dades tècniques
+    if (/^(emisor|enviar|cliente|datos|direc|bill\s*to|page\s*\d|qr\s*trib)/i.test(name)) return false;
+    if (/^(cif|nif|tel|correo|web|dir|av\.|calle|carrer|c\/|http|www\.|email|e-mail)/i.test(name)) return false;
+    if (/^\d{4,}/.test(name)) return false; // Comença amb molts números
+    if (/^(veri\*factu|factu\s|registro|protección|powered|qr\s)/i.test(name)) return false;
+    if (/^factu\s/i.test(name)) return false; // "FACTU CROMALITE" → treure prefix
+    // Ha de contenir lletres
+    if (!/[a-zA-ZàáèéìíòóùúÀÁÈÉÌÍÒÓÙÚñÑçÇ]/.test(name)) return false;
+    return true;
+  }
+
   // Estratègia 1: Buscar etiquetes directes
   const labelPatterns = [
     /(?:emisor|emitent|proveedor|prove[ïi]dor|empresa|raz[oó]n\s*social)\s*[:\s]\s*(.+)/i,
@@ -227,25 +342,18 @@ function detectSupplierName(text) {
     const match = text.match(pattern);
     if (match && match[1]) {
       const name = match[1].trim().replace(/\s+/g, ' ');
-      if (name.length >= 3 && name.length <= 100) return name;
+      if (isValidSupplierName(name)) return name;
     }
   }
 
   // Estratègia 2: Buscar la línia just ABANS del primer CIF/NIF (que no sigui el propi)
   for (let i = 0; i < lines.length; i++) {
-    const cifMatch = lines[i].match(/(?:CIF|NIF|CIF\/NIF)\s*[:\s]\s*([A-Z]\d{7}[A-Z0-9]|\d{8}[A-Z])/i);
+    const cifMatch = lines[i].match(/(?:CIF|NIF|CIF\/NIF|N\.I\.F\.)\s*[:\s]?\s*(?:ES[\-\s]?)?([A-Z]\d{7}[A-Z0-9]|\d{8}[A-Z])/i);
     if (cifMatch && cifMatch[1] && !OWN_NIF_LIST.includes(cifMatch[1].toUpperCase())) {
-      // Buscar el nom a la línia anterior o a la línia "Emisor:"
-      for (let j = i - 1; j >= Math.max(0, i - 3); j--) {
-        const candidate = lines[j].trim();
-        // Descartar línies buides, etiquetes, adreces
-        if (candidate.length < 3) continue;
-        if (/^(emisor|enviar|cliente|datos|direc)/i.test(candidate)) continue;
-        if (/^\d/.test(candidate)) continue; // Adreces que comencen amb número
-        // Probablement és el nom de l'empresa
-        if (candidate.length >= 3 && candidate.length <= 100) {
-          return candidate.replace(/\s+/g, ' ');
-        }
+      // Buscar el nom a les línies anteriors (fins a 6 línies amunt per cobrir adreces llargues)
+      for (let j = i - 1; j >= Math.max(0, i - 6); j--) {
+        const candidate = lines[j].trim().replace(/\s+/g, ' ');
+        if (isValidSupplierName(candidate)) return candidate;
       }
     }
   }
@@ -253,14 +361,54 @@ function detectSupplierName(text) {
   // Estratègia 3: Buscar després de "Emisor:" en línies
   for (let i = 0; i < lines.length; i++) {
     if (/^emisor/i.test(lines[i])) {
-      // El nom sol ser la línia següent
       for (let j = i + 1; j < Math.min(lines.length, i + 3); j++) {
-        const candidate = lines[j].trim();
-        if (candidate.length >= 3 && !/^(cif|nif|tel|correo|web|dir|av|calle|carrer)/i.test(candidate)) {
-          return candidate.replace(/\s+/g, ' ');
+        const candidate = lines[j].trim().replace(/\s+/g, ' ');
+        if (isValidSupplierName(candidate)) return candidate;
+      }
+    }
+  }
+
+  // Estratègia 4: Buscar "NomEmpresa, S.L." o "NomEmpresa, S.A." a les primeres 15 línies
+  for (let i = 0; i < Math.min(lines.length, 15); i++) {
+    const line = lines[i].trim();
+    // Patró: "EMPRESA, S.L." / "EMPRESA S.L." / "EMPRESA, S.A." / "EMPRESA SLP"
+    // Inclou cas "CROMALITE, SLNIF:B60..." → agafar fins al NIF
+    let m = line.match(/^([A-ZÀ-Ú][A-ZÀ-Ú\s&.,]+(?:S\.?L\.?U?\.?|S\.?A\.?|S\.?L\.?P\.?|S\.?C\.?P\.?))(?:\s*NIF|$)/i);
+    if (m && isValidSupplierName(m[1].trim())) {
+      return m[1].trim().replace(/\s+/g, ' ');
+    }
+    // Versió completa línia
+    m = line.match(/^([A-ZÀ-Ú][A-ZÀ-Ú\s&.,]+(?:S\.?L\.?U?\.?|S\.?A\.?|S\.?L\.?P\.?|S\.?C\.?P\.?))$/i);
+    if (m && isValidSupplierName(m[1].trim())) {
+      return m[1].trim().replace(/\s+/g, ' ');
+    }
+  }
+
+  // Estratègia 5: Per factures angleses (Anthropic, Stripe, etc.)
+  // Buscar la primera línia significativa abans de l'adreça
+  for (let i = 0; i < Math.min(lines.length, 20); i++) {
+    if (/^(invoice|receipt)$/i.test(lines[i])) {
+      // Buscar nom empresa després del títol + número
+      for (let j = i + 1; j < Math.min(lines.length, i + 8); j++) {
+        const line = lines[j].trim();
+        // Saltar línies de número/data
+        if (/^(invoice|receipt|date|page|bill)/i.test(line)) continue;
+        if (/^\d/.test(line)) continue;
+        // Primera línia que sembla un nom d'empresa
+        if (line.length >= 5 && /[A-Z]/.test(line) && !line.includes('@') && !/^\d/.test(line)) {
+          // Comprovar que no és l'adreça
+          if (!/^\d+\s/.test(line) && !isOwnName(line)) {
+            return line.replace(/\s+/g, ' ');
+          }
         }
       }
     }
+  }
+
+  // Estratègia 6: Agafar el nom de la primera línia amb format "EMPRESA, S.L." de qualsevol lloc
+  const slMatch = text.match(/([A-ZÀ-Ú][A-ZÀ-Ú\s&.,]+(?:S\.?L\.?U?\.?|S\.?A\.?|S\.?L\.?P\.?))/);
+  if (slMatch && isValidSupplierName(slMatch[1].trim()) && !isOwnName(slMatch[1])) {
+    return slMatch[1].trim().replace(/\s+/g, ' ');
   }
 
   return null;
@@ -330,10 +478,32 @@ function detectTotalAmount(text) {
     if (/base\s*imp/i.test(line)) continue;
     if (/total\s*iva\s*\d+%/i.test(line)) continue;
     if (/total\s*\(base/i.test(line)) continue;
+    if (/subtotal/i.test(line)) continue;
 
     const totalMatch = line.match(/total\s*[:\s]?\s*€?\s*([\d.,]+)/i);
     if (totalMatch && totalMatch[1]) {
       const num = parseEuropeanNumber(totalMatch[1]);
+      if (!isNaN(num) && num > 0) amounts.push(num);
+    }
+  }
+
+  // Estratègia 3: "€XX.XX due" o "€XX.XX paid" (format Stripe/Anthropic)
+  const euroPatterns = [
+    /€\s*([\d.,]+)\s*(?:due|paid|a pagar)/i,
+    /(?:amount\s*due|amount\s*paid|total\s*a\s*pagar)\s*€?\s*([\d.,]+)/i,
+    /(?:total\s*€|total\s*eur)\s*([\d.,]+)/i,
+    // "25,41TOTAL €" (KINOLUX format: número abans de TOTAL)
+    /([\d.,]+)\s*TOTAL\s*€/i,
+    // "TOTAL A PAGAR XX,XX €"
+    /total\s*a\s*pagar\s*([\d.,]+)\s*€?/i,
+    // "IMPORTE LIQUIDO XX,XX"
+    /import[e]?\s*l[ií]quid[oa]?\s*([\d.,]+)/i,
+  ];
+
+  for (const pattern of euroPatterns) {
+    const match = normalized.match(pattern);
+    if (match && match[1]) {
+      const num = parseEuropeanNumber(match[1]);
       if (!isNaN(num) && num > 0) amounts.push(num);
     }
   }

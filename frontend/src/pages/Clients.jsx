@@ -1,16 +1,36 @@
 import { useState } from 'react';
-import { Plus, Search, Edit2, Trash2 } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, Eye, FileText } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
+import { StatusBadge } from '../components/shared/StatusBadge';
 import Modal from '../components/shared/Modal';
+import { formatCurrency, formatDate } from '../lib/utils';
+import api from '../lib/api';
 
 export default function Clients() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [showModal, setShowModal] = useState(false);
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const [selectedClient, setSelectedClient] = useState(null);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ name: '', nif: '', email: '', phone: '', address: '', city: '', postalCode: '' });
 
+  const handleViewPdf = async (invoiceId) => {
+    try {
+      const { data } = await api.get(`/invoices/issued/${invoiceId}/pdf`);
+      if (data.type === 'redirect' && data.url) {
+        window.open(data.url, '_blank');
+      }
+    } catch {
+      // Factures emeses potser no tenen PDF
+    }
+  };
+
   const { data, loading, refetch } = useApiGet('/clients', { search, page, limit: 25 });
+  const { data: clientInvoices } = useApiGet(
+    selectedClient ? '/invoices/issued' : null,
+    selectedClient ? { clientId: selectedClient.id, limit: 100 } : {}
+  );
   const { mutate } = useApiMutation();
 
   const handleSave = async (e) => {
@@ -93,6 +113,7 @@ export default function Clients() {
                   <td className="p-3 text-center">{c._count?.issuedInvoices || 0}</td>
                   <td className="p-3 text-right">
                     <div className="flex items-center justify-end gap-1">
+                      <button onClick={() => { setSelectedClient(c); setShowDetailModal(true); }} className="p-1.5 rounded hover:bg-blue-50 text-blue-600" title="Veure factures"><Eye size={14} /></button>
                       <button onClick={() => handleEdit(c)} className="p-1.5 rounded hover:bg-muted"><Edit2 size={14} /></button>
                       <button onClick={() => handleDelete(c.id)} className="p-1.5 rounded hover:bg-destructive/10 text-destructive"><Trash2 size={14} /></button>
                     </div>
@@ -137,6 +158,69 @@ export default function Clients() {
             <button type="submit" className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium">Guardar</button>
           </div>
         </form>
+      </Modal>
+
+      {/* Modal: Detall client amb factures */}
+      <Modal isOpen={showDetailModal} onClose={() => { setShowDetailModal(false); setSelectedClient(null); }} title={`Client: ${selectedClient?.name || ''}`} size="lg">
+        {selectedClient && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div><span className="text-muted-foreground">NIF:</span> {selectedClient.nif || '—'}</div>
+              <div><span className="text-muted-foreground">Email:</span> {selectedClient.email || '—'}</div>
+              <div><span className="text-muted-foreground">Telèfon:</span> {selectedClient.phone || '—'}</div>
+              <div><span className="text-muted-foreground">Ciutat:</span> {selectedClient.city || '—'}</div>
+            </div>
+
+            <div>
+              <h3 className="font-semibold text-sm mb-2">Factures emeses ({clientInvoices?.data?.length || 0})</h3>
+              {clientInvoices?.data?.length > 0 ? (
+                <div className="border rounded-lg overflow-hidden max-h-80 overflow-y-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/50 sticky top-0">
+                      <tr>
+                        <th className="text-left p-2 font-medium">Número</th>
+                        <th className="text-left p-2 font-medium">Data</th>
+                        <th className="text-right p-2 font-medium">Import</th>
+                        <th className="text-center p-2 font-medium">Estat</th>
+                        <th className="text-center p-2 font-medium">PDF</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {clientInvoices.data.map((inv) => (
+                        <tr key={inv.id} className="border-t">
+                          <td className="p-2">{inv.invoiceNumber}</td>
+                          <td className="p-2 text-muted-foreground">{formatDate(inv.issueDate)}</td>
+                          <td className="p-2 text-right font-medium">{formatCurrency(inv.totalAmount)}</td>
+                          <td className="p-2 text-center"><StatusBadge status={inv.status} /></td>
+                          <td className="p-2 text-center">
+                            {inv.filePath ? (
+                              <button onClick={() => handleViewPdf(inv.id)} className="p-1 rounded hover:bg-blue-50 text-blue-600" title="Veure PDF">
+                                <FileText size={14} />
+                              </button>
+                            ) : (
+                              <span className="text-muted-foreground text-xs">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-muted/30">
+                      <tr>
+                        <td colSpan={2} className="p-2 font-semibold">Total</td>
+                        <td className="p-2 text-right font-semibold">
+                          {formatCurrency(clientInvoices.data.reduce((sum, inv) => sum + (parseFloat(inv.totalAmount) || 0), 0))}
+                        </td>
+                        <td colSpan={2}></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">Cap factura emesa per aquest client.</p>
+              )}
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

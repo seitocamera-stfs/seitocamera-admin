@@ -97,7 +97,10 @@ export default function IssuedInvoices() {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold">Factures emeses</h2>
+        <div>
+          <h2 className="text-2xl font-bold">Factures emeses</h2>
+          <p className="text-sm text-muted-foreground mt-1">{data?.pagination?.total || 0} factures en total</p>
+        </div>
         <div className="flex items-center gap-3">
           <ExportButtons
             endpoint="/export/issued-invoices"
@@ -164,6 +167,18 @@ export default function IssuedInvoices() {
           </tbody>
         </table>
       </div>
+
+      {/* Paginació */}
+      {data?.pagination && data.pagination.totalPages > 1 && (
+        <div className="flex items-center justify-between p-3 border-t text-sm">
+          <span className="text-muted-foreground">{data.pagination.total} factures</span>
+          <div className="flex gap-2">
+            <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} className="px-3 py-1 rounded border disabled:opacity-50">Anterior</button>
+            <span className="px-3 py-1">{page} / {data.pagination.totalPages}</span>
+            <button onClick={() => setPage(Math.min(data.pagination.totalPages, page + 1))} disabled={page >= data.pagination.totalPages} className="px-3 py-1 rounded border disabled:opacity-50">Següent</button>
+          </div>
+        </div>
+      )}
 
       <Modal isOpen={showModal} onClose={() => setShowModal(false)} title="Nova factura emesa" size="lg">
         <form onSubmit={handleSave} className="space-y-3">
