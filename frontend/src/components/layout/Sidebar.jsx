@@ -37,7 +37,7 @@ export default function Sidebar() {
   };
 
   const visibleItems = navItems.filter((item) =>
-    canAccessSection(user?.role, item.section)
+    canAccessSection(user, item.section)
   );
 
   return (

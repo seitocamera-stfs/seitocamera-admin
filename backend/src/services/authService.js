@@ -142,6 +142,7 @@ async function login({ email, password }) {
       email: true,
       name: true,
       role: true,
+      customPermissions: true,
       passwordHash: true,
       isActive: true,
     },

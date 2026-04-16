@@ -123,6 +123,17 @@ export default function Clients() {
             )}
           </tbody>
         </table>
+
+        {data?.pagination && data.pagination.totalPages > 1 && (
+          <div className="flex items-center justify-between p-3 border-t text-sm">
+            <span className="text-muted-foreground">{data.pagination.total} clients</span>
+            <div className="flex gap-2">
+              <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} className="px-3 py-1 rounded border disabled:opacity-50">Anterior</button>
+              <span className="px-3 py-1">{page} / {data.pagination.totalPages}</span>
+              <button onClick={() => setPage(Math.min(data.pagination.totalPages, page + 1))} disabled={page >= data.pagination.totalPages} className="px-3 py-1 rounded border disabled:opacity-50">Següent</button>
+            </div>
+          </div>
+        )}
       </div>
 
       <Modal isOpen={showModal} onClose={() => setShowModal(false)} title={editing ? 'Editar client' : 'Nou client'}>

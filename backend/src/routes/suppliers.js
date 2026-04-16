@@ -3,7 +3,7 @@ const { z } = require('zod');
 const { prisma } = require('../config/database');
 const { authenticate, authorize } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
-const { requireSection } = require('../middleware/sectionAccess');
+const { requireSection, requireLevel } = require('../middleware/sectionAccess');
 
 const router = express.Router();
 
@@ -15,16 +15,22 @@ router.use(requireSection('suppliers'));
 // Schemas de validació
 // ===========================================
 
+// Helper: converteix strings buides a null per camps opcionals
+const emptyToNull = (val) => (val === '' || val === undefined ? null : val);
+
 const supplierSchema = z.object({
   name: z.string().min(1, 'Nom requerit'),
-  nif: z.string().optional().nullable(),
-  email: z.string().email('Email invàlid').optional().nullable(),
-  phone: z.string().optional().nullable(),
-  address: z.string().optional().nullable(),
-  city: z.string().optional().nullable(),
-  postalCode: z.string().optional().nullable(),
-  country: z.string().default('ES'),
-  notes: z.string().optional().nullable(),
+  nif: z.preprocess(emptyToNull, z.string().nullable().optional()),
+  email: z.preprocess(
+    emptyToNull,
+    z.string().email('Email invàlid').nullable().optional()
+  ),
+  phone: z.preprocess(emptyToNull, z.string().nullable().optional()),
+  address: z.preprocess(emptyToNull, z.string().nullable().optional()),
+  city: z.preprocess(emptyToNull, z.string().nullable().optional()),
+  postalCode: z.preprocess(emptyToNull, z.string().nullable().optional()),
+  country: z.preprocess((v) => (v === '' || v === undefined ? 'ES' : v), z.string().default('ES')),
+  notes: z.preprocess(emptyToNull, z.string().nullable().optional()),
 });
 
 // ===========================================
@@ -154,7 +160,7 @@ router.put('/:id', authorize('ADMIN', 'EDITOR'), validate(supplierSchema), async
 // ===========================================
 // DELETE /api/suppliers/:id — Desactivar proveïdor (soft delete)
 // ===========================================
-router.delete('/:id', authorize('ADMIN'), async (req, res, next) => {
+router.delete('/:id', requireLevel('suppliers', 'admin'), async (req, res, next) => {
   try {
     await prisma.supplier.update({
       where: { id: req.params.id },

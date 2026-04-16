@@ -11,7 +11,7 @@ export default function RoleGuard({ section, children }) {
 
   if (!user) return null;
 
-  if (!canAccessSection(user.role, section)) {
+  if (!canAccessSection(user, section)) {
     return <Navigate to="/" replace />;
   }
 

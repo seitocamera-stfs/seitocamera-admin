@@ -7,11 +7,11 @@ const { prisma } = require('../config/database');
  */
 async function authenticate(req, res, next) {
   try {
-    // Buscar token al header Authorization o a les cookies
+    // Buscar token al header Authorization, cookies, o query param (per iframes/PDFs)
     const authHeader = req.headers.authorization;
     const token = authHeader?.startsWith('Bearer ')
       ? authHeader.slice(7)
-      : req.cookies?.token;
+      : req.cookies?.token || req.query?.token;
 
     if (!token) {
       return res.status(401).json({ error: 'Token d\'autenticació requerit' });
@@ -31,6 +31,7 @@ async function authenticate(req, res, next) {
         email: true,
         name: true,
         role: true,
+        customPermissions: true,
         isActive: true,
       },
     });
@@ -57,13 +58,25 @@ async function authenticate(req, res, next) {
 }
 
 /**
- * Middleware d'autorització per rol
+ * Middleware d'autorització per rol.
  * Ús: authorize('ADMIN', 'EDITOR')
+ *
+ * NOTA: Un usuari amb rol CUSTOM sempre passa aquest middleware perquè
+ * els seus permisos reals es validen a requireSection/requireLevel
+ * (que coneixen la secció concreta). Si una ruta crida authorize('ADMIN')
+ * i l'usuari és CUSTOM, es denega (les accions estrictament admin no
+ * haurien de ser delegables via CUSTOM).
  */
 function authorize(...roles) {
   return (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({ error: 'No autenticat' });
+    }
+    // Si la ruta permet EDITOR o VIEWER, un CUSTOM pot entrar (i la
+    // validació real la farà requireSection amb el nivell corresponent).
+    const customAllowed = roles.includes('EDITOR') || roles.includes('VIEWER');
+    if (req.user.role === 'CUSTOM' && customAllowed) {
+      return next();
     }
     if (!roles.includes(req.user.role)) {
       return res.status(403).json({

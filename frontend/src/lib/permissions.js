@@ -2,18 +2,19 @@
  * Configuració de permisos per rol
  *
  * Defineix quines seccions del sidebar i panells del dashboard
- * pot veure cada rol d'usuari.
+ * pot veure cada rol d'usuari, i a quin nivell d'acció.
+ *
+ * Nivells d'acció:
+ *   'read'  → veure/consultar
+ *   'write' → crear/editar (inclou read)
+ *   'admin' → eliminar + accions privilegiades (inclou write)
  *
  * Seccions disponibles:
- * - dashboard: Panell principal
- * - receivedInvoices: Factures rebudes
- * - issuedInvoices: Factures emeses
- * - suppliers: Proveïdors
- * - clients: Clients
- * - bank: Moviments bancaris
- * - conciliation: Conciliació
- * - reminders: Recordatoris
- * - users: Gestió d'usuaris (sempre només ADMIN)
+ * - dashboard, receivedInvoices, issuedInvoices, suppliers,
+ *   clients, bank, conciliation, reminders, users
+ *
+ * Rol CUSTOM: els permisos es llegeixen de user.customPermissions
+ * (JSON { sectionKey: 'read' | 'write' | 'admin' }).
  */
 
 export const SECTIONS = {
@@ -28,84 +29,150 @@ export const SECTIONS = {
   users: { label: 'Usuaris', path: '/users' },
 };
 
-// Permisos per rol: quines seccions pot veure cada rol
+// Claus de secció que es poden assignar a un rol CUSTOM
+// (la secció "users" queda exclosa — sempre és ADMIN)
+export const CUSTOMIZABLE_SECTIONS = [
+  'dashboard',
+  'receivedInvoices',
+  'issuedInvoices',
+  'suppliers',
+  'clients',
+  'bank',
+  'conciliation',
+  'reminders',
+];
+
+const LEVEL_ORDER = { read: 1, write: 2, admin: 3 };
+
+export const LEVEL_LABELS = {
+  read: 'Lectura',
+  write: 'Lectura + edició',
+  admin: 'Total (amb eliminar)',
+};
+
+// Permisos per rol: mapa { secció → nivell màxim }
 export const ROLE_PERMISSIONS = {
   ADMIN: {
-    sections: [
-      'dashboard',
-      'receivedInvoices',
-      'issuedInvoices',
-      'suppliers',
-      'clients',
-      'bank',
-      'conciliation',
-      'reminders',
-      'users',
-    ],
-    // Panells del dashboard que pot veure
-    dashboardPanels: [
-      'receivedPending',    // KPI factures pendents rebudes
-      'issuedPending',      // KPI factures pendents emeses
-      'unconciliated',      // KPI moviments sense conciliar
-      'reminders',          // KPI recordatoris
-      'recentReceived',     // Llista últimes factures rebudes
-      'unconciliatedList',  // Llista moviments sense conciliar
+    dashboard: 'admin',
+    receivedInvoices: 'admin',
+    issuedInvoices: 'admin',
+    suppliers: 'admin',
+    clients: 'admin',
+    bank: 'admin',
+    conciliation: 'admin',
+    reminders: 'admin',
+    users: 'admin',
+    // Panells del dashboard
+    _dashboardPanels: [
+      'receivedPending', 'issuedPending', 'unconciliated',
+      'reminders', 'recentReceived', 'unconciliatedList',
     ],
   },
   EDITOR: {
-    sections: [
-      'dashboard',
-      'receivedInvoices',
-      'issuedInvoices',
-      'suppliers',
-      'clients',
-      'bank',
-      'conciliation',
-      'reminders',
-    ],
-    dashboardPanels: [
-      'receivedPending',
-      'issuedPending',
-      'unconciliated',
-      'reminders',
-      'recentReceived',
-      'unconciliatedList',
+    dashboard: 'read',
+    receivedInvoices: 'write',
+    issuedInvoices: 'write',
+    suppliers: 'write',
+    clients: 'write',
+    bank: 'write',
+    conciliation: 'write',
+    reminders: 'write',
+    _dashboardPanels: [
+      'receivedPending', 'issuedPending', 'unconciliated',
+      'reminders', 'recentReceived', 'unconciliatedList',
     ],
   },
   VIEWER: {
-    sections: [
-      'dashboard',
-      'reminders',
-    ],
-    dashboardPanels: [
-      'reminders',
-    ],
+    dashboard: 'read',
+    reminders: 'write',
+    _dashboardPanels: ['reminders'],
   },
 };
 
 /**
- * Comprova si un rol té accés a una secció
+ * Retorna el nivell efectiu d'un usuari per una secció, o null si no hi té accés.
  */
-export function canAccessSection(role, sectionKey) {
-  const perms = ROLE_PERMISSIONS[role];
-  if (!perms) return false;
-  return perms.sections.includes(sectionKey);
+export function getUserLevel(user, sectionKey) {
+  if (!user) return null;
+  // La secció "users" sempre és només ADMIN, mai CUSTOM
+  if (sectionKey === 'users') {
+    return user.role === 'ADMIN' ? 'admin' : null;
+  }
+  if (user.role === 'CUSTOM') {
+    const perms = user.customPermissions || {};
+    return perms[sectionKey] || null;
+  }
+  const rolePerms = ROLE_PERMISSIONS[user.role];
+  if (!rolePerms) return null;
+  return rolePerms[sectionKey] || null;
 }
 
 /**
- * Comprova si un rol pot veure un panell del dashboard
+ * Comprova si un usuari té com a mínim el nivell indicat en una secció.
  */
-export function canSeeDashboardPanel(role, panelKey) {
-  const perms = ROLE_PERMISSIONS[role];
-  if (!perms) return false;
-  return perms.dashboardPanels.includes(panelKey);
+export function hasLevel(user, sectionKey, requiredLevel = 'read') {
+  const level = getUserLevel(user, sectionKey);
+  if (!level) return false;
+  return LEVEL_ORDER[level] >= LEVEL_ORDER[requiredLevel];
 }
 
 /**
- * Retorna les seccions permeses per un rol
+ * Compatibilitat: comprova si té accés bàsic (lectura) a una secció.
+ * Accepta tant un objecte user com només un role (compatible amb l'API antiga).
  */
-export function getAllowedSections(role) {
-  const perms = ROLE_PERMISSIONS[role];
-  if (!perms) return [];
-  return perms.sections;
+export function canAccessSection(userOrRole, sectionKey) {
+  if (!userOrRole) return false;
+  // Si ens passen un string (rol antic), el convertim a user-like
+  if (typeof userOrRole === 'string') {
+    return hasLevel({ role: userOrRole }, sectionKey, 'read');
+  }
+  return hasLevel(userOrRole, sectionKey, 'read');
+}
+
+/**
+ * Retorna true si l'usuari pot escriure (crear/editar) en una secció.
+ */
+export function canWrite(user, sectionKey) {
+  return hasLevel(user, sectionKey, 'write');
+}
+
+/**
+ * Retorna true si l'usuari pot eliminar o fer accions privilegiades.
+ */
+export function canDelete(user, sectionKey) {
+  return hasLevel(user, sectionKey, 'admin');
+}
+
+/**
+ * Panells del dashboard que pot veure l'usuari.
+ * Per CUSTOM, mostrem els panells lligats a les seccions accessibles.
+ */
+const PANEL_TO_SECTION = {
+  receivedPending: 'receivedInvoices',
+  issuedPending: 'issuedInvoices',
+  unconciliated: 'conciliation',
+  reminders: 'reminders',
+  recentReceived: 'receivedInvoices',
+  unconciliatedList: 'conciliation',
+};
+
+export function canSeeDashboardPanel(user, panelKey) {
+  if (!user) return false;
+  if (user.role === 'CUSTOM') {
+    const sectionKey = PANEL_TO_SECTION[panelKey];
+    if (!sectionKey) return false;
+    return canAccessSection(user, sectionKey);
+  }
+  const rolePerms = ROLE_PERMISSIONS[user.role];
+  if (!rolePerms) return false;
+  return (rolePerms._dashboardPanels || []).includes(panelKey);
+}
+
+/**
+ * Retorna la llista de claus de seccions a les que l'usuari té accés.
+ */
+export function getAllowedSections(userOrRole) {
+  if (!userOrRole) return [];
+  const user = typeof userOrRole === 'string' ? { role: userOrRole } : userOrRole;
+  return Object.keys(SECTIONS).filter((key) => canAccessSection(user, key));
 }

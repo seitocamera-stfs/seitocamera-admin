@@ -19,6 +19,7 @@ enum Role {
   ADMIN
   EDITOR
   VIEWER
+  CUSTOM
 }
 
 model User {
@@ -27,6 +28,11 @@ model User {
   passwordHash  String
   name          String
   role          Role     @default(VIEWER)
+  // Permisos personalitzats per usuari (només s'usa quan role = CUSTOM)
+  // Format: { "sectionKey": "read" | "write" | "admin" }
+  // Seccions: dashboard, receivedInvoices, issuedInvoices, suppliers,
+  // clients, bank, conciliation, reminders
+  customPermissions Json?
   isActive      Boolean  @default(true)
   lastLoginAt   DateTime?
   createdAt     DateTime @default(now())

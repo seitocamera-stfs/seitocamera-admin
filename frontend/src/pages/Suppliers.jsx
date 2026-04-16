@@ -17,10 +17,10 @@ export default function Suppliers() {
 
   const handleViewPdf = async (invoiceId) => {
     try {
-      const { data } = await api.get(`/invoices/received/${invoiceId}/pdf`);
-      if (data.type === 'redirect' && data.url) {
-        window.open(data.url, '_blank');
-      }
+      const response = await api.get(`/invoices/received/${invoiceId}/pdf`, { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      window.open(url, '_blank');
     } catch {
       alert('No s\'ha pogut obrir el PDF');
     }

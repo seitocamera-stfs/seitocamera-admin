@@ -15,16 +15,35 @@ router.use(authorize('ADMIN'));
 // Schemas
 // ===========================================
 
+// Nivells vàlids de permís per secció
+const levelEnum = z.enum(['read', 'write', 'admin']);
+
+// Seccions que es poden assignar a un rol CUSTOM (users queda exclosa)
+const SECTION_KEYS = [
+  'dashboard', 'receivedInvoices', 'issuedInvoices', 'suppliers',
+  'clients', 'bank', 'conciliation', 'reminders',
+];
+
+const customPermissionsSchema = z.record(z.string(), levelEnum)
+  .refine(
+    (obj) => Object.keys(obj).every((k) => SECTION_KEYS.includes(k)),
+    { message: 'Conté una secció desconeguda' },
+  )
+  .optional()
+  .nullable();
+
 const createUserSchema = z.object({
   email: z.string().email('Email invàlid'),
   password: z.string().min(8, 'Mínim 8 caràcters'),
   name: z.string().min(2, 'Mínim 2 caràcters'),
-  role: z.enum(['ADMIN', 'EDITOR', 'VIEWER']),
+  role: z.enum(['ADMIN', 'EDITOR', 'VIEWER', 'CUSTOM']),
+  customPermissions: customPermissionsSchema,
 });
 
 const updateUserSchema = z.object({
   name: z.string().min(2).optional(),
-  role: z.enum(['ADMIN', 'EDITOR', 'VIEWER']).optional(),
+  role: z.enum(['ADMIN', 'EDITOR', 'VIEWER', 'CUSTOM']).optional(),
+  customPermissions: customPermissionsSchema,
   isActive: z.boolean().optional(),
 });
 
@@ -39,6 +58,7 @@ router.get('/', async (req, res, next) => {
         email: true,
         name: true,
         role: true,
+        customPermissions: true,
         isActive: true,
         lastLoginAt: true,
         createdAt: true,
@@ -57,7 +77,7 @@ router.get('/', async (req, res, next) => {
 // ===========================================
 router.post('/', validate(createUserSchema), async (req, res, next) => {
   try {
-    const { email, password, name, role } = req.body;
+    const { email, password, name, role, customPermissions } = req.body;
 
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) {
@@ -66,13 +86,17 @@ router.post('/', validate(createUserSchema), async (req, res, next) => {
 
     const passwordHash = await bcrypt.hash(password, 12);
 
+    // Només guardem customPermissions si el rol és CUSTOM
+    const permsToStore = role === 'CUSTOM' ? (customPermissions || {}) : null;
+
     const user = await prisma.user.create({
-      data: { email, passwordHash, name, role },
+      data: { email, passwordHash, name, role, customPermissions: permsToStore },
       select: {
         id: true,
         email: true,
         name: true,
         role: true,
+        customPermissions: true,
         isActive: true,
         createdAt: true,
       },
@@ -89,14 +113,28 @@ router.post('/', validate(createUserSchema), async (req, res, next) => {
 // ===========================================
 router.put('/:id', validate(updateUserSchema), async (req, res, next) => {
   try {
+    const data = { ...req.body };
+
+    // Lògica de coherència entre role i customPermissions:
+    //  - Si el rol passa a no-CUSTOM, netegem customPermissions
+    //  - Si es passa a CUSTOM, s'accepten els permisos (o {} per defecte)
+    if ('role' in data && data.role !== 'CUSTOM') {
+      data.customPermissions = null;
+    } else if (data.role === 'CUSTOM' && data.customPermissions === undefined) {
+      data.customPermissions = {};
+    } else if ('customPermissions' in data && data.customPermissions === null) {
+      // mantenim el valor nul explícitament
+    }
+
     const user = await prisma.user.update({
       where: { id: req.params.id },
-      data: req.body,
+      data,
       select: {
         id: true,
         email: true,
         name: true,
         role: true,
+        customPermissions: true,
         isActive: true,
       },
     });
