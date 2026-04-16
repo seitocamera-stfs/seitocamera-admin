@@ -19,29 +19,38 @@ router.get('/received-invoices/:format', authorize('ADMIN', 'EDITOR'), async (re
       return res.status(400).json({ error: 'Format no vàlid. Usa: csv, xlsx, pdf' });
     }
 
-    const { search, status, source, supplierId, conciliated, dateFrom, dateTo } = req.query;
+    const { search, status, source, supplierId, conciliated, dateFrom, dateTo, ids } = req.query;
 
-    // Construir where (mateixos filtres que el llistat)
+    // Si s'han passat IDs concrets, prioritzar-los (selecció manual) i ignorar filtres
     const where = {};
-    if (status) where.status = status;
-    if (source) where.source = source;
-    if (supplierId) where.supplierId = supplierId;
-    if (dateFrom || dateTo) {
-      where.issueDate = {};
-      if (dateFrom) where.issueDate.gte = new Date(dateFrom);
-      if (dateTo) where.issueDate.lte = new Date(dateTo);
-    }
-    if (conciliated === 'true') {
-      where.conciliations = { some: { status: 'CONFIRMED' } };
-    } else if (conciliated === 'false') {
-      where.conciliations = { none: {} };
-    }
-    if (search) {
-      where.OR = [
-        { invoiceNumber: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
-        { supplier: { name: { contains: search, mode: 'insensitive' } } },
-      ];
+    if (ids) {
+      const idList = String(ids).split(',').map((s) => s.trim()).filter(Boolean);
+      if (idList.length === 0) {
+        return res.status(400).json({ error: 'Cap ID vàlid' });
+      }
+      where.id = { in: idList };
+    } else {
+      // Construir where amb els filtres (mateixos que el llistat)
+      if (status) where.status = status;
+      if (source) where.source = source;
+      if (supplierId) where.supplierId = supplierId;
+      if (dateFrom || dateTo) {
+        where.issueDate = {};
+        if (dateFrom) where.issueDate.gte = new Date(dateFrom);
+        if (dateTo) where.issueDate.lte = new Date(dateTo);
+      }
+      if (conciliated === 'true') {
+        where.conciliations = { some: { status: 'CONFIRMED' } };
+      } else if (conciliated === 'false') {
+        where.conciliations = { none: {} };
+      }
+      if (search) {
+        where.OR = [
+          { invoiceNumber: { contains: search, mode: 'insensitive' } },
+          { description: { contains: search, mode: 'insensitive' } },
+          { supplier: { name: { contains: search, mode: 'insensitive' } } },
+        ];
+      }
     }
 
     const invoices = await prisma.receivedInvoice.findMany({
@@ -58,10 +67,15 @@ router.get('/received-invoices/:format', authorize('ADMIN', 'EDITOR'), async (re
     const title = 'Factures Rebudes — SeitoCamera';
 
     const filterParts = [];
-    if (dateFrom) filterParts.push(`Des de: ${dateFrom}`);
-    if (dateTo) filterParts.push(`Fins: ${dateTo}`);
-    if (status) filterParts.push(`Estat: ${status}`);
-    if (source) filterParts.push(`Font: ${source}`);
+    if (ids) {
+      const count = String(ids).split(',').filter(Boolean).length;
+      filterParts.push(`Selecció manual: ${count} factures`);
+    } else {
+      if (dateFrom) filterParts.push(`Des de: ${dateFrom}`);
+      if (dateTo) filterParts.push(`Fins: ${dateTo}`);
+      if (status) filterParts.push(`Estat: ${status}`);
+      if (source) filterParts.push(`Font: ${source}`);
+    }
     const filterDescription = filterParts.join(' | ') || 'Sense filtres';
 
     await sendExport(res, format, rows, columns, title, 'factures-rebudes', { filterDescription });
@@ -81,22 +95,30 @@ router.get('/issued-invoices/:format', authorize('ADMIN', 'EDITOR'), async (req,
       return res.status(400).json({ error: 'Format no vàlid. Usa: csv, xlsx, pdf' });
     }
 
-    const { search, status, clientId, dateFrom, dateTo } = req.query;
+    const { search, status, clientId, dateFrom, dateTo, ids } = req.query;
 
     const where = {};
-    if (status) where.status = status;
-    if (clientId) where.clientId = clientId;
-    if (dateFrom || dateTo) {
-      where.issueDate = {};
-      if (dateFrom) where.issueDate.gte = new Date(dateFrom);
-      if (dateTo) where.issueDate.lte = new Date(dateTo);
-    }
-    if (search) {
-      where.OR = [
-        { invoiceNumber: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
-        { client: { name: { contains: search, mode: 'insensitive' } } },
-      ];
+    if (ids) {
+      const idList = String(ids).split(',').map((s) => s.trim()).filter(Boolean);
+      if (idList.length === 0) {
+        return res.status(400).json({ error: 'Cap ID vàlid' });
+      }
+      where.id = { in: idList };
+    } else {
+      if (status) where.status = status;
+      if (clientId) where.clientId = clientId;
+      if (dateFrom || dateTo) {
+        where.issueDate = {};
+        if (dateFrom) where.issueDate.gte = new Date(dateFrom);
+        if (dateTo) where.issueDate.lte = new Date(dateTo);
+      }
+      if (search) {
+        where.OR = [
+          { invoiceNumber: { contains: search, mode: 'insensitive' } },
+          { description: { contains: search, mode: 'insensitive' } },
+          { client: { name: { contains: search, mode: 'insensitive' } } },
+        ];
+      }
     }
 
     const invoices = await prisma.issuedInvoice.findMany({
@@ -112,9 +134,14 @@ router.get('/issued-invoices/:format', authorize('ADMIN', 'EDITOR'), async (req,
     const title = 'Factures Emeses — SeitoCamera';
 
     const filterParts = [];
-    if (dateFrom) filterParts.push(`Des de: ${dateFrom}`);
-    if (dateTo) filterParts.push(`Fins: ${dateTo}`);
-    if (status) filterParts.push(`Estat: ${status}`);
+    if (ids) {
+      const count = String(ids).split(',').filter(Boolean).length;
+      filterParts.push(`Selecció manual: ${count} factures`);
+    } else {
+      if (dateFrom) filterParts.push(`Des de: ${dateFrom}`);
+      if (dateTo) filterParts.push(`Fins: ${dateTo}`);
+      if (status) filterParts.push(`Estat: ${status}`);
+    }
     const filterDescription = filterParts.join(' | ') || 'Sense filtres';
 
     await sendExport(res, format, rows, columns, title, 'factures-emeses', { filterDescription });

@@ -63,6 +63,7 @@ export default function ReceivedInvoices() {
   const [uploadFile, setUploadFile] = useState(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editForm, setEditForm] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]);
   const [form, setForm] = useState({
     invoiceNumber: '', supplierId: '', issueDate: '', dueDate: '',
     subtotal: '', taxRate: '21', taxAmount: '', totalAmount: '', description: '',
@@ -89,6 +90,25 @@ export default function ReceivedInvoices() {
       setSortDir('asc');
     }
   };
+
+  // Gestió selecció
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAllVisible = () => {
+    const visibleIds = sortedData.map((inv) => inv.id);
+    const allSelected = visibleIds.every((id) => selectedIds.includes(id));
+    if (allSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !visibleIds.includes(id)));
+    } else {
+      setSelectedIds((prev) => Array.from(new Set([...prev, ...visibleIds])));
+    }
+  };
+
+  const clearSelection = () => setSelectedIds([]);
 
   const sortedData = (() => {
     if (!data?.data) return [];
@@ -205,14 +225,15 @@ export default function ReceivedInvoices() {
   // Veure PDF
   const handleViewPdf = async (inv) => {
     setSelectedInvoice(inv);
+    setPdfUrl(null);
+    setShowPdfModal(true);
     try {
-      const { data } = await api.get(`/invoices/received/${inv.id}/pdf`);
-      if (data.type === 'redirect') {
-        setPdfUrl(data.url);
-      }
-    } catch {
-      // Si retorna el fitxer directament, construir URL
-      setPdfUrl(`${api.defaults.baseURL}/invoices/received/${inv.id}/pdf`);
+      const response = await api.get(`/invoices/received/${inv.id}/pdf`, { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      setPdfUrl(url);
+    } catch (err) {
+      console.error('Error carregant PDF:', err);
     }
     setShowPdfModal(true);
   };
@@ -315,6 +336,7 @@ export default function ReceivedInvoices() {
             endpoint="/export/received-invoices"
             filters={{ search: search || undefined, status: statusFilter || undefined, source: sourceFilter || undefined, conciliated: conciliatedFilter || undefined }}
             filenameBase="factures-rebudes"
+            selectedIds={selectedIds}
           />
           <button onClick={() => { resetForm(); setShowModal(true); }} className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90">
             <Plus size={16} /> Nova factura
@@ -326,9 +348,9 @@ export default function ReceivedInvoices() {
       <div className="flex flex-wrap gap-3 mb-4">
         <div className="relative flex-1 min-w-[200px]">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <input type="text" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Cercar per número, descripció o proveïdor..." className="w-full pl-10 pr-4 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+          <input type="text" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); clearSelection(); }} placeholder="Cercar per número, descripció o proveïdor..." className="w-full pl-10 pr-4 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
         </div>
-        <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} className="rounded-md border bg-background px-3 py-2 text-sm">
+        <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); clearSelection(); }} className="rounded-md border bg-background px-3 py-2 text-sm">
           <option value="">Tots els estats</option>
           <option value="PENDING">Pendent</option>
           <option value="PDF_PENDING">Falta PDF</option>
@@ -336,7 +358,7 @@ export default function ReceivedInvoices() {
           <option value="PAID">Pagada</option>
           <option value="REJECTED">Rebutjada</option>
         </select>
-        <select value={sourceFilter} onChange={(e) => { setSourceFilter(e.target.value); setPage(1); }} className="rounded-md border bg-background px-3 py-2 text-sm">
+        <select value={sourceFilter} onChange={(e) => { setSourceFilter(e.target.value); setPage(1); clearSelection(); }} className="rounded-md border bg-background px-3 py-2 text-sm">
           <option value="">Totes les fonts</option>
           <option value="MANUAL">Manual</option>
           <option value="EMAIL_WITH_PDF">Email+PDF</option>
@@ -344,18 +366,42 @@ export default function ReceivedInvoices() {
           <option value="PCLOUD_SYNC">pCloud</option>
           <option value="BANK_DETECTED">Banc</option>
         </select>
-        <select value={conciliatedFilter} onChange={(e) => { setConciliatedFilter(e.target.value); setPage(1); }} className="rounded-md border bg-background px-3 py-2 text-sm">
+        <select value={conciliatedFilter} onChange={(e) => { setConciliatedFilter(e.target.value); setPage(1); clearSelection(); }} className="rounded-md border bg-background px-3 py-2 text-sm">
           <option value="">Conciliació: totes</option>
           <option value="true">Conciliades</option>
           <option value="false">Sense conciliar</option>
         </select>
       </div>
 
+      {/* Barra de selecció */}
+      {selectedIds.length > 0 && (
+        <div className="mb-3 flex items-center justify-between bg-teal-50 border border-teal-200 rounded-lg px-4 py-2">
+          <span className="text-sm text-teal-800">
+            <strong>{selectedIds.length}</strong> factures seleccionades
+          </span>
+          <button
+            onClick={clearSelection}
+            className="text-xs text-teal-700 hover:text-teal-900 underline"
+          >
+            Netejar selecció
+          </button>
+        </div>
+      )}
+
       {/* Taula */}
       <div className="bg-card border rounded-lg overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-muted/50">
             <tr>
+              <th className="p-3 w-10">
+                <input
+                  type="checkbox"
+                  checked={sortedData.length > 0 && sortedData.every((inv) => selectedIds.includes(inv.id))}
+                  onChange={toggleSelectAllVisible}
+                  className="rounded border-gray-300 text-teal-600 focus:ring-teal-500 cursor-pointer"
+                  title="Seleccionar totes les visibles"
+                />
+              </th>
               <SortableHeader label="Número" field="invoiceNumber" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <SortableHeader label="Proveïdor" field="supplier" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <SortableHeader label="Data" field="issueDate" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
@@ -369,14 +415,26 @@ export default function ReceivedInvoices() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
+              <tr><td colSpan={10} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
             ) : data?.data?.length === 0 ? (
-              <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">Cap factura trobada</td></tr>
+              <tr><td colSpan={10} className="p-8 text-center text-muted-foreground">Cap factura trobada</td></tr>
             ) : (
               sortedData.map((inv) => {
                 const src = SOURCE_LABELS[inv.source] || SOURCE_LABELS.MANUAL;
+                const isSelected = selectedIds.includes(inv.id);
                 return (
-                  <tr key={inv.id} className={`border-t hover:bg-muted/30 ${inv.isDuplicate ? 'bg-amber-50/50' : ''}`}>
+                  <tr
+                    key={inv.id}
+                    className={`border-t hover:bg-muted/30 ${isSelected ? 'bg-teal-50/60' : inv.isDuplicate ? 'bg-amber-50/50' : ''}`}
+                  >
+                    <td className="p-3">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleSelect(inv.id)}
+                        className="rounded border-gray-300 text-teal-600 focus:ring-teal-500 cursor-pointer"
+                      />
+                    </td>
                     <td className="p-3">
                       <div className="flex items-center gap-1">
                         <span className="font-medium">{inv.invoiceNumber}</span>
@@ -431,9 +489,9 @@ export default function ReceivedInvoices() {
           <div className="flex items-center justify-between p-3 border-t text-sm">
             <span className="text-muted-foreground">{data.pagination.total} factures</span>
             <div className="flex gap-2">
-              <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} className="px-3 py-1 rounded border disabled:opacity-50">Anterior</button>
+              <button onClick={() => { setPage(Math.max(1, page - 1)); clearSelection(); }} disabled={page === 1} className="px-3 py-1 rounded border disabled:opacity-50">Anterior</button>
               <span className="px-3 py-1">{page} / {data.pagination.totalPages}</span>
-              <button onClick={() => setPage(Math.min(data.pagination.totalPages, page + 1))} disabled={page >= data.pagination.totalPages} className="px-3 py-1 rounded border disabled:opacity-50">Següent</button>
+              <button onClick={() => { setPage(Math.min(data.pagination.totalPages, page + 1)); clearSelection(); }} disabled={page >= data.pagination.totalPages} className="px-3 py-1 rounded border disabled:opacity-50">Següent</button>
             </div>
           </div>
         )}
@@ -514,7 +572,7 @@ export default function ReceivedInvoices() {
       </Modal>
 
       {/* Modal: Preview PDF */}
-      <Modal isOpen={showPdfModal} onClose={() => { setShowPdfModal(false); setPdfUrl(null); }} title={`PDF — ${selectedInvoice?.invoiceNumber || ''}`} size="xl">
+      <Modal isOpen={showPdfModal} onClose={() => { setShowPdfModal(false); if (pdfUrl) window.URL.revokeObjectURL(pdfUrl); setPdfUrl(null); }} title={`PDF — ${selectedInvoice?.invoiceNumber || ''}`} size="xl">
         {pdfUrl ? (
           <div className="h-[70vh]">
             <iframe src={pdfUrl} className="w-full h-full rounded border" title="Preview PDF" />
