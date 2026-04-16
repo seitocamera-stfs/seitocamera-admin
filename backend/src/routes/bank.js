@@ -3,7 +3,7 @@ const { z } = require('zod');
 const { prisma } = require('../config/database');
 const { authenticate, authorize } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
-const { requireSection } = require('../middleware/sectionAccess');
+const { requireSection, requireLevel } = require('../middleware/sectionAccess');
 
 const router = express.Router();
 
@@ -73,6 +73,37 @@ router.get('/', async (req, res, next) => {
         totalPages: Math.ceil(total / parseInt(limit)),
       },
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================
+// SINCRONITZACIÓ QONTO (ha d'anar ABANS de /:id)
+// ===========================================
+
+const qontoSync = require('../services/qontoSyncService');
+
+/**
+ * GET /api/bank/qonto/status — Estat de connexió amb Qonto
+ */
+router.get('/qonto/status', authorize('ADMIN'), async (req, res, next) => {
+  try {
+    const result = await qontoSync.testConnection();
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/bank/qonto/sync — Sincronitzar moviments de Qonto
+ */
+router.post('/qonto/sync', authorize('ADMIN'), async (req, res, next) => {
+  try {
+    const { fullSync = false } = req.body || {};
+    const result = await qontoSync.syncQontoTransactions({ fullSync });
+    res.json({ message: 'Sincronització Qonto completada', ...result });
   } catch (error) {
     next(error);
   }
@@ -184,7 +215,7 @@ router.put('/:id', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
 /**
  * DELETE /api/bank/:id — Eliminar moviment
  */
-router.delete('/:id', authorize('ADMIN'), async (req, res, next) => {
+router.delete('/:id', requireLevel('bank', 'admin'), async (req, res, next) => {
   try {
     await prisma.bankMovement.delete({
       where: { id: req.params.id },

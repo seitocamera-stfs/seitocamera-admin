@@ -1,6 +1,8 @@
 const express = require('express');
 const { authenticate, authorize } = require('../middleware/auth');
 const rentman = require('../services/rentmanService');
+const rentmanSync = require('../services/rentmanSyncService');
+const { redis } = require('../config/redis');
 const { prisma } = require('../config/database');
 const { logger } = require('../config/logger');
 
@@ -102,145 +104,203 @@ router.get('/invoices/:id', async (req, res, next) => {
 // ===========================================
 
 /**
- * POST /api/rentman/sync/invoices — Importar factures de Rentman com a factures emeses
+ * POST /api/rentman/sync/invoices — Sincronitzar factures de Rentman
  *
- * Crea factures emeses a SeitoCamera Admin a partir de les factures de Rentman,
- * evitant duplicats per número de factura.
+ * Utilitza el servei rentmanSyncService. Crea les noves i actualitza
+ * les existents (status, dueDate, imports, projectReference…).
+ *
+ * Query params opcionals:
+ *   - recentDays=N — només factures modificades en els últims N dies
+ *   - skipProjects=true — no consultar projectes (més ràpid)
  */
 router.post('/sync/invoices', authorize('ADMIN'), async (req, res, next) => {
   try {
-    // Paginació automàtica: Rentman limita a 1500 per consulta
-    let invoices = [];
-    let offset = 0;
-    const pageSize = 500;
-    let hasMore = true;
+    const recentDays = req.query.recentDays ? parseInt(req.query.recentDays) : null;
+    const fetchProjects = req.query.skipProjects !== 'true';
 
-    while (hasMore) {
-      const batch = await rentman.getInvoices({ limit: pageSize, offset });
-      const batchArray = Array.isArray(batch) ? batch : [];
-      invoices = invoices.concat(batchArray);
-      offset += pageSize;
-      hasMore = batchArray.length === pageSize;
-      logger.info(`Rentman sync: carregades ${invoices.length} factures (offset: ${offset})`);
-    }
+    const result = await rentmanSync.syncAllInvoices({
+      fetchProjects,
+      onlyRecentDays: recentDays,
+    });
 
-    let created = 0;
-    let skipped = 0;
-    let errors = 0;
-
-    for (const inv of invoices) {
-      try {
-        // Comprovar si ja existeix pel número de factura
-        const invoiceNumber = inv.number || `RM-${inv.id}`;
-        const existing = await prisma.issuedInvoice.findFirst({
-          where: { invoiceNumber },
-        });
-
-        if (existing) {
-          skipped++;
-          continue;
-        }
-
-        // Buscar o crear client pel contacte de Rentman
-        // El camp "customer" conté una URL com "/contacts/4642"
-        let clientId = null;
-        const customerRef = inv.customer;
-        if (customerRef) {
-          const contactIdMatch = String(customerRef).match(/\/contacts\/(\d+)/);
-          const contactId = contactIdMatch ? contactIdMatch[1] : null;
-          if (contactId) {
-            try {
-              const contactData = await rentman.getContact(contactId);
-              const contactName = contactData.displayname || contactData.name || `Rentman Contact ${contactId}`;
-              const contactNif = contactData.VAT_code || null;
-              const contactEmail = contactData.email_1 || null;
-              const contactPhone = contactData.phone_1 || null;
-              const contactCity = contactData.invoice_city || contactData.mailing_city || null;
-              const contactAddress = [contactData.invoice_street, contactData.invoice_number].filter(Boolean).join(' ') || null;
-              const contactPostalCode = contactData.invoice_postalcode || null;
-
-              // Buscar client existent pel NIF o nom
-              let client = null;
-              if (contactNif) {
-                client = await prisma.client.findFirst({
-                  where: { nif: { equals: contactNif, mode: 'insensitive' } },
-                });
-              }
-              if (!client) {
-                client = await prisma.client.findFirst({
-                  where: { name: { equals: contactName, mode: 'insensitive' } },
-                });
-              }
-
-              if (!client) {
-                client = await prisma.client.create({
-                  data: {
-                    name: contactName,
-                    nif: contactNif || null,
-                    email: contactEmail,
-                    phone: contactPhone,
-                    city: contactCity,
-                    address: contactAddress,
-                    postalCode: contactPostalCode,
-                  },
-                });
-                logger.info(`Client creat des de Rentman: ${contactName} (NIF: ${contactNif || '-'})`);
-              }
-
-              clientId = client.id;
-            } catch (contactError) {
-              logger.warn(`No s'ha pogut obtenir contacte Rentman ${contactId}: ${contactError.message}`);
-            }
-          }
-        }
-
-        if (!clientId) {
-          let genericClient = await prisma.client.findFirst({
-            where: { name: 'Rentman (sense contacte)' },
-          });
-          if (!genericClient) {
-            genericClient = await prisma.client.create({
-              data: { name: 'Rentman (sense contacte)' },
-            });
-          }
-          clientId = genericClient.id;
-        }
-
-        // Imports directes de Rentman (ja venen calculats)
-        const totalAmount = parseFloat(inv.price_invat || 0);  // Total amb IVA
-        const subtotal = parseFloat(inv.price || 0);           // Base imposable
-        const vatAmount = parseFloat(inv.vat_amount || 0);     // IVA
-        const taxRate = subtotal > 0 ? Math.round((vatAmount / subtotal) * 100 * 100) / 100 : 21;
-
-        await prisma.issuedInvoice.create({
-          data: {
-            invoiceNumber,
-            clientId,
-            issueDate: inv.date ? new Date(inv.date) : new Date(),
-            dueDate: inv.expiration ? new Date(inv.expiration) : null,
-            subtotal,
-            taxRate,
-            taxAmount: vatAmount,
-            totalAmount,
-            status: inv.is_paid ? 'PAID' : 'PENDING',
-            description: inv.subject || inv.displayname || `Importada de Rentman (ID: ${inv.id})`,
-          },
-        });
-
-        created++;
-      } catch (invError) {
-        logger.error(`Error important factura Rentman ${inv.id}: ${invError.message}`);
-        errors++;
-      }
-    }
-
-    logger.info(`Sincronització Rentman: ${created} creades, ${skipped} omeses, ${errors} errors`);
+    // Desar timestamp manual a Redis
+    await redis.set('rentman:lastManualSync', Date.now().toString());
 
     res.json({
       message: 'Sincronització completada',
-      total: invoices.length,
-      created,
-      skipped,
+      ...result,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/rentman/sync/status — Estat de l'última sincronització
+ */
+router.get('/sync/status', async (req, res, next) => {
+  try {
+    const [lastSync, lastManualSync, lastFullSync, lastWeeklySync, lastResult, lastFullResult] = await Promise.all([
+      redis.get('rentman:lastSync'),
+      redis.get('rentman:lastManualSync'),
+      redis.get('rentman:lastFullSync'),
+      redis.get('rentman:lastWeeklySync'),
+      redis.get('rentman:lastSyncResult'),
+      redis.get('rentman:lastFullSyncResult'),
+    ]);
+
+    res.json({
+      lastIncrementalSync: lastSync ? new Date(parseInt(lastSync)).toISOString() : null,
+      lastManualSync: lastManualSync ? new Date(parseInt(lastManualSync)).toISOString() : null,
+      lastNightlyFullSync: lastFullSync ? new Date(parseInt(lastFullSync)).toISOString() : null,
+      lastWeeklyProjectSync: lastWeeklySync ? new Date(parseInt(lastWeeklySync)).toISOString() : null,
+      lastIncrementalResult: lastResult ? JSON.parse(lastResult) : null,
+      lastNightlyResult: lastFullResult ? JSON.parse(lastFullResult) : null,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/rentman/backfill/project-references — Emplenar projectReference a factures existents
+ *
+ * Per cada factura emesa que té rentmanInvoiceId però encara no projectReference,
+ * consulta Rentman, obté el projecte i guarda la referència + nom.
+ * Útil per factures importades abans d'afegir aquests camps.
+ */
+router.post('/backfill/project-references', authorize('ADMIN'), async (req, res, next) => {
+  try {
+    // 1. Per factures que ja tenen rentmanInvoiceId però no projectReference
+    const pendingWithId = await prisma.issuedInvoice.findMany({
+      where: {
+        rentmanInvoiceId: { not: null },
+        projectReference: null,
+      },
+      select: { id: true, rentmanInvoiceId: true, rentmanProjectId: true },
+    });
+
+    // 2. Per factures sense rentmanInvoiceId (importades abans que afegíssim el camp),
+    //    les relacionem per invoiceNumber consultant Rentman
+    const unmapped = await prisma.issuedInvoice.findMany({
+      where: {
+        rentmanInvoiceId: null,
+        projectReference: null,
+      },
+      select: { id: true, invoiceNumber: true },
+    });
+
+    logger.info(`Backfill project references: ${pendingWithId.length} amb ID Rentman + ${unmapped.length} per mapejar per número`);
+
+    let processed = 0;
+    let updated = 0;
+    let errors = 0;
+
+    // Mapa: invoiceNumber → rentman invoice (per la segona part)
+    let rentmanByNumber = null;
+
+    // --- Bucle 1: factures ja enllaçades ---
+    for (const inv of pendingWithId) {
+      try {
+        let rentmanProjectId = inv.rentmanProjectId;
+
+        if (!rentmanProjectId) {
+          // Obtenir factura Rentman per trobar el project
+          const rmInv = await rentman.getInvoice(inv.rentmanInvoiceId);
+          const m = String(rmInv.project || '').match(/\/projects\/(\d+)/);
+          if (m) rentmanProjectId = m[1];
+        }
+
+        if (!rentmanProjectId) {
+          processed++;
+          continue;
+        }
+
+        const project = await rentman.getProject(rentmanProjectId);
+        await prisma.issuedInvoice.update({
+          where: { id: inv.id },
+          data: {
+            projectReference: project.reference || null,
+            projectName: project.name || null,
+            rentmanProjectId,
+          },
+        });
+        updated++;
+        processed++;
+      } catch (e) {
+        errors++;
+        logger.warn(`Backfill error factura ${inv.id}: ${e.message}`);
+      }
+    }
+
+    // --- Bucle 2: factures sense rentmanInvoiceId ---
+    if (unmapped.length > 0) {
+      // Carregar totes les factures de Rentman per fer mapping per número
+      let allRentmanInvoices = [];
+      let offset = 0;
+      const pageSize = 500;
+      let hasMore = true;
+      while (hasMore) {
+        const batch = await rentman.getInvoices({ limit: pageSize, offset });
+        const arr = Array.isArray(batch) ? batch : [];
+        allRentmanInvoices = allRentmanInvoices.concat(arr);
+        offset += pageSize;
+        hasMore = arr.length === pageSize;
+      }
+      rentmanByNumber = new Map();
+      for (const ri of allRentmanInvoices) {
+        if (ri.number) rentmanByNumber.set(String(ri.number), ri);
+      }
+
+      for (const inv of unmapped) {
+        try {
+          const rmInv = rentmanByNumber.get(String(inv.invoiceNumber));
+          if (!rmInv) {
+            processed++;
+            continue;
+          }
+          const rentmanInvoiceId = String(rmInv.id);
+          let rentmanProjectId = null;
+          let projectReference = null;
+          let projectName = null;
+
+          const m = String(rmInv.project || '').match(/\/projects\/(\d+)/);
+          if (m) {
+            rentmanProjectId = m[1];
+            try {
+              const project = await rentman.getProject(rentmanProjectId);
+              projectReference = project.reference || null;
+              projectName = project.name || null;
+            } catch (e) {
+              logger.warn(`No s'ha pogut obtenir projecte ${rentmanProjectId}: ${e.message}`);
+            }
+          }
+
+          await prisma.issuedInvoice.update({
+            where: { id: inv.id },
+            data: {
+              rentmanInvoiceId,
+              rentmanProjectId,
+              projectReference,
+              projectName,
+            },
+          });
+          if (projectReference) updated++;
+          processed++;
+        } catch (e) {
+          errors++;
+          logger.warn(`Backfill error factura ${inv.id}: ${e.message}`);
+        }
+      }
+    }
+
+    logger.info(`Backfill project references: ${updated}/${processed} actualitzades, ${errors} errors`);
+
+    res.json({
+      message: 'Backfill completat',
+      total: pendingWithId.length + unmapped.length,
+      processed,
+      updated,
       errors,
     });
   } catch (error) {

@@ -5,7 +5,7 @@ const fs = require('fs');
 const { prisma } = require('../config/database');
 const { authenticate, authorize } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
-const { requireSection } = require('../middleware/sectionAccess');
+const { requireSection, requireLevel } = require('../middleware/sectionAccess');
 const { upload } = require('../config/upload');
 const gdrive = require('../services/gdriveService');
 const pdfExtract = require('../services/pdfExtractService');
@@ -19,10 +19,8 @@ router.use(authenticate);
 router.use('/received', requireSection('receivedInvoices'));
 router.use('/issued', requireSection('issuedInvoices'));
 router.use('/stats', (req, res, next) => {
-  const role = req.user?.role;
-  const { ROLE_SECTIONS } = require('../middleware/sectionAccess');
-  const sections = ROLE_SECTIONS[role] || [];
-  if (!sections.includes('receivedInvoices') && !sections.includes('issuedInvoices')) {
+  const { hasLevel } = require('../middleware/sectionAccess');
+  if (!hasLevel(req.user, 'receivedInvoices') && !hasLevel(req.user, 'issuedInvoices')) {
     return res.status(403).json({ error: 'No tens accés a estadístiques de factures' });
   }
   next();
@@ -99,11 +97,17 @@ router.get('/received', async (req, res, next) => {
     }
 
     if (search) {
-      where.OR = [
+      const searchConditions = [
         { invoiceNumber: { contains: search, mode: 'insensitive' } },
         { description: { contains: search, mode: 'insensitive' } },
         { supplier: { name: { contains: search, mode: 'insensitive' } } },
       ];
+      // Si el terme de cerca és un número, buscar també per import
+      const searchNum = parseFloat(search.replace(',', '.'));
+      if (!isNaN(searchNum) && searchNum > 0) {
+        searchConditions.push({ totalAmount: { gte: searchNum - 0.02, lte: searchNum + 0.02 } });
+      }
+      where.OR = searchConditions;
     }
 
     const [invoices, total] = await Promise.all([
@@ -250,13 +254,19 @@ router.get('/received/:id/pdf', async (req, res, next) => {
       return fs.createReadStream(invoice.filePath).pipe(res);
     }
 
-    // Opció 2: fitxer a Google Drive
+    // Opció 2: fitxer a Google Drive — descarregar i servir directament
     if (invoice.gdriveFileId) {
       try {
-        const fileInfo = await gdrive.getFileLink(invoice.gdriveFileId);
-        return res.json({ type: 'redirect', url: fileInfo.webViewLink });
+        const drive = gdrive.getDriveClient();
+        const fileRes = await drive.files.get(
+          { fileId: invoice.gdriveFileId, alt: 'media' },
+          { responseType: 'stream' }
+        );
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `inline; filename="${invoice.originalFileName || 'factura.pdf'}"`);
+        return fileRes.data.pipe(res);
       } catch (err) {
-        logger.warn(`Error obtenint PDF de Google Drive: ${err.message}`);
+        logger.warn(`Error descarregant PDF de Google Drive: ${err.message}`);
       }
     }
 
@@ -590,7 +600,7 @@ router.patch('/received/:id/status', authorize('ADMIN', 'EDITOR'), validate(stat
   }
 });
 
-router.delete('/received/:id', authorize('ADMIN'), async (req, res, next) => {
+router.delete('/received/:id', requireLevel('receivedInvoices', 'admin'), async (req, res, next) => {
   try {
     await prisma.receivedInvoice.delete({ where: { id: req.params.id } });
     res.json({ message: 'Factura eliminada' });
@@ -617,11 +627,16 @@ router.get('/issued', async (req, res, next) => {
       if (dateTo) where.issueDate.lte = new Date(dateTo);
     }
     if (search) {
-      where.OR = [
+      const searchConditions = [
         { invoiceNumber: { contains: search, mode: 'insensitive' } },
         { description: { contains: search, mode: 'insensitive' } },
         { client: { name: { contains: search, mode: 'insensitive' } } },
       ];
+      const searchNum = parseFloat(search.replace(',', '.'));
+      if (!isNaN(searchNum) && searchNum > 0) {
+        searchConditions.push({ totalAmount: { gte: searchNum - 0.02, lte: searchNum + 0.02 } });
+      }
+      where.OR = searchConditions;
     }
     const [invoices, total] = await Promise.all([
       prisma.issuedInvoice.findMany({ where, skip, take: parseInt(limit), orderBy: { issueDate: 'desc' }, include: { client: { select: { id: true, name: true, nif: true } } } }),
@@ -673,7 +688,7 @@ router.patch('/issued/:id/status', authorize('ADMIN', 'EDITOR'), validate(status
   }
 });
 
-router.delete('/issued/:id', authorize('ADMIN'), async (req, res, next) => {
+router.delete('/issued/:id', requireLevel('issuedInvoices', 'admin'), async (req, res, next) => {
   try {
     await prisma.issuedInvoice.delete({ where: { id: req.params.id } });
     res.json({ message: 'Factura eliminada' });

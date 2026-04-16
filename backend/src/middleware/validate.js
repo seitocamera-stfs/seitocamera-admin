@@ -15,8 +15,13 @@ function validate(schema) {
           field: e.path.join('.'),
           message: e.message,
         }));
+        // Missatge més informatiu: inclou el primer camp invàlid
+        const firstError = errors[0];
+        const errorMsg = firstError
+          ? `Dades invàlides: ${firstError.field} — ${firstError.message}`
+          : 'Dades invàlides';
         return res.status(400).json({
-          error: 'Dades invàlides',
+          error: errorMsg,
           details: errors,
         });
       }

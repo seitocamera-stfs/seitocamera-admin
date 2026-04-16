@@ -152,22 +152,26 @@ model ReceivedInvoice {
 // ===========================================
 
 model IssuedInvoice {
-  id              String        @id @default(cuid())
-  invoiceNumber   String        @unique
-  clientId        String
-  issueDate       DateTime
-  dueDate         DateTime?
-  subtotal        Decimal       @db.Decimal(12, 2)
-  taxRate         Decimal       @default(21) @db.Decimal(5, 2)
-  taxAmount       Decimal       @db.Decimal(12, 2)
-  totalAmount     Decimal       @db.Decimal(12, 2)
-  currency        String        @default("EUR")
-  status          InvoiceStatus @default(PENDING)
-  category        String?
-  description     String?
-  filePath        String?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  id                String        @id @default(cuid())
+  invoiceNumber     String        @unique
+  clientId          String
+  issueDate         DateTime
+  dueDate           DateTime?
+  subtotal          Decimal       @db.Decimal(12, 2)
+  taxRate           Decimal       @default(21) @db.Decimal(5, 2)
+  taxAmount         Decimal       @db.Decimal(12, 2)
+  totalAmount       Decimal       @db.Decimal(12, 2)
+  currency          String        @default("EUR")
+  status            InvoiceStatus @default(PENDING)
+  category          String?
+  description       String?
+  projectReference  String?       // Referència del projecte Rentman ({$f.project.reference})
+  projectName       String?       // Nom del projecte Rentman
+  rentmanInvoiceId  String?       // ID original de la factura a Rentman (per resync / backfill)
+  rentmanProjectId  String?       // ID del projecte a Rentman
+  filePath          String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 
   // Relacions
   client         Client          @relation(fields: [clientId], references: [id])
@@ -176,6 +180,7 @@ model IssuedInvoice {
   @@index([status])
   @@index([issueDate])
   @@index([clientId])
+  @@index([rentmanInvoiceId])
   @@map("issued_invoices")
 }
 
@@ -199,6 +204,11 @@ model BankMovement {
   type            MovementType
   reference       String?
   bankAccount     String?
+  counterparty    String?              // Nom del pagador/cobrador (Qonto)
+  accountName     String?              // Compte: GASTOS, Ingresos, ESTALVI
+  category        String?              // Categoria de Qonto
+  operationType   String?              // income, transfer, direct_debit, other
+  qontoSlug       String?    @unique   // ID únic de Qonto per evitar duplicats
   rawData         Json?
   isConciliated   Boolean      @default(false)
   createdAt       DateTime     @default(now())
@@ -209,6 +219,7 @@ model BankMovement {
 
   @@index([date])
   @@index([isConciliated])
+  @@index([accountName])
   @@map("bank_movements")
 }
 
