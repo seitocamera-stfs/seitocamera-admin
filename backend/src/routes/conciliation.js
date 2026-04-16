@@ -3,7 +3,7 @@ const { z } = require('zod');
 const { prisma } = require('../config/database');
 const { authenticate, authorize } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
-const { requireSection } = require('../middleware/sectionAccess');
+const { requireSection, requireLevel } = require('../middleware/sectionAccess');
 const { logger } = require('../config/logger');
 
 const router = express.Router();
@@ -37,11 +37,11 @@ router.get('/', async (req, res, next) => {
         where,
         skip,
         take: parseInt(limit),
-        orderBy: { createdAt: 'desc' },
+        orderBy: { bankMovement: { date: 'desc' } },
         include: {
           bankMovement: { select: { id: true, date: true, description: true, amount: true, type: true } },
-          receivedInvoice: { select: { id: true, invoiceNumber: true, totalAmount: true, supplier: { select: { name: true } } } },
-          issuedInvoice: { select: { id: true, invoiceNumber: true, totalAmount: true, client: { select: { name: true } } } },
+          receivedInvoice: { select: { id: true, invoiceNumber: true, totalAmount: true, gdriveFileId: true, filePath: true, supplier: { select: { name: true } } } },
+          issuedInvoice: { select: { id: true, invoiceNumber: true, totalAmount: true, filePath: true, client: { select: { name: true } } } },
         },
       }),
       prisma.conciliation.count({ where }),
@@ -66,77 +66,163 @@ router.get('/', async (req, res, next) => {
 // ===========================================
 router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
   try {
-    // Buscar moviments no conciliats
+    // Buscar moviments no conciliats (excloure transferències internes)
     const unconciliated = await prisma.bankMovement.findMany({
-      where: { isConciliated: false },
+      where: {
+        isConciliated: false,
+        operationType: { notIn: ['transfer'] },  // Les transferències internes no es concilien
+      },
+      orderBy: { date: 'desc' },
     });
 
     let matched = 0;
+    const details = [];
 
     for (const movement of unconciliated) {
       const absAmount = Math.abs(parseFloat(movement.amount));
-      const tolerance = 0.01; // 1 cèntim de tolerància
+      const tolerance = 0.02; // 2 cèntims de tolerància
+      const counterparty = (movement.counterparty || '').toLowerCase();
 
-      let invoice = null;
-      let invoiceType = null;
+      let bestMatch = null;
+      let bestConfidence = 0;
+      let bestType = null;
+      let matchReason = '';
 
-      if (movement.type === 'EXPENSE') {
-        // Buscar factura rebuda amb import coincident
-        invoice = await prisma.receivedInvoice.findFirst({
+      if (movement.type === 'EXPENSE' || parseFloat(movement.amount) < 0) {
+        // DESPESA → buscar factura rebuda
+        const candidates = await prisma.receivedInvoice.findMany({
           where: {
-            totalAmount: {
-              gte: absAmount - tolerance,
-              lte: absAmount + tolerance,
-            },
-            status: { in: ['PENDING', 'APPROVED'] },
+            totalAmount: { gte: absAmount - tolerance, lte: absAmount + tolerance },
             conciliations: { none: {} },
           },
+          include: { supplier: { select: { name: true } } },
         });
-        invoiceType = 'received';
-      } else if (movement.type === 'INCOME') {
-        // Buscar factura emesa amb import coincident
-        invoice = await prisma.issuedInvoice.findFirst({
-          where: {
-            totalAmount: {
-              gte: absAmount - tolerance,
-              lte: absAmount + tolerance,
-            },
-            status: { in: ['PENDING', 'APPROVED'] },
-            conciliations: { none: {} },
-          },
-        });
-        invoiceType = 'issued';
+
+        for (const inv of candidates) {
+          let confidence = 0.5; // Base: import coincident
+          const reasons = [`Import: ${absAmount}€`];
+
+          // Bonus per nom del proveïdor coincident amb counterparty
+          const supplierName = (inv.supplier?.name || '').toLowerCase();
+          if (supplierName && counterparty) {
+            const supplierWords = supplierName.split(/[\s,.\-]+/).filter(w => w.length > 2);
+            const counterWords = counterparty.split(/[\s,.\-]+/).filter(w => w.length > 2);
+            const matchingWords = supplierWords.filter(w => counterWords.some(cw => cw.includes(w) || w.includes(cw)));
+
+            if (matchingWords.length >= 2) {
+              confidence += 0.4;
+              reasons.push(`Proveïdor: ${inv.supplier.name}`);
+            } else if (matchingWords.length >= 1) {
+              confidence += 0.2;
+              reasons.push(`Proveïdor parcial: ${inv.supplier.name}`);
+            }
+          }
+
+          // Bonus per data propera (±7 dies)
+          const daysDiff = Math.abs((new Date(movement.date) - new Date(inv.issueDate)) / (1000 * 86400));
+          if (daysDiff <= 7) {
+            confidence += 0.1;
+            reasons.push(`Data propera (${Math.round(daysDiff)}d)`);
+          }
+
+          if (confidence > bestConfidence) {
+            bestMatch = inv;
+            bestConfidence = confidence;
+            bestType = 'received';
+            matchReason = reasons.join(' + ');
+          }
+        }
       }
 
-      if (invoice) {
-        // Crear conciliació
-        await prisma.$transaction([
-          prisma.conciliation.create({
-            data: {
-              bankMovementId: movement.id,
-              receivedInvoiceId: invoiceType === 'received' ? invoice.id : null,
-              issuedInvoiceId: invoiceType === 'issued' ? invoice.id : null,
-              status: 'AUTO_MATCHED',
-              confidence: 0.95,
-              matchReason: `Import coincident: ${absAmount}€`,
-            },
-          }),
-          prisma.bankMovement.update({
-            where: { id: movement.id },
-            data: { isConciliated: true },
-          }),
-        ]);
+      if (movement.type === 'INCOME' || parseFloat(movement.amount) > 0) {
+        // INGRÉS → buscar factura emesa
+        const candidates = await prisma.issuedInvoice.findMany({
+          where: {
+            totalAmount: { gte: absAmount - tolerance, lte: absAmount + tolerance },
+            conciliations: { none: {} },
+          },
+          include: { client: { select: { name: true } } },
+        });
 
-        matched++;
-        logger.info(`Auto-conciliació: moviment ${movement.id} → ${invoiceType} invoice ${invoice.id}`);
+        for (const inv of candidates) {
+          let confidence = 0.5;
+          const reasons = [`Import: ${absAmount}€`];
+
+          // Bonus per nom del client coincident amb counterparty
+          const clientName = (inv.client?.name || '').toLowerCase();
+          if (clientName && counterparty) {
+            const clientWords = clientName.split(/[\s,.\-]+/).filter(w => w.length > 2);
+            const counterWords = counterparty.split(/[\s,.\-]+/).filter(w => w.length > 2);
+            const matchingWords = clientWords.filter(w => counterWords.some(cw => cw.includes(w) || w.includes(cw)));
+
+            if (matchingWords.length >= 2) {
+              confidence += 0.4;
+              reasons.push(`Client: ${inv.client.name}`);
+            } else if (matchingWords.length >= 1) {
+              confidence += 0.2;
+              reasons.push(`Client parcial: ${inv.client.name}`);
+            }
+          }
+
+          // Bonus per data propera
+          const daysDiff = Math.abs((new Date(movement.date) - new Date(inv.issueDate)) / (1000 * 86400));
+          if (daysDiff <= 7) {
+            confidence += 0.1;
+            reasons.push(`Data propera (${Math.round(daysDiff)}d)`);
+          }
+
+          if (confidence > bestConfidence) {
+            bestMatch = inv;
+            bestConfidence = confidence;
+            bestType = 'issued';
+            matchReason = reasons.join(' + ');
+          }
+        }
+      }
+
+      // Només crear conciliació si la confiança és >= 0.5 (mínim import coincident)
+      if (bestMatch && bestConfidence >= 0.5) {
+        try {
+          await prisma.$transaction([
+            prisma.conciliation.create({
+              data: {
+                bankMovementId: movement.id,
+                receivedInvoiceId: bestType === 'received' ? bestMatch.id : null,
+                issuedInvoiceId: bestType === 'issued' ? bestMatch.id : null,
+                status: bestConfidence >= 0.8 ? 'AUTO_MATCHED' : 'AUTO_MATCHED',
+                confidence: Math.round(bestConfidence * 100) / 100,
+                matchReason,
+              },
+            }),
+            prisma.bankMovement.update({
+              where: { id: movement.id },
+              data: { isConciliated: true },
+            }),
+          ]);
+
+          matched++;
+          details.push({
+            movement: `${movement.counterparty} (${absAmount}€)`,
+            invoice: bestMatch.invoiceNumber,
+            type: bestType,
+            confidence: Math.round(bestConfidence * 100) + '%',
+            reason: matchReason,
+          });
+        } catch (concErr) {
+          // Pot fallar si ja existeix la conciliació
+          logger.warn(`Conciliació duplicada: ${concErr.message}`);
+        }
       }
     }
+
+    logger.info(`Auto-conciliació: ${matched} de ${unconciliated.length} moviments conciliats`);
 
     res.json({
       message: `Conciliació automàtica completada`,
       processed: unconciliated.length,
       matched,
       unmatched: unconciliated.length - matched,
+      details: details.slice(0, 50), // Primers 50 per no sobrecarregar
     });
   } catch (error) {
     next(error);
@@ -219,10 +305,17 @@ router.patch('/:id/reject', authorize('ADMIN', 'EDITOR'), async (req, res, next)
       return res.status(404).json({ error: 'Conciliació no trobada' });
     }
 
+    // Rebutjar: desvincula la factura però manté la conciliació a la llista
     await prisma.$transaction([
       prisma.conciliation.update({
         where: { id: req.params.id },
-        data: { status: 'REJECTED' },
+        data: {
+          status: 'REJECTED',
+          receivedInvoiceId: null,
+          issuedInvoiceId: null,
+          confidence: null,
+          matchReason: null,
+        },
       }),
       prisma.bankMovement.update({
         where: { id: conciliation.bankMovementId },
@@ -230,8 +323,57 @@ router.patch('/:id/reject', authorize('ADMIN', 'EDITOR'), async (req, res, next)
       }),
     ]);
 
-    res.json({ message: 'Conciliació rebutjada' });
+    res.json({
+      message: 'Conciliació rebutjada — factura desvinculada',
+      bankMovementId: conciliation.bankMovementId,
+    });
   } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================
+// PUT /api/conciliation/:id/reassign — Reassignar factura a conciliació rebutjada
+// ===========================================
+router.put('/:id/reassign', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const { receivedInvoiceId, issuedInvoiceId } = req.body;
+
+    if (!receivedInvoiceId && !issuedInvoiceId) {
+      return res.status(400).json({ error: 'Cal indicar una factura' });
+    }
+
+    const conciliation = await prisma.conciliation.findUnique({
+      where: { id: req.params.id },
+    });
+
+    if (!conciliation) {
+      return res.status(404).json({ error: 'Conciliació no trobada' });
+    }
+
+    await prisma.$transaction([
+      prisma.conciliation.update({
+        where: { id: req.params.id },
+        data: {
+          status: 'MANUAL_MATCHED',
+          receivedInvoiceId: receivedInvoiceId || null,
+          issuedInvoiceId: issuedInvoiceId || null,
+          confirmedBy: req.user.id,
+          confirmedAt: new Date(),
+          matchReason: 'Reassignació manual',
+        },
+      }),
+      prisma.bankMovement.update({
+        where: { id: conciliation.bankMovementId },
+        data: { isConciliated: true },
+      }),
+    ]);
+
+    res.json({ message: 'Factura reassignada correctament' });
+  } catch (error) {
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'Conciliació o factura no trobada' });
+    }
     next(error);
   }
 });
@@ -239,7 +381,7 @@ router.patch('/:id/reject', authorize('ADMIN', 'EDITOR'), async (req, res, next)
 // ===========================================
 // DELETE /api/conciliation/:id — Eliminar conciliació
 // ===========================================
-router.delete('/:id', authorize('ADMIN'), async (req, res, next) => {
+router.delete('/:id', requireLevel('conciliation', 'admin'), async (req, res, next) => {
   try {
     const conciliation = await prisma.conciliation.findUnique({
       where: { id: req.params.id },
