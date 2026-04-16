@@ -147,3 +147,6 @@ backend/seitocamera-admin-*.json
 # Cleanup scripts
 backend/cleanup.js
 
+# Ad-hoc debug / inspection scripts
+backend/inspect-*.js
+
