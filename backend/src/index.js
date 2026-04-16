@@ -102,6 +102,7 @@ app.get('/api/health', async (req, res) => {
 
 // Rutes actives
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/suppliers', require('./routes/suppliers'));
 app.use('/api/clients', require('./routes/clients'));
 app.use('/api/invoices', require('./routes/invoices'));
@@ -146,8 +147,10 @@ async function start() {
     // Iniciar cron jobs
     const { startZohoEmailSync } = require('./jobs/zohoEmailSync');
     const { startGdriveSyncJob } = require('./jobs/gdriveSyncJob');
+    const { startRentmanSyncJob } = require('./jobs/rentmanSyncJob');
     startZohoEmailSync();
     startGdriveSyncJob();
+    startRentmanSyncJob();
 
     app.listen(PORT, () => {
       logger.info(`Servidor escoltant al port ${PORT}`);

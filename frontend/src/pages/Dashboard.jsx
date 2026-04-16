@@ -1,58 +1,194 @@
-import { FileInput, FileOutput, Landmark, Bell } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import {
+  FileInput, FileOutput, Landmark, Bell, Calendar,
+  TrendingUp, Users, Building2, PieChart as PieIcon,
+} from 'lucide-react';
+import {
+  LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+} from 'recharts';
 import { useApiGet } from '../hooks/useApi';
 import { formatCurrency } from '../lib/utils';
 import useAuthStore from '../stores/authStore';
 import { canSeeDashboardPanel } from '../lib/permissions';
 
+// ===========================================
+// Helpers
+// ===========================================
+
+// Format YYYY-MM → "gen 2026" (català)
+const MONTH_LABELS = ['gen', 'feb', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'oct', 'nov', 'des'];
+function formatMonth(ym) {
+  if (!ym) return '';
+  const [y, m] = ym.split('-');
+  return `${MONTH_LABELS[parseInt(m, 10) - 1] || m} ${y.slice(2)}`;
+}
+
+// Labels per estats de factura
+const STATUS_LABELS = {
+  PENDING: 'Pendent',
+  PDF_PENDING: 'Pendent PDF',
+  REVIEWED: 'Revisada',
+  APPROVED: 'Aprovada',
+  REJECTED: 'Rebutjada',
+  PAID: 'Pagada',
+  PARTIALLY_PAID: 'Pagament parcial',
+};
+const STATUS_COLORS = {
+  PENDING: '#f59e0b',
+  PDF_PENDING: '#ea580c',
+  REVIEWED: '#3b82f6',
+  APPROVED: '#0d9488',
+  REJECTED: '#dc2626',
+  PAID: '#16a34a',
+  PARTIALLY_PAID: '#84cc16',
+};
+
+// Paleta de colors per línies/barres
+const CHART_COLORS = ['#0d9488', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#10b981'];
+
+// Preset de rang (últims N mesos fins avui)
+function getRangePreset(months) {
+  const now = new Date();
+  const to = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const from = new Date(now.getFullYear(), now.getMonth() - (months - 1), 1);
+  return {
+    from: from.toISOString().split('T')[0],
+    to: to.toISOString().split('T')[0],
+  };
+}
+
+// Tooltip personalitzat per moneda
+function CurrencyTooltip({ active, payload, label }) {
+  if (!active || !payload || !payload.length) return null;
+  return (
+    <div className="bg-card border rounded-md p-2 shadow-lg text-sm">
+      <p className="font-medium mb-1">{label}</p>
+      {payload.map((entry, i) => (
+        <p key={i} style={{ color: entry.color }}>
+          {entry.name}: {formatCurrency(entry.value)}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+// ===========================================
+// Component
+// ===========================================
+
 export default function Dashboard() {
   const user = useAuthStore((s) => s.user);
-  const role = user?.role;
 
-  // Només carreguem dades dels panells que l'usuari pot veure
-  const { data: invoiceStats } = useApiGet(
-    canSeeDashboardPanel(role, 'receivedPending') || canSeeDashboardPanel(role, 'issuedPending')
-      ? '/invoices/stats' : null
+  // Estat: rang de dates configurable (per defecte últims 12 mesos)
+  const defaultRange = getRangePreset(12);
+  const [dateFrom, setDateFrom] = useState(defaultRange.from);
+  const [dateTo, setDateTo] = useState(defaultRange.to);
+
+  // Stats unificades del backend (quan l'usuari pot veure algun panell de dashboard)
+  const canSeeDashboard = user?.role === 'ADMIN' || user?.role === 'EDITOR'
+    || canSeeDashboardPanel(user, 'receivedPending')
+    || canSeeDashboardPanel(user, 'issuedPending');
+
+  const { data: stats, loading: statsLoading } = useApiGet(
+    canSeeDashboard ? '/dashboard/stats' : null,
+    { from: dateFrom, to: dateTo }
   );
+
+  // Dades addicionals dels panells existents
   const { data: receivedData } = useApiGet(
-    canSeeDashboardPanel(role, 'recentReceived')
+    canSeeDashboardPanel(user, 'recentReceived')
       ? '/invoices/received' : null,
     { status: 'PENDING', limit: 5 }
   );
   const { data: bankData } = useApiGet(
-    canSeeDashboardPanel(role, 'unconciliatedList')
+    canSeeDashboardPanel(user, 'unconciliatedList')
       ? '/bank' : null,
     { conciliated: 'false', limit: 5 }
   );
   const { data: remindersData } = useApiGet(
-    canSeeDashboardPanel(role, 'reminders')
+    canSeeDashboardPanel(user, 'reminders')
       ? '/reminders/pending' : null
   );
 
-  const receivedPending = invoiceStats?.received?.find((s) => s.status === 'PENDING');
-  const issuedPending = invoiceStats?.issued?.find((s) => s.status === 'PENDING');
+  // Dades per gràfics (evitem recalculs)
+  const monthlyChartData = useMemo(() => {
+    if (!stats?.monthlyBilling) return [];
+    return stats.monthlyBilling.map((m) => ({
+      month: formatMonth(m.month),
+      Emeses: m.issued,
+      Rebudes: m.received,
+    }));
+  }, [stats?.monthlyBilling]);
 
-  // Definim tots els KPIs amb la seva clau de panell
+  const topClientsData = useMemo(() => {
+    if (!stats?.topClients) return [];
+    return stats.topClients.slice(0, 8).map((c) => ({
+      name: c.name.length > 20 ? c.name.slice(0, 18) + '…' : c.name,
+      total: c.total,
+      count: c.count,
+    }));
+  }, [stats?.topClients]);
+
+  const topSuppliersData = useMemo(() => {
+    if (!stats?.topSuppliers) return [];
+    return stats.topSuppliers.slice(0, 8).map((s) => ({
+      name: s.name.length > 20 ? s.name.slice(0, 18) + '…' : s.name,
+      total: s.total,
+      count: s.count,
+    }));
+  }, [stats?.topSuppliers]);
+
+  const bankBalanceData = useMemo(() => {
+    if (!stats?.bankBalance) return [];
+    return stats.bankBalance.map((d) => ({
+      ...d,
+      dateLabel: new Date(d.date).toLocaleDateString('ca-ES', { day: '2-digit', month: 'short' }),
+    }));
+  }, [stats?.bankBalance]);
+
+  const statusDistributionReceived = useMemo(() => {
+    if (!stats?.invoiceStatusDistribution?.received) return [];
+    return stats.invoiceStatusDistribution.received.map((s) => ({
+      name: STATUS_LABELS[s.status] || s.status,
+      value: s.count,
+      total: s.total,
+      status: s.status,
+    }));
+  }, [stats?.invoiceStatusDistribution]);
+
+  const statusDistributionIssued = useMemo(() => {
+    if (!stats?.invoiceStatusDistribution?.issued) return [];
+    return stats.invoiceStatusDistribution.issued.map((s) => ({
+      name: STATUS_LABELS[s.status] || s.status,
+      value: s.count,
+      total: s.total,
+      status: s.status,
+    }));
+  }, [stats?.invoiceStatusDistribution]);
+
+  // KPIs (preferim les dades de /dashboard/stats si hi són, per respectar el rang)
   const allStats = [
     {
       key: 'receivedPending',
-      label: 'Factures pendents',
-      value: receivedPending?._count || 0,
-      sub: receivedPending?._sum?.totalAmount ? formatCurrency(receivedPending._sum.totalAmount) : '0 €',
+      label: 'Factures rebudes',
+      value: stats?.summary?.totalReceivedCount ?? 0,
+      sub: stats?.summary?.totalReceived ? formatCurrency(stats.summary.totalReceived) : '0 €',
       icon: FileInput,
       color: 'text-blue-500',
     },
     {
       key: 'issuedPending',
-      label: 'Emeses pendents',
-      value: issuedPending?._count || 0,
-      sub: issuedPending?._sum?.totalAmount ? formatCurrency(issuedPending._sum.totalAmount) : '0 €',
+      label: 'Factures emeses',
+      value: stats?.summary?.totalIssuedCount ?? 0,
+      sub: stats?.summary?.totalIssued ? formatCurrency(stats.summary.totalIssued) : '0 €',
       icon: FileOutput,
       color: 'text-green-500',
     },
     {
       key: 'unconciliated',
       label: 'Sense conciliar',
-      value: bankData?.pagination?.total || 0,
+      value: stats?.summary?.unconciliatedCount ?? (bankData?.pagination?.total || 0),
       sub: 'moviments bancaris',
       icon: Landmark,
       color: 'text-orange-500',
@@ -67,9 +203,7 @@ export default function Dashboard() {
     },
   ];
 
-  const visibleStats = allStats.filter((s) => canSeeDashboardPanel(role, s.key));
-
-  // Calcular columnes del grid segons nombre de KPIs visibles
+  const visibleStats = allStats.filter((s) => canSeeDashboardPanel(user, s.key));
   const gridCols = visibleStats.length >= 4
     ? 'lg:grid-cols-4'
     : visibleStats.length === 3
@@ -78,11 +212,65 @@ export default function Dashboard() {
         ? 'lg:grid-cols-2'
         : 'lg:grid-cols-1';
 
+  // Aplicar preset de rang
+  const applyPreset = (months) => {
+    const r = getRangePreset(months);
+    setDateFrom(r.from);
+    setDateTo(r.to);
+  };
+
   return (
     <div>
-      <h2 className="text-2xl font-bold mb-1">Hola, {user?.name?.split(' ')[0] || 'Sergi'}!</h2>
-      <p className="text-muted-foreground mb-6">Resum del teu panell d'administració</p>
+      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between mb-6 gap-4">
+        <div>
+          <h2 className="text-2xl font-bold mb-1">Hola, {user?.name?.split(' ')[0] || 'Sergi'}!</h2>
+          <p className="text-muted-foreground">Resum del teu panell d'administració</p>
+        </div>
 
+        {/* Selector de rang de dates */}
+        {canSeeDashboard && (
+          <div className="bg-card border rounded-lg p-3 flex flex-col sm:flex-row gap-2 items-start sm:items-center">
+            <Calendar size={16} className="text-muted-foreground shrink-0" />
+            <div className="flex flex-wrap gap-2 items-center">
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="px-2 py-1 border rounded text-sm bg-background"
+                aria-label="Data inici"
+              />
+              <span className="text-sm text-muted-foreground">→</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="px-2 py-1 border rounded text-sm bg-background"
+                aria-label="Data fi"
+              />
+            </div>
+            <div className="flex flex-wrap gap-1 ml-0 sm:ml-2">
+              <button onClick={() => applyPreset(3)}
+                className="text-xs px-2 py-1 rounded border hover:bg-accent transition-colors">
+                3M
+              </button>
+              <button onClick={() => applyPreset(6)}
+                className="text-xs px-2 py-1 rounded border hover:bg-accent transition-colors">
+                6M
+              </button>
+              <button onClick={() => applyPreset(12)}
+                className="text-xs px-2 py-1 rounded border hover:bg-accent transition-colors">
+                12M
+              </button>
+              <button onClick={() => applyPreset(24)}
+                className="text-xs px-2 py-1 rounded border hover:bg-accent transition-colors">
+                24M
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* KPIs */}
       {visibleStats.length > 0 && (
         <div className={`grid grid-cols-1 md:grid-cols-2 ${gridCols} gap-4 mb-8`}>
           {visibleStats.map(({ label, value, sub, icon: Icon, color }) => (
@@ -98,8 +286,219 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* ===========================================
+          GRÀFICS
+      =========================================== */}
+      {canSeeDashboard && (
+        <div className="space-y-6 mb-8">
+          {/* Evolució mensual */}
+          {(canSeeDashboardPanel(user, 'receivedPending') || canSeeDashboardPanel(user, 'issuedPending')) && (
+            <div className="bg-card border rounded-lg p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <TrendingUp size={18} className="text-teal-600" />
+                <h3 className="font-semibold">Evolució de facturació mensual</h3>
+              </div>
+              {statsLoading ? (
+                <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">Carregant…</div>
+              ) : monthlyChartData.length === 0 ? (
+                <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">
+                  No hi ha dades pel rang seleccionat
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={280}>
+                  <LineChart data={monthlyChartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+                    <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+                    <Tooltip content={<CurrencyTooltip />} />
+                    <Legend wrapperStyle={{ fontSize: 13 }} />
+                    <Line type="monotone" dataKey="Emeses" stroke="#0d9488" strokeWidth={2} dot={{ r: 3 }} />
+                    <Line type="monotone" dataKey="Rebudes" stroke="#3b82f6" strokeWidth={2} dot={{ r: 3 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          )}
+
+          {/* Saldo bancari històric */}
+          {canSeeDashboardPanel(user, 'unconciliated') && stats?.bankAccountNames?.length > 0 && (
+            <div className="bg-card border rounded-lg p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <Landmark size={18} className="text-orange-500" />
+                <h3 className="font-semibold">Saldo bancari històric</h3>
+              </div>
+              {statsLoading ? (
+                <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">Carregant…</div>
+              ) : bankBalanceData.length === 0 ? (
+                <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">
+                  No hi ha saldos registrats en aquest rang
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={280}>
+                  <LineChart data={bankBalanceData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis dataKey="dateLabel" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+                    <Tooltip content={<CurrencyTooltip />} />
+                    <Legend wrapperStyle={{ fontSize: 13 }} />
+                    {stats.bankAccountNames.map((acc, idx) => (
+                      <Line
+                        key={acc}
+                        type="monotone"
+                        dataKey={acc}
+                        stroke={CHART_COLORS[idx % CHART_COLORS.length]}
+                        strokeWidth={2}
+                        dot={false}
+                        connectNulls
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          )}
+
+          {/* Top clients + Top proveïdors */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {canSeeDashboardPanel(user, 'issuedPending') && (
+              <div className="bg-card border rounded-lg p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <Users size={18} className="text-teal-600" />
+                  <h3 className="font-semibold">Top clients per facturació</h3>
+                </div>
+                {statsLoading ? (
+                  <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">Carregant…</div>
+                ) : topClientsData.length === 0 ? (
+                  <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">
+                    No hi ha dades
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height={Math.max(240, topClientsData.length * 32)}>
+                    <BarChart data={topClientsData} layout="vertical" margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                      <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+                      <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={110} />
+                      <Tooltip content={<CurrencyTooltip />} />
+                      <Bar dataKey="total" fill="#0d9488" name="Total" radius={[0, 4, 4, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            )}
+
+            {canSeeDashboardPanel(user, 'receivedPending') && (
+              <div className="bg-card border rounded-lg p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <Building2 size={18} className="text-blue-600" />
+                  <h3 className="font-semibold">Top proveïdors per despesa</h3>
+                </div>
+                {statsLoading ? (
+                  <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">Carregant…</div>
+                ) : topSuppliersData.length === 0 ? (
+                  <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">
+                    No hi ha dades
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height={Math.max(240, topSuppliersData.length * 32)}>
+                    <BarChart data={topSuppliersData} layout="vertical" margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                      <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+                      <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={110} />
+                      <Tooltip content={<CurrencyTooltip />} />
+                      <Bar dataKey="total" fill="#3b82f6" name="Total" radius={[0, 4, 4, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Distribució per estat — 2 pies (rebudes + emeses) */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {canSeeDashboardPanel(user, 'receivedPending') && (
+              <div className="bg-card border rounded-lg p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <PieIcon size={18} className="text-blue-600" />
+                  <h3 className="font-semibold">Estats factures rebudes</h3>
+                </div>
+                {statsLoading ? (
+                  <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">Carregant…</div>
+                ) : statusDistributionReceived.length === 0 ? (
+                  <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">
+                    No hi ha dades
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height={280}>
+                    <PieChart>
+                      <Pie
+                        data={statusDistributionReceived}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={90}
+                        label={({ name, value }) => `${name}: ${value}`}
+                        labelLine={false}
+                      >
+                        {statusDistributionReceived.map((entry) => (
+                          <Cell key={entry.status} fill={STATUS_COLORS[entry.status] || '#64748b'} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value, name, props) => [
+                        `${value} factures (${formatCurrency(props.payload.total)})`,
+                        name,
+                      ]} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            )}
+
+            {canSeeDashboardPanel(user, 'issuedPending') && (
+              <div className="bg-card border rounded-lg p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <PieIcon size={18} className="text-teal-600" />
+                  <h3 className="font-semibold">Estats factures emeses</h3>
+                </div>
+                {statsLoading ? (
+                  <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">Carregant…</div>
+                ) : statusDistributionIssued.length === 0 ? (
+                  <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">
+                    No hi ha dades
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height={280}>
+                    <PieChart>
+                      <Pie
+                        data={statusDistributionIssued}
+                        dataKey="value"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={90}
+                        label={({ name, value }) => `${name}: ${value}`}
+                        labelLine={false}
+                      >
+                        {statusDistributionIssued.map((entry) => (
+                          <Cell key={entry.status} fill={STATUS_COLORS[entry.status] || '#64748b'} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(value, name, props) => [
+                        `${value} factures (${formatCurrency(props.payload.total)})`,
+                        name,
+                      ]} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Panells existents */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {canSeeDashboardPanel(role, 'recentReceived') && (
+        {canSeeDashboardPanel(user, 'recentReceived') && (
           <div className="bg-card border rounded-lg">
             <div className="p-4 border-b">
               <h3 className="font-semibold">Últimes factures rebudes pendents</h3>
@@ -122,7 +521,7 @@ export default function Dashboard() {
           </div>
         )}
 
-        {canSeeDashboardPanel(role, 'unconciliatedList') && (
+        {canSeeDashboardPanel(user, 'unconciliatedList') && (
           <div className="bg-card border rounded-lg">
             <div className="p-4 border-b">
               <h3 className="font-semibold">Moviments sense conciliar</h3>
@@ -145,7 +544,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      {visibleStats.length === 0 && (
+      {visibleStats.length === 0 && !canSeeDashboard && (
         <div className="bg-card border rounded-lg p-8 text-center text-muted-foreground">
           <p>No tens panells assignats al teu rol.</p>
           <p className="text-sm mt-1">Contacta amb l'administrador si necessites accés a més seccions.</p>
