@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Plus, Search, Trash2, Check, X as XIcon,
   FileText, Upload, Eye, Link2, AlertTriangle,
@@ -21,28 +21,97 @@ const SOURCE_LABELS = {
   BANK_DETECTED: { label: 'Banc', color: 'bg-orange-100 text-orange-700' },
 };
 
-// Badge de conciliació
-function ConciliationBadge({ conciliation }) {
-  if (!conciliation) return <span className="text-xs text-muted-foreground">—</span>;
-
-  if (conciliation.status === 'CONFIRMED') {
+// Badge de pagament (basat en conciliació amb moviments bancaris)
+function PaymentBadge({ isPaid, conciliation }) {
+  if (isPaid) {
+    const bankInfo = conciliation?.bankMovement;
+    const title = bankInfo
+      ? `Pagat: ${bankInfo.description || ''} (${bankInfo.date ? new Date(bankInfo.date).toLocaleDateString('ca-ES') : ''})`
+      : 'Pagada';
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700">
-        <Link2 size={10} /> Conciliada
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700" title={title}>
+        <Check size={10} /> Pagada
       </span>
     );
   }
-  if (conciliation.status === 'PENDING_CONFIRM') {
+  if (conciliation?.status === 'PENDING_CONFIRM') {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-700" title={`Confiança: ${Math.round((conciliation.confidence || 0) * 100)}%`}>
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-700" title={`Possible pagament trobat (${Math.round((conciliation.confidence || 0) * 100)}% confiança)`}>
         <Link2 size={10} /> Per confirmar
       </span>
     );
   }
   return (
     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-red-50 text-red-500">
-      <XIcon size={10} /> Sense conciliar
+      <XIcon size={10} /> No pagada
     </span>
+  );
+}
+
+// Secció d'equips dins el modal d'edició de factura
+function EquipmentSection({ invoiceId }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [extracting, setExtracting] = useState(false);
+
+  useEffect(() => {
+    if (!invoiceId) return;
+    api.get(`/equipment?invoiceId=${invoiceId}&limit=100`)
+      .then(({ data }) => setItems(data.data || []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [invoiceId]);
+
+  const handleExtract = async () => {
+    setExtracting(true);
+    try {
+      const { data } = await api.post(`/equipment/extract/${invoiceId}`, { force: items.length > 0 });
+      if (data.items?.length > 0) {
+        setItems((prev) => [...prev, ...data.items]);
+      }
+      alert(data.message || `${data.items?.length || 0} equips extrets`);
+    } catch (err) {
+      alert(err.response?.data?.error || err.message);
+    } finally {
+      setExtracting(false);
+    }
+  };
+
+  if (loading) return null;
+
+  return (
+    <div className="border-t pt-3 mt-3">
+      <div className="flex items-center justify-between mb-2">
+        <label className="text-sm font-medium flex items-center gap-1.5">
+          <Paperclip size={14} /> Equips ({items.length})
+        </label>
+        <button
+          type="button"
+          onClick={handleExtract}
+          disabled={extracting}
+          className="flex items-center gap-1 px-2.5 py-1 rounded-md border text-xs hover:bg-muted disabled:opacity-50"
+        >
+          {extracting ? (
+            <><FileText size={12} className="animate-pulse" /> Extraient...</>
+          ) : (
+            <><FileText size={12} /> {items.length > 0 ? 'Re-extreure equips' : 'Extreure equips del PDF'}</>
+          )}
+        </button>
+      </div>
+      {items.length > 0 && (
+        <div className="space-y-1.5 max-h-40 overflow-y-auto">
+          {items.map((eq) => (
+            <div key={eq.id} className="flex items-center justify-between px-2.5 py-1.5 rounded-md bg-muted/50 text-xs">
+              <div>
+                <span className="font-medium">{eq.name}</span>
+                {eq.serialNumber && <span className="ml-2 font-mono text-muted-foreground">S/N: {eq.serialNumber}</span>}
+              </div>
+              {eq.purchasePrice && <span className="text-muted-foreground">{formatCurrency(eq.purchasePrice)}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -50,7 +119,7 @@ export default function ReceivedInvoices() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
-  const [conciliatedFilter, setConciliatedFilter] = useState('');
+  const [paidFilter, setPaidFilter] = useState('');
   const [sortBy, setSortBy] = useState('issueDate');
   const [sortDir, setSortDir] = useState('desc');
   const [page, setPage] = useState(1);
@@ -64,6 +133,11 @@ export default function ReceivedInvoices() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [editForm, setEditForm] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
+  const [showTrash, setShowTrash] = useState(false);
+  const [showNewSupplier, setShowNewSupplier] = useState(false);
+  const [newSupplierForm, setNewSupplierForm] = useState({ name: '', nif: '', email: '' });
+  const [newSupplierLoading, setNewSupplierLoading] = useState(false);
+  const [tempSupplier, setTempSupplier] = useState(null);
   const [form, setForm] = useState({
     invoiceNumber: '', supplierId: '', issueDate: '', dueDate: '',
     subtotal: '', taxRate: '21', taxAmount: '', totalAmount: '', description: '',
@@ -73,13 +147,30 @@ export default function ReceivedInvoices() {
     search: search || undefined,
     status: statusFilter || undefined,
     source: sourceFilter || undefined,
-    conciliated: conciliatedFilter || undefined,
+    paid: paidFilter || undefined,
+    deleted: showTrash ? 'true' : undefined,
     page,
     limit: 25,
   };
   const { data, loading, refetch } = useApiGet('/invoices/received', params);
-  const { data: suppliersData } = useApiGet('/suppliers', { limit: 100 });
+  const { data: suppliersData, refetch: refetchSuppliers } = useApiGet('/suppliers', { limit: 500 });
   const { mutate } = useApiMutation();
+
+  // Llista de proveïdors amb el temporal inclòs (per evitar que el select quedi buit)
+  const suppliersList = (() => {
+    const list = suppliersData?.data || [];
+    if (tempSupplier && !list.find((s) => s.id === tempSupplier.id)) {
+      return [...list, tempSupplier].sort((a, b) => a.name.localeCompare(b.name));
+    }
+    return list;
+  })();
+
+  // Netejar tempSupplier quan el refetch ja l'ha inclòs a la llista real
+  useEffect(() => {
+    if (tempSupplier && suppliersData?.data?.find((s) => s.id === tempSupplier.id)) {
+      setTempSupplier(null);
+    }
+  }, [suppliersData, tempSupplier]);
 
   // Ordenació
   const handleSort = (field) => {
@@ -262,6 +353,7 @@ export default function ReceivedInvoices() {
   const openEditModal = (inv) => {
     setEditForm({
       id: inv.id,
+      currentStatus: inv.status,
       invoiceNumber: inv.invoiceNumber || '',
       supplierId: inv.supplierId || '',
       issueDate: inv.issueDate ? new Date(inv.issueDate).toISOString().slice(0, 10) : '',
@@ -275,23 +367,79 @@ export default function ReceivedInvoices() {
     setShowEditModal(true);
   };
 
+  // Crear proveïdor nou des del formulari inline
+  const handleCreateSupplier = async (targetForm = 'edit') => {
+    if (!newSupplierForm.name.trim()) return;
+    setNewSupplierLoading(true);
+    try {
+      const newSupplier = await mutate('post', '/suppliers', newSupplierForm);
+      // mutate retorna directament l'objecte supplier { id, name, ... }
+      const newId = newSupplier?.id;
+      if (!newId) {
+        console.error('No s\'ha obtingut ID del nou proveïdor:', newSupplier);
+        alert('Error: no s\'ha pogut obtenir l\'ID del proveïdor creat');
+        return;
+      }
+
+      // Guardar referència temporal perquè aparegui al select immediatament
+      setTempSupplier({ id: newId, name: newSupplierForm.name.trim() });
+
+      // Assignar el nou proveïdor al formulari actiu
+      if (targetForm === 'edit' && editForm) {
+        setEditForm((prev) => ({ ...prev, supplierId: newId }));
+      } else {
+        setForm((prev) => ({ ...prev, supplierId: newId }));
+      }
+
+      setShowNewSupplier(false);
+      setNewSupplierForm({ name: '', nif: '', email: '' });
+
+      // Refetch — només netejar tempSupplier si el refetch ha anat bé
+      // i el nou proveïdor realment apareix a la llista
+      try {
+        await refetchSuppliers();
+        // Nota: no netejem tempSupplier aquí; el suppliersList ja el filtra
+        // si existeix a la llista real. Així mai desapareix del dropdown.
+      } catch {
+        // Si falla el refetch, tempSupplier segueix actiu — cap problema
+      }
+    } catch (err) {
+      alert(err.message || 'Error creant proveïdor');
+    } finally {
+      setNewSupplierLoading(false);
+    }
+  };
+
   const handleEditSave = async (e) => {
     e.preventDefault();
     try {
-      const { id, ...data } = editForm;
+      const { id, currentStatus, ...data } = editForm;
+      // Validació bàsica
+      if (!data.invoiceNumber?.trim()) return alert('El número de factura és obligatori');
+      if (!data.issueDate) return alert('La data d\'emissió és obligatòria');
+
       await mutate('put', `/invoices/received/${id}`, {
-        ...data,
+        invoiceNumber: data.invoiceNumber.trim(),
+        description: data.description || null,
         subtotal: parseFloat(data.subtotal) || 0,
         taxRate: parseFloat(data.taxRate) || 21,
         taxAmount: parseFloat(data.taxAmount) || 0,
         totalAmount: parseFloat(data.totalAmount) || 0,
         supplierId: data.supplierId || null,
+        issueDate: data.issueDate,
+        dueDate: data.dueDate || null,
       });
+
+      // Si era PDF_PENDING, al guardar l'edició passa a PENDING (ja revisada)
+      if (currentStatus === 'PDF_PENDING') {
+        await mutate('patch', `/invoices/received/${id}/status`, { status: 'PENDING' });
+      }
       setShowEditModal(false);
       setEditForm(null);
       refetch();
     } catch (err) {
-      alert(err.response?.data?.error || 'Error guardant');
+      const msg = err.response?.data?.error || err.message || 'Error guardant';
+      alert(msg);
     }
   };
 
@@ -312,7 +460,18 @@ export default function ReceivedInvoices() {
   };
 
   const handleDelete = async (id) => {
-    if (!confirm('Eliminar aquesta factura?')) return;
+    if (!confirm('Moure a la paperera? (Es pot restaurar durant 30 dies)')) return;
+    await mutate('delete', `/invoices/received/${id}`);
+    refetch();
+  };
+
+  const handleRestore = async (id) => {
+    await mutate('post', `/invoices/received/${id}/restore`);
+    refetch();
+  };
+
+  const handlePermanentDelete = async (id) => {
+    if (!confirm('ELIMINAR DEFINITIVAMENT? Aquesta acció NO es pot desfer.')) return;
     await mutate('delete', `/invoices/received/${id}`);
     refetch();
   };
@@ -326,21 +485,26 @@ export default function ReceivedInvoices() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-2xl font-bold">Factures rebudes</h2>
+          <h2 className="text-2xl font-bold">{showTrash ? '🗑️ Paperera' : 'Factures rebudes'}</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            {data?.pagination?.total || 0} factures en total
+            {data?.pagination?.total || 0} {showTrash ? 'factures a la paperera' : 'factures en total'}
           </p>
         </div>
         <div className="flex items-center gap-3">
           <ExportButtons
             endpoint="/export/received-invoices"
-            filters={{ search: search || undefined, status: statusFilter || undefined, source: sourceFilter || undefined, conciliated: conciliatedFilter || undefined }}
+            filters={{ search: search || undefined, status: statusFilter || undefined, source: sourceFilter || undefined, paid: paidFilter || undefined }}
             filenameBase="factures-rebudes"
             selectedIds={selectedIds}
           />
-          <button onClick={() => { resetForm(); setShowModal(true); }} className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90">
-            <Plus size={16} /> Nova factura
+          <button onClick={() => { setShowTrash(!showTrash); setPage(1); }} className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium border ${showTrash ? 'bg-destructive text-destructive-foreground' : 'hover:bg-muted'}`}>
+            <Trash2 size={16} /> {showTrash ? 'Tornar a factures' : 'Paperera'}
           </button>
+          {!showTrash && (
+            <button onClick={() => { resetForm(); setShowModal(true); }} className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90">
+              <Plus size={16} /> Nova factura
+            </button>
+          )}
         </div>
       </div>
 
@@ -353,7 +517,7 @@ export default function ReceivedInvoices() {
         <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); clearSelection(); }} className="rounded-md border bg-background px-3 py-2 text-sm">
           <option value="">Tots els estats</option>
           <option value="PENDING">Pendent</option>
-          <option value="PDF_PENDING">Falta PDF</option>
+          <option value="PDF_PENDING">Cal revisar</option>
           <option value="APPROVED">Aprovada</option>
           <option value="PAID">Pagada</option>
           <option value="REJECTED">Rebutjada</option>
@@ -366,10 +530,10 @@ export default function ReceivedInvoices() {
           <option value="PCLOUD_SYNC">pCloud</option>
           <option value="BANK_DETECTED">Banc</option>
         </select>
-        <select value={conciliatedFilter} onChange={(e) => { setConciliatedFilter(e.target.value); setPage(1); clearSelection(); }} className="rounded-md border bg-background px-3 py-2 text-sm">
-          <option value="">Conciliació: totes</option>
-          <option value="true">Conciliades</option>
-          <option value="false">Sense conciliar</option>
+        <select value={paidFilter} onChange={(e) => { setPaidFilter(e.target.value); setPage(1); clearSelection(); }} className="rounded-md border bg-background px-3 py-2 text-sm">
+          <option value="">Pagament: totes</option>
+          <option value="true">Pagades</option>
+          <option value="false">No pagades</option>
         </select>
       </div>
 
@@ -408,16 +572,17 @@ export default function ReceivedInvoices() {
               <SortableHeader label="Import" field="totalAmount" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <SortableHeader label="Estat" field="status" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <SortableHeader label="Font" field="source" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
-              <th className="text-center p-3 font-medium text-xs text-muted-foreground uppercase">Banc</th>
+              <th className="text-center p-3 font-medium text-xs text-muted-foreground uppercase">Comptabilitat</th>
+              <th className="text-center p-3 font-medium text-xs text-muted-foreground uppercase">Pagament</th>
               <th className="text-center p-3 font-medium text-xs text-muted-foreground uppercase">PDF</th>
               <th className="text-right p-3 font-medium text-xs text-muted-foreground uppercase">Accions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={10} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
+              <tr><td colSpan={11} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
             ) : data?.data?.length === 0 ? (
-              <tr><td colSpan={10} className="p-8 text-center text-muted-foreground">Cap factura trobada</td></tr>
+              <tr><td colSpan={11} className="p-8 text-center text-muted-foreground">Cap factura trobada</td></tr>
             ) : (
               sortedData.map((inv) => {
                 const src = SOURCE_LABELS[inv.source] || SOURCE_LABELS.MANUAL;
@@ -453,7 +618,16 @@ export default function ReceivedInvoices() {
                       </span>
                     </td>
                     <td className="p-3 text-center">
-                      <ConciliationBadge conciliation={inv.conciliation} />
+                      {inv.pgcAccount ? (
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs ${inv.accountingType === 'INVESTMENT' ? 'bg-purple-100 text-purple-700' : 'bg-sky-100 text-sky-700'}`} title={`${inv.pgcAccount} ${inv.pgcAccountName || ''}`}>
+                          {inv.pgcAccount}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="p-3 text-center">
+                      <PaymentBadge isPaid={inv.isPaid} conciliation={inv.conciliation} />
                     </td>
                     <td className="p-3 text-center">
                       {inv.hasPdf ? (
@@ -469,13 +643,33 @@ export default function ReceivedInvoices() {
                     <td className="p-3 text-right">
                       <div className="flex items-center justify-end gap-1">
                         <button onClick={() => openEditModal(inv)} className="p-1.5 rounded hover:bg-blue-50 text-blue-600" title="Editar"><Pencil size={14} /></button>
-                        {inv.status === 'PENDING' && (
+                        {/* PDF_PENDING: cal revisar → marcar com a Pendent (revisada) */}
+                        {inv.status === 'PDF_PENDING' && (
+                          <button onClick={() => handleStatusChange(inv.id, 'PENDING')} className="p-1.5 rounded hover:bg-blue-50 text-blue-600" title="Marcar com revisada"><Check size={14} /></button>
+                        )}
+                        {/* PENDING o REVIEWED: es pot aprovar o rebutjar */}
+                        {(inv.status === 'PENDING' || inv.status === 'REVIEWED') && (
                           <>
                             <button onClick={() => handleStatusChange(inv.id, 'APPROVED')} className="p-1.5 rounded hover:bg-green-50 text-green-600" title="Aprovar"><Check size={14} /></button>
                             <button onClick={() => handleStatusChange(inv.id, 'REJECTED')} className="p-1.5 rounded hover:bg-red-50 text-red-600" title="Rebutjar"><XIcon size={14} /></button>
                           </>
                         )}
-                        <button onClick={() => handleDelete(inv.id)} className="p-1.5 rounded hover:bg-destructive/10 text-destructive" title="Eliminar"><Trash2 size={14} /></button>
+                        {/* APPROVED: es pot marcar com pagada */}
+                        {inv.status === 'APPROVED' && (
+                          <button onClick={() => handleStatusChange(inv.id, 'PAID')} className="p-1.5 rounded hover:bg-emerald-50 text-emerald-700" title="Marcar com pagada">€</button>
+                        )}
+                        {/* REJECTED: es pot reobrir */}
+                        {inv.status === 'REJECTED' && (
+                          <button onClick={() => handleStatusChange(inv.id, 'PENDING')} className="p-1.5 rounded hover:bg-yellow-50 text-yellow-600" title="Reobrir">↩</button>
+                        )}
+                        {showTrash ? (
+                          <>
+                            <button onClick={() => handleRestore(inv.id)} className="p-1.5 rounded hover:bg-green-50 text-green-600" title="Restaurar">↩</button>
+                            <button onClick={() => handlePermanentDelete(inv.id)} className="p-1.5 rounded hover:bg-destructive/10 text-destructive" title="Eliminar definitivament"><Trash2 size={14} /></button>
+                          </>
+                        ) : (
+                          <button onClick={() => handleDelete(inv.id)} className="p-1.5 rounded hover:bg-destructive/10 text-destructive" title="Eliminar"><Trash2 size={14} /></button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -526,13 +720,36 @@ export default function ReceivedInvoices() {
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">Proveïdor *</label>
-                <select value={form.supplierId} onChange={(e) => setForm({ ...form, supplierId: e.target.value })} className="w-full rounded-md border bg-background px-3 py-2 text-sm" required>
-                  <option value="">Selecciona...</option>
-                  {suppliersData?.data?.map((s) => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
-                  ))}
-                </select>
+                <div className="flex gap-2">
+                  <select value={form.supplierId} onChange={(e) => setForm({ ...form, supplierId: e.target.value })} className="flex-1 min-w-0 rounded-md border bg-background px-3 py-2 text-sm" required>
+                    <option value="">Selecciona...</option>
+                    {suppliersList.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                  <button type="button" onClick={() => { setShowNewSupplier(true); setNewSupplierForm({ name: '', nif: '', email: '' }); }} className="shrink-0 px-2.5 py-2 rounded-md border bg-background text-sm hover:bg-muted" title="Nou proveïdor">
+                    <Plus size={16} />
+                  </button>
+                </div>
               </div>
+            </div>
+            {showNewSupplier && (
+              <div className="p-3 border rounded-md bg-muted/30 space-y-2">
+                <p className="text-xs font-semibold text-muted-foreground">Nou proveïdor</p>
+                <div className="grid grid-cols-3 gap-2">
+                  <input type="text" placeholder="Nom *" value={newSupplierForm.name} onChange={(e) => setNewSupplierForm({ ...newSupplierForm, name: e.target.value })} className="w-full rounded-md border bg-background px-3 py-1.5 text-sm" autoFocus />
+                  <input type="text" placeholder="NIF" value={newSupplierForm.nif} onChange={(e) => setNewSupplierForm({ ...newSupplierForm, nif: e.target.value })} className="w-full rounded-md border bg-background px-3 py-1.5 text-sm" />
+                  <input type="email" placeholder="Email" value={newSupplierForm.email} onChange={(e) => setNewSupplierForm({ ...newSupplierForm, email: e.target.value })} className="w-full rounded-md border bg-background px-3 py-1.5 text-sm" />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button type="button" onClick={() => setShowNewSupplier(false)} className="px-3 py-1.5 rounded-md border text-xs">Cancel·lar</button>
+                  <button type="button" onClick={() => handleCreateSupplier('create')} disabled={!newSupplierForm.name.trim() || newSupplierLoading} className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-medium disabled:opacity-50">
+                    {newSupplierLoading ? 'Creant...' : 'Crear'}
+                  </button>
+                </div>
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm font-medium mb-1">Data emissió *</label>
                 <input type="date" value={form.issueDate} onChange={(e) => setForm({ ...form, issueDate: e.target.value })} className="w-full rounded-md border bg-background px-3 py-2 text-sm" required />
@@ -611,6 +828,12 @@ export default function ReceivedInvoices() {
       <Modal isOpen={showEditModal} onClose={() => { setShowEditModal(false); setEditForm(null); }} title="Editar factura rebuda" size="lg">
         {editForm && (
           <form onSubmit={handleEditSave} className="space-y-3">
+            {editForm.currentStatus === 'PDF_PENDING' && (
+              <div className="flex items-center gap-2 p-2.5 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-sm">
+                <AlertTriangle size={16} />
+                <span>Aquesta factura necessita revisió. En guardar passarà a &quot;Pendent&quot;.</span>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm font-medium mb-1">Número factura *</label>
@@ -618,13 +841,36 @@ export default function ReceivedInvoices() {
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">Proveïdor</label>
-                <select value={editForm.supplierId} onChange={(e) => setEditForm({ ...editForm, supplierId: e.target.value })} className="w-full rounded-md border bg-background px-3 py-2 text-sm">
-                  <option value="">— Sense proveïdor —</option>
-                  {suppliersData?.data?.map((s) => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
-                  ))}
-                </select>
+                <div className="flex gap-2">
+                  <select value={editForm.supplierId} onChange={(e) => setEditForm({ ...editForm, supplierId: e.target.value })} className="flex-1 min-w-0 rounded-md border bg-background px-3 py-2 text-sm">
+                    <option value="">— Sense proveïdor —</option>
+                    {suppliersList.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                  <button type="button" onClick={() => { setShowNewSupplier(true); setNewSupplierForm({ name: '', nif: '', email: '' }); }} className="shrink-0 px-2.5 py-2 rounded-md border bg-background text-sm hover:bg-muted" title="Nou proveïdor">
+                    <Plus size={16} />
+                  </button>
+                </div>
               </div>
+            </div>
+            {showNewSupplier && (
+              <div className="p-3 border rounded-md bg-muted/30 space-y-2">
+                <p className="text-xs font-semibold text-muted-foreground">Nou proveïdor</p>
+                <div className="grid grid-cols-3 gap-2">
+                  <input type="text" placeholder="Nom *" value={newSupplierForm.name} onChange={(e) => setNewSupplierForm({ ...newSupplierForm, name: e.target.value })} className="w-full rounded-md border bg-background px-3 py-1.5 text-sm" autoFocus />
+                  <input type="text" placeholder="NIF" value={newSupplierForm.nif} onChange={(e) => setNewSupplierForm({ ...newSupplierForm, nif: e.target.value })} className="w-full rounded-md border bg-background px-3 py-1.5 text-sm" />
+                  <input type="email" placeholder="Email" value={newSupplierForm.email} onChange={(e) => setNewSupplierForm({ ...newSupplierForm, email: e.target.value })} className="w-full rounded-md border bg-background px-3 py-1.5 text-sm" />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button type="button" onClick={() => setShowNewSupplier(false)} className="px-3 py-1.5 rounded-md border text-xs">Cancel·lar</button>
+                  <button type="button" onClick={() => handleCreateSupplier('edit')} disabled={!newSupplierForm.name.trim() || newSupplierLoading} className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-medium disabled:opacity-50">
+                    {newSupplierLoading ? 'Creant...' : 'Crear'}
+                  </button>
+                </div>
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm font-medium mb-1">Data emissió *</label>
                 <input type="date" value={editForm.issueDate} onChange={(e) => setEditForm({ ...editForm, issueDate: e.target.value })} className="w-full rounded-md border bg-background px-3 py-2 text-sm" required />
@@ -654,6 +900,10 @@ export default function ReceivedInvoices() {
               <label className="block text-sm font-medium mb-1">Descripció</label>
               <textarea value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} className="w-full rounded-md border bg-background px-3 py-2 text-sm" rows={2} />
             </div>
+            {/* Secció equips extrets */}
+            {editForm.id && (
+              <EquipmentSection invoiceId={editForm.id} />
+            )}
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={() => setShowEditModal(false)} className="px-4 py-2 rounded-md border text-sm">Cancel·lar</button>
               <button type="submit" className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium">Guardar</button>

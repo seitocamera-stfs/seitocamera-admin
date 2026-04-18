@@ -24,8 +24,20 @@ router.use(authenticate);
  */
 router.get('/status', authorize('ADMIN'), async (req, res, next) => {
   try {
-    const result = await zohoMail.testConnection();
-    res.json(result);
+    const accountIds = zohoMail.getConfiguredAccountIds();
+    if (accountIds.length <= 1) {
+      // Single account — comportament original
+      const result = await zohoMail.testConnection();
+      res.json(result);
+    } else {
+      // Multi-compte: testejar cadascun
+      const results = [];
+      for (const accId of accountIds) {
+        const result = await zohoMail.testConnection(accId);
+        results.push(result);
+      }
+      res.json({ multiAccount: true, accounts: results });
+    }
   } catch (error) {
     next(error);
   }
@@ -44,49 +56,203 @@ router.get('/folders', authorize('ADMIN'), async (req, res, next) => {
   }
 });
 
+/**
+ * GET /api/zoho/debug/inbox — Diagnòstic: mostra els correus RAW de la safata
+ * Sense cap filtre de data ni keywords, per comprovar que l'API respon bé
+ * Només ADMIN
+ */
+router.get('/debug/inbox', authorize('ADMIN'), async (req, res, next) => {
+  try {
+    const limit = parseInt(req.query.limit) || 10;
+
+    // 1. Obtenir carpetes
+    const foldersRaw = await zohoMail.getFolders();
+    const folders = Array.isArray(foldersRaw) ? foldersRaw : [];
+    const inbox = folders.find((f) =>
+      f.folderName?.toLowerCase() === 'inbox' || f.path?.toLowerCase() === 'inbox'
+    );
+    if (!inbox) {
+      return res.json({
+        error: 'Carpeta Inbox no trobada',
+        foldersRaw: typeof foldersRaw === 'object' ? foldersRaw : String(foldersRaw),
+        folderNames: folders.map((f) => f.folderName),
+      });
+    }
+
+    // 2. Obtenir correus RAW (sense filtre) — retorna la resposta sencera
+    const rawResponse = await zohoMail.getRawMessages(inbox.folderId, { limit });
+
+    // 3. Intentar extreure els missatges de la resposta
+    let messages = [];
+    if (Array.isArray(rawResponse)) {
+      messages = rawResponse;
+    } else if (rawResponse && Array.isArray(rawResponse.data)) {
+      messages = rawResponse.data;
+    }
+
+    res.json({
+      inboxId: inbox.folderId,
+      inboxName: inbox.folderName,
+      inboxMeta: {
+        messageCount: inbox.messageCount,
+        unreadCount: inbox.unreadCount,
+      },
+      rawResponseType: typeof rawResponse,
+      rawResponseIsArray: Array.isArray(rawResponse),
+      rawResponseKeys: rawResponse && typeof rawResponse === 'object' ? Object.keys(rawResponse) : null,
+      rawResponseSample: rawResponse && typeof rawResponse === 'object' && !Array.isArray(rawResponse)
+        ? JSON.stringify(rawResponse).substring(0, 500)
+        : null,
+      fetchedCount: messages.length,
+      messages: messages.slice(0, limit).map((m) => ({
+        messageId: m.messageId,
+        from: m.fromAddress || m.sender,
+        subject: m.subject,
+        receivedTime: m.receivedTime ? new Date(parseInt(m.receivedTime)).toISOString() : null,
+        hasAttachment: m.hasAttachment || false,
+        status: m.status,
+        flagid: m.flagid,
+      })),
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message, stack: error.stack?.split('\n').slice(0, 5) });
+  }
+});
+
+/**
+ * GET /api/zoho/debug/message/:messageId — Prova múltiples endpoints per obtenir un missatge
+ */
+router.get('/debug/message/:messageId', authorize('ADMIN'), async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const folderId = req.query.folderId || '6925168000000002014'; // Inbox per defecte
+    const token = await zohoMail.getAccessToken();
+    const accountId = process.env.ZOHO_ACCOUNT_ID;
+
+    // Provar múltiples endpoints (el correcte hauria de ser /details)
+    const endpoints = [
+      { name: 'folders/{fid}/messages/{id}/details', path: `/api/accounts/${accountId}/folders/${folderId}/messages/${messageId}/details` },
+      { name: 'folders/{fid}/messages/{id}/content', path: `/api/accounts/${accountId}/folders/${folderId}/messages/${messageId}/content` },
+      { name: 'messages/{id}', path: `/api/accounts/${accountId}/messages/${messageId}` },
+      { name: 'folders/{fid}/messages/{id}', path: `/api/accounts/${accountId}/folders/${folderId}/messages/${messageId}` },
+    ];
+
+    const results = {};
+    const https = require('https');
+
+    for (const ep of endpoints) {
+      try {
+        const data = await new Promise((resolve, reject) => {
+          const opts = {
+            hostname: 'mail.zoho.eu',
+            path: ep.path,
+            method: 'GET',
+            headers: { Authorization: `Zoho-oauthtoken ${token}`, Accept: 'application/json' },
+          };
+          const r = https.request(opts, (response) => {
+            let body = '';
+            response.on('data', (c) => { body += c; });
+            response.on('end', () => {
+              try { resolve(JSON.parse(body)); } catch { resolve({ raw: body.substring(0, 300) }); }
+            });
+          });
+          r.on('error', (e) => resolve({ error: e.message }));
+          r.setTimeout(10000, () => { r.destroy(); resolve({ error: 'timeout' }); });
+          r.end();
+        });
+        results[ep.name] = {
+          statusCode: data.status?.code,
+          hasData: !!data.data,
+          dataType: typeof data.data,
+          isError: !!data.data?.errorCode,
+          sample: JSON.stringify(data).substring(0, 300),
+        };
+      } catch (err) {
+        results[ep.name] = { error: err.message };
+      }
+    }
+
+    res.json({ messageId, folderId, results });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ===========================================
 // ESCANEIG DE CORREUS
 // ===========================================
 
 /**
  * GET /api/zoho/scan — Escaneja correus nous buscant factures
- * Retorna classificació sense crear res a la BD
+ * Retorna classificació A/B/C sense crear res a la BD
  *
  * Query params:
- *   - folder: nom de la carpeta (default 'Inbox')
  *   - since: data ISO des d'on buscar
  *   - limit: nombre de correus (default 50)
+ *
+ * Classificacions:
+ *   A) PDF_ATTACHED  → Factura amb PDF adjunt
+ *   B) LINK_DETECTED → Sense PDF, plataforma coneguda o link de descàrrega
+ *   C) MANUAL_REVIEW → Probable factura, revisió manual necessària
+ *   NOT_INVOICE      → No sembla factura
  */
 router.get('/scan', authorize('ADMIN', 'EDITOR'), requireSection('receivedInvoices'), async (req, res, next) => {
   try {
-    const { folder = 'Inbox', since, limit = 50 } = req.query;
+    const { since, limit = 50 } = req.query;
 
-    const options = {
-      folderName: folder,
-      limit: parseInt(limit),
-    };
+    const options = { limit: parseInt(limit) };
+    if (since) options.since = new Date(since);
 
-    if (since) {
-      options.since = new Date(since);
+    // Escaneja totes les carpetes de TOTS els comptes configurats
+    const results = await zohoMail.scanAllAccounts(options);
+
+    // Classificar per categoria A/B/C
+    const pdfAttached = results.filter((r) => r.classification === 'PDF_ATTACHED');
+    const linkDetected = results.filter((r) => r.classification === 'LINK_DETECTED');
+    const manualReview = results.filter((r) => r.classification === 'MANUAL_REVIEW');
+    const notInvoice = results.filter((r) => r.classification === 'NOT_INVOICE');
+
+    // Agrupar per carpeta
+    const byFolder = {};
+    for (const r of results) {
+      const key = r.folderPath || 'Desconegut';
+      if (!byFolder[key]) byFolder[key] = 0;
+      byFolder[key]++;
     }
 
-    const results = await zohoMail.scanForInvoices(options);
-
-    // Classificar resultats
-    const withPdf = results.filter((r) => r.hasPdf);
-    const withoutPdf = results.filter((r) => !r.hasPdf && r.isRelevantByKeyword);
-    const other = results.filter((r) => !r.hasPdf && !r.isRelevantByKeyword);
+    // Format compacte per la resposta
+    const formatEmail = (r) => ({
+      messageId: r.messageId,
+      folderId: r.folderId,
+      folderPath: r.folderPath,
+      accountId: r.accountId || null,
+      classification: r.classification,
+      from: r.emailMeta.from,
+      subject: r.emailMeta.subject,
+      date: r.emailMeta.date,
+      score: r.scoring?.score,
+      scoreReasons: r.scoring?.reasons,
+      platform: r.platform?.name || null,
+      platformUrl: r.platform?.billingUrl || null,
+      platformInstructions: r.platform?.instructions || null,
+      hasPdf: r.hasPdf,
+      pdfCount: r.pdfAttachments?.length || 0,
+      pdfFiles: r.pdfAttachments?.map((a) => a.fileName) || [],
+    });
 
     res.json({
       summary: {
         total: results.length,
-        withPdf: withPdf.length,
-        withoutPdf: withoutPdf.length,
-        other: other.length,
+        pdfAttached: pdfAttached.length,
+        linkDetected: linkDetected.length,
+        manualReview: manualReview.length,
+        notInvoice: notInvoice.length,
+        byFolder,
       },
-      withPdf,
-      withoutPdf,
-      other,
+      pdfAttached: pdfAttached.map(formatEmail),
+      linkDetected: linkDetected.map(formatEmail),
+      manualReview: manualReview.map(formatEmail),
+      notInvoice: notInvoice.map(formatEmail),
     });
   } catch (error) {
     next(error);
@@ -118,6 +284,7 @@ router.post('/process', authorize('ADMIN', 'EDITOR'), requireSection('receivedIn
     const {
       messageId,
       folderId,
+      accountId,
       supplierId,
       invoiceNumber,
       totalAmount,
@@ -136,8 +303,8 @@ router.post('/process', authorize('ADMIN', 'EDITOR'), requireSection('receivedIn
       return res.status(400).json({ error: 'messageId i folderId són requerits' });
     }
 
-    // Analitzar el correu
-    const analysis = await zohoMail.analyzeInvoiceEmail(folderId, messageId);
+    // Analitzar el correu (amb accountId si proporcionat)
+    const analysis = await zohoMail.analyzeInvoiceEmail(folderId, messageId, { accountId });
     if (!analysis) {
       return res.status(404).json({ error: 'Correu no trobat' });
     }
@@ -156,7 +323,7 @@ router.post('/process', authorize('ADMIN', 'EDITOR'), requireSection('receivedIn
       if (targetAtt) {
         try {
           // Descarregar PDF a un fitxer temporal
-          const buffer = await zohoMail.downloadAttachment(folderId, messageId, targetAtt.attachmentId);
+          const buffer = await zohoMail.downloadAttachment(folderId, messageId, targetAtt.attachmentId, accountId);
           const tmpDir = path.join(os.tmpdir(), 'seitocamera-zoho');
           if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
 
@@ -258,7 +425,7 @@ router.post('/process', authorize('ADMIN', 'EDITOR'), requireSection('receivedIn
     // Marcar correu com a llegit
     if (shouldMark) {
       try {
-        await zohoMail.markAsRead(messageId);
+        await zohoMail.markAsRead(messageId, accountId);
       } catch (markErr) {
         logger.warn(`Error marcant correu com a llegit: ${markErr.message}`);
       }
@@ -317,7 +484,7 @@ router.post('/process-batch', authorize('ADMIN', 'EDITOR'), requireSection('rece
         }
 
         // Simular la petició del process individual
-        const analysis = await zohoMail.analyzeInvoiceEmail(email.folderId, email.messageId);
+        const analysis = await zohoMail.analyzeInvoiceEmail(email.folderId, email.messageId, { accountId: email.accountId });
         if (!analysis) {
           errors.push({ messageId: email.messageId, error: 'Correu no trobat' });
           continue;
@@ -335,7 +502,7 @@ router.post('/process-batch', authorize('ADMIN', 'EDITOR'), requireSection('rece
 
           if (targetAtt) {
             try {
-              const buffer = await zohoMail.downloadAttachment(email.folderId, email.messageId, targetAtt.attachmentId);
+              const buffer = await zohoMail.downloadAttachment(email.folderId, email.messageId, targetAtt.attachmentId, email.accountId);
               const tmpDir = path.join(os.tmpdir(), 'seitocamera-zoho');
               if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
 
@@ -395,7 +562,7 @@ router.post('/process-batch', authorize('ADMIN', 'EDITOR'), requireSection('rece
 
         await redis.set(`zoho:processed:${email.messageId}`, invoice.id, 'EX', 90 * 24 * 3600);
 
-        try { await zohoMail.markAsRead(email.messageId); } catch {}
+        try { await zohoMail.markAsRead(email.messageId, email.accountId); } catch {}
 
         results.push({
           messageId: email.messageId,
@@ -432,7 +599,7 @@ router.post('/process-batch', authorize('ADMIN', 'EDITOR'), requireSection('rece
  */
 router.post('/sync', authorize('ADMIN'), async (req, res, next) => {
   try {
-    const { folder = 'Inbox', dryRun = false } = req.body;
+    const { dryRun = false } = req.body;
 
     // Obtenir última sincronització
     const lastSync = await redis.get('zoho:lastSync');
@@ -440,8 +607,8 @@ router.post('/sync', authorize('ADMIN'), async (req, res, next) => {
 
     logger.info(`Zoho sync: Buscant correus nous des de ${since.toISOString()}`);
 
-    const results = await zohoMail.scanForInvoices({
-      folderName: folder,
+    // Escanejar totes les carpetes de TOTS els comptes configurats
+    const results = await zohoMail.scanAllAccounts({
       since,
       limit: 100,
     });
@@ -486,7 +653,7 @@ router.post('/sync', authorize('ADMIN'), async (req, res, next) => {
         if (email.hasPdf && email.pdfAttachments[0]) {
           const att = email.pdfAttachments[0];
           try {
-            const buffer = await zohoMail.downloadAttachment(email.folderId, email.messageId, att.attachmentId);
+            const buffer = await zohoMail.downloadAttachment(email.folderId, email.messageId, att.attachmentId, email.accountId);
             const tmpDir = path.join(os.tmpdir(), 'seitocamera-zoho');
             if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
 
@@ -541,7 +708,7 @@ router.post('/sync', authorize('ADMIN'), async (req, res, next) => {
         }
 
         await redis.set(`zoho:processed:${email.messageId}`, invoice.id, 'EX', 90 * 24 * 3600);
-        try { await zohoMail.markAsRead(email.messageId); } catch {}
+        try { await zohoMail.markAsRead(email.messageId, email.accountId); } catch {}
 
         processed.push({
           messageId: email.messageId,
@@ -549,6 +716,7 @@ router.post('/sync', authorize('ADMIN'), async (req, res, next) => {
           source,
           from: email.emailMeta.from,
           subject: email.emailMeta.subject,
+          accountId: email.accountId || null,
         });
       } catch (err) {
         syncErrors.push({

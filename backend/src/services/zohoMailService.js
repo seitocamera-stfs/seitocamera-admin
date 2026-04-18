@@ -17,6 +17,24 @@ let cachedAccessToken = null;
 let tokenExpiresAt = 0;
 
 // ===========================================
+// Multi-compte: retorna els Account IDs configurats
+// ===========================================
+
+/**
+ * Retorna la llista d'Account IDs configurats.
+ * Prioritza ZOHO_ACCOUNT_IDS (separats per coma) i fa fallback a ZOHO_ACCOUNT_ID.
+ */
+function getConfiguredAccountIds() {
+  const multiIds = process.env.ZOHO_ACCOUNT_IDS;
+  if (multiIds) {
+    return multiIds.split(',').map((id) => id.trim()).filter(Boolean);
+  }
+  const singleId = process.env.ZOHO_ACCOUNT_ID;
+  if (singleId) return [singleId.trim()];
+  return [];
+}
+
+// ===========================================
 // OAuth2 Token Management
 // ===========================================
 
@@ -104,16 +122,20 @@ function zohoRequest(method, hostname, path, body = null, extraHeaders = {}) {
 
 /**
  * Fa una petició autenticada a l'API de Zoho Mail
+ * @param {string} method - HTTP method
+ * @param {string} endpoint - API endpoint (sense /api/accounts/...)
+ * @param {*} body - Cos de la petició (opcional)
+ * @param {string} [accountId] - Account ID (opcional, per defecte ZOHO_ACCOUNT_ID)
  */
-async function apiRequest(method, endpoint, body = null) {
+async function apiRequest(method, endpoint, body = null, accountId = null) {
   const token = await getAccessToken();
-  const accountId = process.env.ZOHO_ACCOUNT_ID;
+  const accId = accountId || process.env.ZOHO_ACCOUNT_ID;
 
-  if (!accountId) {
+  if (!accId) {
     throw new Error('ZOHO_ACCOUNT_ID no configurat al .env');
   }
 
-  const fullPath = `/api/accounts/${accountId}${endpoint}`;
+  const fullPath = `/api/accounts/${accId}${endpoint}`;
 
   const headers = {
     Authorization: `Zoho-oauthtoken ${token}`,
@@ -131,12 +153,17 @@ async function apiRequest(method, endpoint, body = null) {
 /**
  * Descarrega un fitxer binari (attachment) de l'API de Zoho Mail
  */
-function downloadAttachment(folderId, messageId, attachmentId) {
+/**
+ * Descarrega un fitxer binari (attachment) de l'API de Zoho Mail
+ * Zoho API: GET /folders/{folderId}/messages/{messageId}/attachments/{attachmentId}
+ * Docs: https://www.zoho.com/mail/help/api/get-attachment-content.html
+ */
+function downloadAttachment(folderId, messageId, attachmentId, accountId = null) {
   return new Promise(async (resolve, reject) => {
     try {
       const token = await getAccessToken();
-      const accountId = process.env.ZOHO_ACCOUNT_ID;
-      const path = `/api/accounts/${accountId}/folders/${folderId}/messages/${messageId}/attachments/${attachmentId}`;
+      const accId = accountId || process.env.ZOHO_ACCOUNT_ID;
+      const path = `/api/accounts/${accId}/folders/${folderId}/messages/${messageId}/attachments/${attachmentId}`;
 
       const options = {
         hostname: 'mail.zoho.eu',
@@ -144,6 +171,7 @@ function downloadAttachment(folderId, messageId, attachmentId) {
         method: 'GET',
         headers: {
           Authorization: `Zoho-oauthtoken ${token}`,
+          Accept: 'application/octet-stream',
         },
       };
 
@@ -179,25 +207,54 @@ function downloadAttachment(folderId, messageId, attachmentId) {
 
 /**
  * Obté les carpetes del compte de correu
+ * @param {string} [accountId] - Account ID (opcional)
  */
-async function getFolders() {
-  const data = await apiRequest('GET', '/folders');
+async function getFolders(accountId = null) {
+  const data = await apiRequest('GET', '/folders', null, accountId);
   return data.data || [];
 }
 
 /**
  * Obté l'ID de la carpeta "Inbox" (o una carpeta concreta)
+ * @param {string} [folderName] - Nom de la carpeta
+ * @param {string} [accountId] - Account ID (opcional)
  */
-async function getFolderId(folderName = 'Inbox') {
-  const folders = await getFolders();
+async function getFolderId(folderName = 'Inbox', accountId = null) {
+  const folders = await getFolders(accountId);
+  const nameLower = folderName.toLowerCase();
+  // Buscar primer per path complet (ex: /Inbox/ADMIN), després per nom
   const folder = folders.find((f) =>
-    f.folderName?.toLowerCase() === folderName.toLowerCase()
-    || f.path?.toLowerCase() === folderName.toLowerCase()
+    f.path?.toLowerCase() === nameLower
+    || f.path?.toLowerCase() === '/' + nameLower
+    || f.folderName?.toLowerCase() === nameLower
   );
   if (!folder) {
     throw new Error(`Carpeta '${folderName}' no trobada a Zoho Mail`);
   }
   return folder.folderId;
+}
+
+/**
+ * Retorna els IDs de múltiples carpetes pel seu nom o path.
+ * No llença error si alguna no existeix, simplement la ignora.
+ */
+async function getFolderIds(folderNames = [], accountId = null) {
+  const folders = await getFolders(accountId);
+  const results = [];
+  for (const name of folderNames) {
+    const nameLower = name.toLowerCase();
+    const folder = folders.find((f) =>
+      f.path?.toLowerCase() === nameLower
+      || f.path?.toLowerCase() === '/' + nameLower
+      || f.folderName?.toLowerCase() === nameLower
+    );
+    if (folder) {
+      results.push({ name: folder.folderName, path: folder.path, folderId: folder.folderId });
+    } else {
+      logger.warn(`Zoho getFolderIds: carpeta '${name}' no trobada, s'omet`);
+    }
+  }
+  return results;
 }
 
 /**
@@ -207,73 +264,319 @@ async function getFolderId(folderName = 'Inbox') {
  * @param {number} options.limit - Nombre de correus (default 50)
  * @param {number} options.start - Offset per paginació (default 0)
  * @param {string} options.searchKey - Cerca per text
- * @param {string} options.receivedTime - Filtre per data (en ms des de epoch)
+ * @param {Date} options.since - Només correus posteriors a aquesta data
  */
-async function getMessages(folderId, options = {}) {
-  const { limit = 50, start = 0, searchKey, receivedTime } = options;
+async function getMessages(folderId, options = {}, accountId = null) {
+  const { limit = 50, start = 0, searchKey, since } = options;
 
-  let endpoint = `/folders/${folderId}/messages?limit=${limit}&start=${start}`;
-  if (searchKey) endpoint += `&searchKey=${encodeURIComponent(searchKey)}`;
-  if (receivedTime) endpoint += `&receivedTime=${receivedTime}`;
+  // Zoho Mail API: llistar missatges → GET /messages/view?folderId=...
+  let endpoint = `/messages/view?folderId=${folderId}&limit=${limit}&start=${start}`;
 
-  const data = await apiRequest('GET', endpoint);
-  return data.data || [];
+  // Zoho accepta searchKey amb sintaxi: after:YYYY/MM/DD
+  let searchParts = [];
+  if (since instanceof Date && !isNaN(since)) {
+    const y = since.getFullYear();
+    const m = String(since.getMonth() + 1).padStart(2, '0');
+    const d = String(since.getDate()).padStart(2, '0');
+    searchParts.push(`after:${y}/${m}/${d}`);
+  }
+  if (searchKey) searchParts.push(searchKey);
+  if (searchParts.length > 0) {
+    endpoint += `&searchKey=${encodeURIComponent(searchParts.join(' '))}`;
+  }
+
+  logger.debug(`Zoho getMessages: GET ${endpoint}`);
+  const data = await apiRequest('GET', endpoint, null, accountId);
+
+  // La resposta pot ser { data: [...messages...], status: {...} }
+  const messages = Array.isArray(data.data) ? data.data : [];
+  logger.info(`Zoho getMessages: carpeta ${folderId} → ${messages.length} correus retornats`);
+  if (messages.length === 0) {
+    logger.info(`Zoho getMessages: response status: ${JSON.stringify(data.status || {})}, dataType: ${typeof data.data}`);
+  }
+
+  return messages;
 }
 
 /**
- * Obté el detall d'un correu específic (amb info d'adjunts)
+ * Retorna la resposta RAW de Zoho (sense processar) per diagnòstic
  */
-async function getMessage(folderId, messageId) {
-  const data = await apiRequest('GET', `/folders/${folderId}/messages/${messageId}`);
-  return data.data || null;
+async function getRawMessages(folderId, options = {}, accountId = null) {
+  const { limit = 50, start = 0 } = options;
+  const endpoint = `/messages/view?folderId=${folderId}&limit=${limit}&start=${start}`;
+  return apiRequest('GET', endpoint, null, accountId);
+}
+
+/**
+ * Obté el detall (metadades) d'un correu específic.
+ * Zoho Mail API: GET /folders/{folderId}/messages/{messageId}/details
+ * Docs: https://www.zoho.com/mail/help/api/get-email-meta-data.html
+ */
+async function getMessage(folderId, messageId, accountId = null) {
+  const data = await apiRequest('GET', `/folders/${folderId}/messages/${messageId}/details`, null, accountId);
+
+  // Validar que la resposta és un missatge real (no un error)
+  if (!data.data || data.data.errorCode || data.status?.code >= 400) {
+    logger.warn(`Zoho getMessage: error per ${messageId}: ${JSON.stringify(data.data || data.status)}`);
+    return null;
+  }
+
+  return data.data;
 }
 
 /**
  * Obté els adjunts d'un correu
+ * Zoho Mail API: GET /folders/{folderId}/messages/{messageId}/attachmentinfo
+ * Docs: https://www.zoho.com/mail/help/api/get-attach-info.html
  */
-async function getAttachments(folderId, messageId) {
-  const data = await apiRequest('GET', `/folders/${folderId}/messages/${messageId}/attachments`);
+async function getAttachments(folderId, messageId, accountId = null) {
+  const data = await apiRequest('GET', `/folders/${folderId}/messages/${messageId}/attachmentinfo`, null, accountId);
+
+  if (!data.data || data.data.errorCode) {
+    logger.warn(`Zoho getAttachments: error per ${messageId}: ${JSON.stringify(data.data || data.status)}`);
+    return [];
+  }
+
+  // Zoho pot retornar { data: { attachments: [...] } } o { data: [...] }
+  if (Array.isArray(data.data)) return data.data;
   return data.data?.attachments || [];
 }
 
 /**
  * Marca un correu com a llegit
+ * Zoho API: PUT /updatemessage { mode: "markAsRead", messageId: [...] }
+ * Docs: https://www.zoho.com/mail/help/api/put-mark-email-as-read.html
  */
-async function markAsRead(messageId) {
-  return apiRequest('PUT', '/messages/read', {
+async function markAsRead(messageId, accountId = null) {
+  return apiRequest('PUT', '/updatemessage', {
+    mode: 'markAsRead',
     messageId: [messageId],
-  });
+  }, accountId);
 }
 
 /**
  * Mou un correu a una carpeta específica
+ * Zoho API: PUT /updatemessage { mode: "moveMessage", messageId: [...], destfolderId: "..." }
+ * Docs: https://www.zoho.com/mail/help/api/move-email.html
  */
-async function moveMessage(messageId, destFolderId) {
-  return apiRequest('PUT', '/messages/move', {
+async function moveMessage(messageId, destFolderId, accountId = null) {
+  return apiRequest('PUT', '/updatemessage', {
+    mode: 'moveMessage',
     messageId: [messageId],
-    folderId: destFolderId,
-  });
+    destfolderId: destFolderId,
+  }, accountId);
 }
 
 // ===========================================
 // Processament de factures
 // ===========================================
 
+const { findPlatformByEmail, findPlatformByContent } = require('../config/knownPlatforms');
+
+// ---- Paraules clau per scoring ----
+const INVOICE_KEYWORDS_HIGH = ['factura', 'invoice', 'fra.', 'fra ', 'receipt', 'rebut'];
+const INVOICE_KEYWORDS_MEDIUM = ['billing', 'payment', 'cobr', 'pagament', 'subscript', 'renovació', 'renewal', 'your invoice', 'download invoice', 'view invoice', 'albarà', 'albaran', 'pressupost'];
+const AMOUNT_PATTERNS = /(\d+[.,]\d{2})\s*[€$£]|[€$£]\s*(\d+[.,]\d{2})|(\d+[.,]\d{2})\s*(eur|usd|gbp)/i;
+const PROMO_KEYWORDS = ['unsubscribe', 'newsletter', 'marketing', 'promo', 'oferta', 'descompte', 'discount', 'sale', 'shop now', 'compra ara', 'free trial'];
+const LINK_PATTERNS = /(download|descarreg|view|veure|accedir|access)\s*(your\s*)?(invoice|factura|receipt|rebut|pdf)/i;
+
 /**
- * Analitza un correu i determina si conté PDFs de factura.
- * Retorna:
- *   - hasPdf: true/false
- *   - pdfAttachments: [{attachmentId, fileName, size}]
- *   - emailMeta: {from, subject, date, body}
+ * Calcula un score de probabilitat que un correu sigui una factura.
+ *
+ * Puntuació:
+ *   +4  subject conté keyword alta (factura, invoice, receipt...)
+ *   +2  subject conté keyword mitjana (billing, payment, subscription...)
+ *   +3  body/summary conté import (€, $, xifra amb decimals)
+ *   +3  body conté "download invoice" / "descarrega factura" / link
+ *   +2  remitent és plataforma coneguda
+ *   +2  carpeta FACTURA REBUDA
+ *   -3  conté keywords promocionals (newsletter, unsubscribe, promo...)
+ *   -2  no conté cap keyword de factura ni al subject ni al body
+ *
+ * @param {Object} params
+ * @param {string} params.subject
+ * @param {string} params.summary - resum o body del correu
+ * @param {string} params.from - adreça del remitent
+ * @param {boolean} params.isFolderFactura - si el correu és a la carpeta FACTURA REBUDA
+ * @returns {{ score: number, reasons: string[], isLikelyInvoice: boolean }}
  */
-async function analyzeInvoiceEmail(folderId, messageId) {
-  const message = await getMessage(folderId, messageId);
+function scoreInvoiceProbability({ subject = '', summary = '', from = '', isFolderFactura = false }) {
+  let score = 0;
+  const reasons = [];
+  const subjectLower = subject.toLowerCase();
+  const summaryLower = summary.toLowerCase();
+  const allText = `${subjectLower} ${summaryLower}`;
+
+  // +4: keyword alta al subject, +3 al body
+  let highHit = false;
+  for (const kw of INVOICE_KEYWORDS_HIGH) {
+    if (subjectLower.includes(kw)) {
+      score += 4;
+      reasons.push(`subject conté "${kw}"`);
+      highHit = true;
+      break;
+    }
+  }
+  if (!highHit) {
+    for (const kw of INVOICE_KEYWORDS_HIGH) {
+      if (summaryLower.includes(kw)) {
+        score += 3;
+        reasons.push(`body conté "${kw}"`);
+        break;
+      }
+    }
+  }
+
+  // +2: keyword mitjana al subject, +1 al body
+  let medHit = false;
+  for (const kw of INVOICE_KEYWORDS_MEDIUM) {
+    if (subjectLower.includes(kw)) {
+      score += 2;
+      reasons.push(`subject conté "${kw}"`);
+      medHit = true;
+      break;
+    }
+  }
+  if (!medHit) {
+    for (const kw of INVOICE_KEYWORDS_MEDIUM) {
+      if (summaryLower.includes(kw)) {
+        score += 1;
+        reasons.push(`body conté "${kw}"`);
+        break;
+      }
+    }
+  }
+
+  // +3: import detectat al text
+  if (AMOUNT_PATTERNS.test(allText)) {
+    score += 3;
+    const match = allText.match(AMOUNT_PATTERNS);
+    reasons.push(`import detectat: ${match[0].trim()}`);
+  }
+
+  // +3: link de descàrrega de factura
+  if (LINK_PATTERNS.test(allText)) {
+    score += 3;
+    reasons.push('conté link/instrucció de descàrrega de factura');
+  }
+
+  // +2: plataforma coneguda
+  const platform = findPlatformByEmail(from);
+  if (platform) {
+    score += 2;
+    reasons.push(`remitent és plataforma coneguda: ${platform.name}`);
+  }
+
+  // +2: carpeta FACTURA REBUDA
+  if (isFolderFactura) {
+    score += 2;
+    reasons.push('carpeta FACTURA REBUDA');
+  }
+
+  // -3: contingut promocional
+  const promoHits = PROMO_KEYWORDS.filter((kw) => allText.includes(kw));
+  if (promoHits.length > 0) {
+    score -= 3;
+    reasons.push(`probable promo/newsletter (${promoHits.join(', ')})`);
+  }
+
+  // -2: cap keyword de factura en tot el text
+  const anyInvoiceKw = [...INVOICE_KEYWORDS_HIGH, ...INVOICE_KEYWORDS_MEDIUM].some((kw) => allText.includes(kw));
+  if (!anyInvoiceKw && !platform && !isFolderFactura) {
+    score -= 2;
+    reasons.push('cap keyword de factura detectada');
+  }
+
+  return {
+    score,
+    reasons,
+    isLikelyInvoice: score >= 3, // llindar mínim
+  };
+}
+
+/**
+ * Classifica un correu en una de 3 categories:
+ *   A: PDF_ATTACHED    → Factura amb PDF adjunt, descarregar directament
+ *   B: LINK_DETECTED   → Sense PDF però amb link/plataforma coneguda
+ *   C: MANUAL_REVIEW   → Sense PDF ni link clar, revisió manual
+ *
+ * @param {Object} analysis - Resultat d'analyzeInvoiceEmail
+ * @returns {string} - 'PDF_ATTACHED' | 'LINK_DETECTED' | 'MANUAL_REVIEW' | 'NOT_INVOICE'
+ */
+// Emails a excloure sempre (sistema, propi domini)
+const EXCLUDED_SENDERS = [
+  '@seitocamera.com',   // emails interns
+  'noreply@zoho.eu',    // moderació Zoho
+  'noreply@zoho.com',
+  'notification@zoho',
+];
+
+function isExcludedSender(from) {
+  if (!from) return false;
+  const fromLower = from.toLowerCase();
+  return EXCLUDED_SENDERS.some(ex => fromLower.includes(ex));
+}
+
+function classifyEmail(analysis) {
+  if (!analysis) return 'NOT_INVOICE';
+
+  // Excloure emails interns i de sistema
+  if (isExcludedSender(analysis.emailMeta?.from)) {
+    return 'NOT_INVOICE';
+  }
+
+  // A: té PDF adjunt
+  if (analysis.hasPdf && analysis.pdfAttachments.length > 0) {
+    // A la carpeta FACTURA REBUDA confiem sempre (l'usuari l'ha mogut allà)
+    const isFolderFactura = analysis.folderPath?.toUpperCase().includes('FACTURA') || false;
+    if (isFolderFactura) {
+      return 'PDF_ATTACHED';
+    }
+    // Fora de FACTURA REBUDA: exigir score ≥ 3 I que hi hagi keywords de factura
+    // Això evita importar CVs, llistats d'equip, pressupostos, gear lists, etc.
+    if (analysis.scoring && analysis.scoring.score >= 3) {
+      // Verificar que el subject o body conté algun keyword de factura real
+      const allText = `${analysis.emailMeta?.subject || ''} ${analysis.emailMeta?.summary || ''}`.toLowerCase();
+      const invoiceKeywords = ['factura', 'invoice', 'fra.', 'fra ', 'receipt', 'rebut', 'adjuntamos factura', 'your receipt'];
+      const hasInvoiceKeyword = invoiceKeywords.some(kw => allText.includes(kw));
+      // Plataforma coneguda també val (Anthropic, Holded, etc.)
+      if (hasInvoiceKeyword || analysis.platform) {
+        return 'PDF_ATTACHED';
+      }
+    }
+    // PDF amb score baix o sense keyword de factura → no és factura
+    return 'NOT_INVOICE';
+  }
+
+  // Scoring per determinar B o C
+  if (!analysis.scoring || !analysis.scoring.isLikelyInvoice) {
+    return 'NOT_INVOICE';
+  }
+
+  // B: sense PDF però tenim plataforma coneguda o link de descàrrega
+  if (analysis.platform || analysis.hasDownloadLink) {
+    return 'LINK_DETECTED';
+  }
+
+  // C: probable factura però sense link clar
+  return 'MANUAL_REVIEW';
+}
+
+/**
+ * Analitza un correu: detecta PDFs, calcula score, classifica, i detecta plataforma.
+ */
+async function analyzeInvoiceEmail(folderId, messageId, { isFolderFactura = false, folderPath = '', accountId = null } = {}) {
+  const message = await getMessage(folderId, messageId, accountId);
   if (!message) return null;
 
-  // Obtenir adjunts
+  const from = message.fromAddress || message.sender || '';
+  const subject = message.subject || '';
+  const summary = message.summary || '';
+
+  // Obtenir adjunts (hasAttachment pot ser string "1" o booleà)
   let attachments = [];
-  if (message.hasAttachment) {
-    attachments = await getAttachments(folderId, messageId);
+  if (message.hasAttachment === '1' || message.hasAttachment === true) {
+    attachments = await getAttachments(folderId, messageId, accountId);
   }
 
   // Filtrar només PDFs
@@ -283,9 +586,25 @@ async function analyzeInvoiceEmail(folderId, messageId) {
     return name.endsWith('.pdf') || mime === 'application/pdf';
   });
 
-  return {
+  // Scoring de probabilitat
+  const scoring = scoreInvoiceProbability({
+    subject,
+    summary,
+    from,
+    isFolderFactura,
+  });
+
+  // Detectar plataforma coneguda
+  const platform = findPlatformByEmail(from) || findPlatformByContent(`${subject} ${summary}`);
+
+  // Detectar si hi ha link de descàrrega al summary
+  const hasDownloadLink = LINK_PATTERNS.test(`${subject} ${summary}`.toLowerCase());
+
+  const analysis = {
     messageId: message.messageId,
     folderId,
+    folderPath,
+    accountId: accountId || process.env.ZOHO_ACCOUNT_ID,
     hasPdf: pdfAttachments.length > 0,
     pdfAttachments: pdfAttachments.map((att) => ({
       attachmentId: att.attachmentId,
@@ -293,14 +612,23 @@ async function analyzeInvoiceEmail(folderId, messageId) {
       size: att.attachmentSize || att.size,
     })),
     emailMeta: {
-      from: message.fromAddress || message.sender,
+      from,
       to: message.toAddress,
-      subject: message.subject,
+      subject,
       date: message.receivedTime ? new Date(parseInt(message.receivedTime)) : null,
-      summary: message.summary || '',
+      summary,
       hasInlineImages: message.hasInlineImage || false,
     },
+    // Nous camps
+    scoring,
+    platform: platform ? { name: platform.name, billingUrl: platform.billingUrl, instructions: platform.instructions } : null,
+    hasDownloadLink,
+    classification: null, // es calcula a continuació
   };
+
+  analysis.classification = classifyEmail(analysis);
+
+  return analysis;
 }
 
 /**
@@ -313,55 +641,94 @@ async function analyzeInvoiceEmail(folderId, messageId) {
  * @param {number} options.limit - Nombre de correus a processar
  * @param {string[]} options.keywords - Paraules clau per filtrar (factura, invoice, etc.)
  */
+/**
+ * Carpetes que el cron escaneja per trobar factures.
+ * Es busquen per nom o path; si no existeixen, s'ometen.
+ */
+const DEFAULT_SCAN_FOLDERS = [
+  'Inbox',           // safata general
+  '/Inbox/ADMIN',    // admin@seitocamera.com
+  '/Inbox/RENTAL',   // rental@seitocamera.com
+  'FACTURA REBUDA',  // carpeta dedicada a factures
+];
+
 async function scanForInvoices(options = {}) {
   const {
-    folderName = 'Inbox',
+    folderNames = DEFAULT_SCAN_FOLDERS,
     since,
     limit = 50,
-    keywords = ['factura', 'invoice', 'fra', 'albarà', 'albaran', 'rebut'],
+    keywords = ['factura', 'invoice', 'fra', 'albarà', 'albaran', 'rebut', 'pressupost'],
+    accountId = null,
   } = options;
 
-  const folderId = await getFolderId(folderName);
+  // Resolem IDs de totes les carpetes
+  const folders = await getFolderIds(
+    Array.isArray(folderNames) ? folderNames : [folderNames],
+    accountId
+  );
 
-  // Obtenir correus
-  const msgOptions = { limit };
-  if (since) {
-    msgOptions.receivedTime = since.getTime().toString();
-  }
-
-  const messages = await getMessages(folderId, msgOptions);
-
-  if (!messages.length) {
-    logger.info('Zoho Mail: No hi ha correus nous per processar');
+  if (folders.length === 0) {
+    logger.warn('Zoho scanForInvoices: cap carpeta vàlida trobada');
     return [];
   }
 
-  const results = [];
+  logger.info(`Zoho scanForInvoices: escanejant ${folders.length} carpetes: ${folders.map((f) => f.path).join(', ')} | since: ${since?.toISOString() || 'cap'} | limit: ${limit}`);
 
-  for (const msg of messages) {
+  const allResults = [];
+
+  for (const folder of folders) {
     try {
-      // Filtre bàsic per keywords al subject
-      const subject = (msg.subject || '').toLowerCase();
-      const from = (msg.fromAddress || msg.sender || '').toLowerCase();
-      const isRelevant = keywords.some((kw) => subject.includes(kw.toLowerCase()));
+      // Obtenir correus d'aquesta carpeta
+      const msgOptions = { limit };
+      if (since) msgOptions.since = since;
 
-      // Analitzar tots els correus amb adjunts, o els que coincideixen amb keywords
-      if (msg.hasAttachment || isRelevant) {
-        const analysis = await analyzeInvoiceEmail(folderId, msg.messageId);
-        if (analysis) {
-          results.push({
-            ...analysis,
-            isRelevantByKeyword: isRelevant,
-          });
+      let messages = await getMessages(folder.folderId, msgOptions, accountId);
+
+      // Si 0 amb filtre de data, reintentar sense filtre (per diagnòstic / primer run)
+      if (!messages.length && since) {
+        logger.info(`Zoho scanForInvoices [${folder.path}]: 0 amb filtre de data, reintentant sense filtre (últims 20)`);
+        messages = await getMessages(folder.folderId, { limit: 20 }, accountId);
+      }
+
+      if (!messages.length) {
+        logger.info(`Zoho scanForInvoices [${folder.path}]: buida`);
+        continue;
+      }
+
+      logger.info(`Zoho scanForInvoices [${folder.path}]: ${messages.length} correus a analitzar`);
+
+      // La carpeta FACTURA REBUDA ja conté factures → tots rellevants
+      const isFolderFactura = folder.path?.toUpperCase().includes('FACTURA');
+
+      for (const msg of messages) {
+        try {
+          const subject = (msg.subject || '').toLowerCase();
+          const isRelevant = isFolderFactura || keywords.some((kw) => subject.includes(kw.toLowerCase()));
+          const hasAttach = msg.hasAttachment === '1' || msg.hasAttachment === true;
+
+          // Analitzar si té adjunts o és rellevant per keyword/carpeta
+          if (hasAttach || isRelevant) {
+            const analysis = await analyzeInvoiceEmail(folder.folderId, msg.messageId, { isFolderFactura, folderPath: folder.path, accountId });
+            if (analysis) {
+              allResults.push({
+                ...analysis,
+                folderName: folder.name,
+                folderPath: folder.path,
+                isRelevantByKeyword: isRelevant,
+              });
+            }
+          }
+        } catch (err) {
+          logger.warn(`Error analitzant correu ${msg.messageId} a ${folder.path}: ${err.message}`);
         }
       }
     } catch (err) {
-      logger.warn(`Error analitzant correu ${msg.messageId}: ${err.message}`);
+      logger.error(`Zoho scanForInvoices [${folder.path}]: error: ${err.message}`);
     }
   }
 
-  logger.info(`Zoho Mail: Escanejats ${messages.length} correus, ${results.length} rellevants`);
-  return results;
+  logger.info(`Zoho scanForInvoices: total ${allResults.length} correus rellevants de ${folders.length} carpetes`);
+  return allResults;
 }
 
 // ===========================================
@@ -371,11 +738,12 @@ async function scanForInvoices(options = {}) {
 /**
  * Comprova la connexió amb l'API de Zoho Mail
  */
-async function testConnection() {
+async function testConnection(accountId = null) {
   try {
-    const folders = await getFolders();
+    const folders = await getFolders(accountId);
     return {
       connected: true,
+      accountId: accountId || process.env.ZOHO_ACCOUNT_ID,
       foldersCount: folders.length,
       folders: folders.map((f) => ({ name: f.folderName, path: f.path, id: f.folderId })),
     };
@@ -384,17 +752,54 @@ async function testConnection() {
   }
 }
 
+/**
+ * Escaneja TOTS els comptes configurats (ZOHO_ACCOUNT_IDS o ZOHO_ACCOUNT_ID).
+ * Retorna tots els correus classificats de tots els comptes.
+ *
+ * @param {Object} options - Opcions de scanForInvoices (since, limit, folderNames, keywords)
+ * @returns {Array} Tots els resultats amb camp accountId per identificar l'origen
+ */
+async function scanAllAccounts(options = {}) {
+  const accountIds = getConfiguredAccountIds();
+  if (accountIds.length === 0) {
+    logger.warn('Zoho scanAllAccounts: cap compte configurat');
+    return [];
+  }
+
+  logger.info(`Zoho scanAllAccounts: escanejant ${accountIds.length} comptes: ${accountIds.join(', ')}`);
+
+  const allResults = [];
+  for (const accId of accountIds) {
+    try {
+      const results = await scanForInvoices({ ...options, accountId: accId });
+      logger.info(`Zoho scanAllAccounts [${accId}]: ${results.length} correus rellevants`);
+      allResults.push(...results);
+    } catch (err) {
+      logger.error(`Zoho scanAllAccounts [${accId}]: error: ${err.message}`);
+    }
+  }
+
+  logger.info(`Zoho scanAllAccounts: total ${allResults.length} correus de ${accountIds.length} comptes`);
+  return allResults;
+}
+
 module.exports = {
   getAccessToken,
+  getConfiguredAccountIds,
   getFolders,
   getFolderId,
+  getFolderIds,
   getMessages,
+  getRawMessages,
   getMessage,
   getAttachments,
   downloadAttachment,
   markAsRead,
   moveMessage,
   analyzeInvoiceEmail,
+  scoreInvoiceProbability,
+  classifyEmail,
   scanForInvoices,
+  scanAllAccounts,
   testConnection,
 };

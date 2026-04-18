@@ -21,6 +21,14 @@ const manualMatchSchema = z.object({
   issuedInvoiceId: z.string().optional().nullable(),
 });
 
+const multiMatchSchema = z.object({
+  bankMovementId: z.string().min(1),
+  invoices: z.array(z.object({
+    id: z.string().min(1),
+    type: z.enum(['received', 'issued']),
+  })).min(1).max(20),
+});
+
 // ===========================================
 // GET /api/conciliation — Llistar conciliacions
 // ===========================================
@@ -66,16 +74,45 @@ router.get('/', async (req, res, next) => {
 // ===========================================
 router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
   try {
-    // Buscar moviments no conciliats (excloure transferències internes)
+    // 1. Marcar transferències internes com a conciliades automàticament (no necessiten factura)
+    const internalTransfers = await prisma.bankMovement.findMany({
+      where: {
+        isConciliated: false,
+        OR: [
+          { operationType: 'transfer' },
+          { description: { contains: 'Internal transfer', mode: 'insensitive' } },
+          { counterparty: { contains: 'SEITO CAMERA', mode: 'insensitive' } },
+        ],
+      },
+    });
+
+    let dismissedTransfers = 0;
+    for (const t of internalTransfers) {
+      await prisma.bankMovement.update({
+        where: { id: t.id },
+        data: { isConciliated: true },
+      });
+      dismissedTransfers++;
+    }
+    if (dismissedTransfers > 0) {
+      logger.info(`Auto-conciliació: ${dismissedTransfers} transferències internes descartades`);
+    }
+
+    // 2. Buscar moviments no conciliats restants
     const unconciliated = await prisma.bankMovement.findMany({
       where: {
         isConciliated: false,
-        operationType: { notIn: ['transfer'] },  // Les transferències internes no es concilien
+        operationType: { notIn: ['transfer'] },
+        NOT: [
+          { description: { contains: 'Internal transfer', mode: 'insensitive' } },
+          { counterparty: { contains: 'SEITO CAMERA', mode: 'insensitive' } },
+        ],
       },
       orderBy: { date: 'desc' },
     });
 
     let matched = 0;
+    let autoConfirmed = 0;
     const details = [];
 
     for (const movement of unconciliated) {
@@ -183,30 +220,42 @@ router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
       // Només crear conciliació si la confiança és >= 0.5 (mínim import coincident)
       if (bestMatch && bestConfidence >= 0.5) {
         try {
-          await prisma.$transaction([
-            prisma.conciliation.create({
+          // >= 90% confiança → confirmar directament (sense supervisió)
+          const autoConfirm = bestConfidence >= 0.9;
+
+          await prisma.$transaction(async (tx) => {
+            await tx.conciliation.create({
               data: {
                 bankMovementId: movement.id,
                 receivedInvoiceId: bestType === 'received' ? bestMatch.id : null,
                 issuedInvoiceId: bestType === 'issued' ? bestMatch.id : null,
-                status: bestConfidence >= 0.8 ? 'AUTO_MATCHED' : 'AUTO_MATCHED',
+                status: autoConfirm ? 'CONFIRMED' : 'AUTO_MATCHED',
                 confidence: Math.round(bestConfidence * 100) / 100,
-                matchReason,
+                matchReason: autoConfirm ? `${matchReason} [auto-confirmat ≥90%]` : matchReason,
+                ...(autoConfirm ? { confirmedAt: new Date() } : {}),
               },
-            }),
-            prisma.bankMovement.update({
+            });
+            await tx.bankMovement.update({
               where: { id: movement.id },
               data: { isConciliated: true },
-            }),
-          ]);
+            });
+            // Marcar la factura com a PAID
+            if (bestType === 'received') {
+              await tx.receivedInvoice.update({ where: { id: bestMatch.id }, data: { status: 'PAID' } });
+            } else {
+              await tx.issuedInvoice.update({ where: { id: bestMatch.id }, data: { status: 'PAID' } });
+            }
+          });
 
           matched++;
+          if (autoConfirm) autoConfirmed++;
           details.push({
             movement: `${movement.counterparty} (${absAmount}€)`,
             invoice: bestMatch.invoiceNumber,
             type: bestType,
             confidence: Math.round(bestConfidence * 100) + '%',
             reason: matchReason,
+            autoConfirmed,
           });
         } catch (concErr) {
           // Pot fallar si ja existeix la conciliació
@@ -221,8 +270,11 @@ router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
       message: `Conciliació automàtica completada`,
       processed: unconciliated.length,
       matched,
+      autoConfirmed,
+      pendingReview: matched - autoConfirmed,
       unmatched: unconciliated.length - matched,
-      details: details.slice(0, 50), // Primers 50 per no sobrecarregar
+      dismissedTransfers,
+      details: details.slice(0, 50),
     });
   } catch (error) {
     next(error);
@@ -257,6 +309,20 @@ router.post('/manual', authorize('ADMIN', 'EDITOR'), validate(manualMatchSchema)
         data: { isConciliated: true },
       });
 
+      // Marcar la factura com a PAID
+      if (receivedInvoiceId) {
+        await tx.receivedInvoice.update({
+          where: { id: receivedInvoiceId },
+          data: { status: 'PAID' },
+        });
+      }
+      if (issuedInvoiceId) {
+        await tx.issuedInvoice.update({
+          where: { id: issuedInvoiceId },
+          data: { status: 'PAID' },
+        });
+      }
+
       return conc;
     });
 
@@ -270,17 +336,85 @@ router.post('/manual', authorize('ADMIN', 'EDITOR'), validate(manualMatchSchema)
 });
 
 // ===========================================
+// POST /api/conciliation/multi — Conciliar un moviment amb múltiples factures
+// Un sol pagament bancari pot cobrir 2 o més factures.
+// ===========================================
+router.post('/multi', authorize('ADMIN', 'EDITOR'), validate(multiMatchSchema), async (req, res, next) => {
+  try {
+    const { bankMovementId, invoices } = req.body;
+
+    const conciliations = await prisma.$transaction(async (tx) => {
+      const results = [];
+
+      for (const inv of invoices) {
+        const conc = await tx.conciliation.create({
+          data: {
+            bankMovementId,
+            receivedInvoiceId: inv.type === 'received' ? inv.id : null,
+            issuedInvoiceId: inv.type === 'issued' ? inv.id : null,
+            status: 'MANUAL_MATCHED',
+            matchReason: `Multi-match: ${invoices.length} factures per 1 moviment`,
+            confirmedBy: req.user.id,
+            confirmedAt: new Date(),
+          },
+        });
+        results.push(conc);
+
+        // Marcar cada factura com a PAID
+        if (inv.type === 'received') {
+          await tx.receivedInvoice.update({ where: { id: inv.id }, data: { status: 'PAID' } });
+        } else if (inv.type === 'issued') {
+          await tx.issuedInvoice.update({ where: { id: inv.id }, data: { status: 'PAID' } });
+        }
+      }
+
+      await tx.bankMovement.update({
+        where: { id: bankMovementId },
+        data: { isConciliated: true },
+      });
+
+      return results;
+    });
+
+    res.status(201).json({ matched: conciliations.length, conciliations });
+  } catch (error) {
+    if (error.code === 'P2003') {
+      return res.status(400).json({ error: 'Moviment o factura no trobats' });
+    }
+    next(error);
+  }
+});
+
+// ===========================================
 // PATCH /api/conciliation/:id/confirm — Confirmar conciliació
 // ===========================================
 router.patch('/:id/confirm', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
   try {
-    const conciliation = await prisma.conciliation.update({
-      where: { id: req.params.id },
-      data: {
-        status: 'CONFIRMED',
-        confirmedBy: req.user.id,
-        confirmedAt: new Date(),
-      },
+    const conciliation = await prisma.$transaction(async (tx) => {
+      const conc = await tx.conciliation.update({
+        where: { id: req.params.id },
+        data: {
+          status: 'CONFIRMED',
+          confirmedBy: req.user.id,
+          confirmedAt: new Date(),
+        },
+      });
+
+      // Marcar la factura com a PAID si encara no ho està
+      if (conc.receivedInvoiceId) {
+        await tx.receivedInvoice.updateMany({
+          where: { id: conc.receivedInvoiceId, status: { not: 'PAID' } },
+          data: { status: 'PAID' },
+        });
+      }
+      if (conc.issuedInvoiceId) {
+        await tx.issuedInvoice.updateMany({
+          where: { id: conc.issuedInvoiceId, status: { not: 'PAID' } },
+          data: { status: 'PAID' },
+        });
+      }
+
+      return conc;
     });
 
     res.json(conciliation);

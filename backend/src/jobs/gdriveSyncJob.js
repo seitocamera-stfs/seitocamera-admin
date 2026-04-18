@@ -221,6 +221,7 @@ async function syncGdriveFiles() {
         const dateFromPdf = !!pdfAnalysis.invoiceDate;
         const issueDate = pdfAnalysis.invoiceDate || (file.createdTime ? new Date(file.createdTime) : new Date());
         const needsReview = !pdfAnalysis.invoiceNumber || !pdfAnalysis.totalAmount || !dateFromPdf;
+        const needsAmount = !pdfAnalysis.totalAmount; // import 0€ no és acceptable
 
         if (isDuplicate) {
           // ===== DUPLICAT: primer crear a BD, després moure =====
@@ -304,20 +305,21 @@ async function syncGdriveFiles() {
             data: {
               invoiceNumber,
               source: 'GDRIVE_SYNC',
-              status: needsReview ? 'PDF_PENDING' : 'PENDING',
+              status: needsAmount ? 'AMOUNT_PENDING' : needsReview ? 'PDF_PENDING' : 'PENDING',
               gdriveFileId: file.id,
               originalFileName: file.name,
               supplierId: matchedSupplier?.id || null,
               isDuplicate: false,
-              description: needsReview
-                ? `⚠️ Cal revisar: ${[
-                    !pdfAnalysis.invoiceNumber ? 'número de factura provisional' : '',
-                    !pdfAnalysis.totalAmount ? 'import no detectat' : '',
-                    !dateFromPdf ? 'data no detectada (usant data de pujada)' : '',
-                  ].filter(Boolean).join(', ')}. Fitxer: ${file.name}`
-                : pdfAnalysis.hasText
-                  ? `PDF processat: ${file.name} (nº ${pdfAnalysis.invoiceNumber})`
-                  : `PDF processat: ${file.name} (sense text, pot ser escanejat)`,
+              description: needsAmount
+                ? `🔴 IMPORT PENDENT: no s'ha pogut detectar l'import. Cal revisar manualment. Fitxer: ${file.name}`
+                : needsReview
+                  ? `⚠️ Cal revisar: ${[
+                      !pdfAnalysis.invoiceNumber ? 'número de factura provisional' : '',
+                      !dateFromPdf ? 'data no detectada (usant data de pujada)' : '',
+                    ].filter(Boolean).join(', ')}. Fitxer: ${file.name}`
+                  : pdfAnalysis.hasText
+                    ? `PDF processat: ${file.name} (nº ${pdfAnalysis.invoiceNumber})`
+                    : `PDF processat: ${file.name} (sense text, pot ser escanejat)`,
               issueDate,
               subtotal: subtotal || 0,
               taxRate,
@@ -347,23 +349,26 @@ async function syncGdriveFiles() {
               const missingFields = [];
               if (!pdfAnalysis.invoiceNumber) missingFields.push('número de factura');
               if (!matchedSupplier) missingFields.push('proveïdor');
-              if (!pdfAnalysis.totalAmount) missingFields.push('imports');
+              if (!pdfAnalysis.totalAmount) missingFields.push('import (OBLIGATORI)');
               if (!pdfAnalysis.hasText) missingFields.push('(PDF escanejat sense text)');
 
               if (missingFields.length > 0) {
-                const isCritical = !pdfAnalysis.invoiceNumber || !pdfAnalysis.totalAmount;
+                const isAmountMissing = !pdfAnalysis.totalAmount;
+                const isCritical = !pdfAnalysis.invoiceNumber || isAmountMissing;
                 await prisma.reminder.create({
                   data: {
-                    title: isCritical
-                      ? `⚠️ Revisar factura: ${file.name} (falta ${!pdfAnalysis.invoiceNumber ? 'nº factura' : 'import'})`
-                      : `Completar factura: ${file.name}`,
+                    title: isAmountMissing
+                      ? `🔴 IMPORT PENDENT: ${file.name} — cal introduir import manualment`
+                      : isCritical
+                        ? `⚠️ Revisar factura: ${file.name} (falta nº factura)`
+                        : `Completar factura: ${file.name}`,
                     description: `PDF processat des d'inbox i organitzat a Google Drive.\n\n` +
                       `Número: ${invoiceNumber}${!pdfAnalysis.invoiceNumber ? ' (PROVISIONAL — cal posar el número real)' : ''}\n` +
-                      `Import: ${totalAmount ? totalAmount + '€' : 'NO DETECTAT — cal introduir manualment'}\n` +
+                      `Import: ${totalAmount ? totalAmount + '€' : '🔴 NO DETECTAT — OBLIGATORI introduir manualment'}\n` +
                       `Proveïdor: ${matchedSupplier?.name || 'No detectat'}\n\n` +
                       `Cal completar: ${missingFields.join(', ')}.`,
-                    dueAt: new Date(Date.now() + (isCritical ? 1 : 2) * 24 * 3600 * 1000),
-                    priority: isCritical ? 'HIGH' : 'NORMAL',
+                    dueAt: new Date(Date.now() + (isAmountMissing ? 0.5 : isCritical ? 1 : 2) * 24 * 3600 * 1000),
+                    priority: isAmountMissing ? 'URGENT' : isCritical ? 'HIGH' : 'NORMAL',
                     entityType: 'received_invoice',
                     entityId: invoice.id,
                     authorId: admin.id,

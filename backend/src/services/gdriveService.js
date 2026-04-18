@@ -19,34 +19,41 @@ let driveClient = null;
 function getDriveClient() {
   if (driveClient) return driveClient;
 
-  const keyFile = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
-  const credentials = process.env.GOOGLE_CREDENTIALS_JSON;
-
-  if (keyFile && fs.existsSync(keyFile)) {
-    // Service Account amb fitxer JSON
-    const auth = new google.auth.GoogleAuth({
-      keyFile,
-      scopes: ['https://www.googleapis.com/auth/drive'],
-    });
-    driveClient = google.drive({ version: 'v3', auth });
-  } else if (credentials) {
-    // Service Account amb JSON inline (per Docker/producció)
-    const parsed = JSON.parse(credentials);
-    const auth = new google.auth.GoogleAuth({
-      credentials: parsed,
-      scopes: ['https://www.googleapis.com/auth/drive'],
-    });
-    driveClient = google.drive({ version: 'v3', auth });
-  } else if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN) {
-    // OAuth2 (per desenvolupament)
+  // PRIORITAT 1: OAuth2 — funciona amb comptes Gmail/Workspace personals
+  // El Service Account no té quota de disc i no pot crear fitxers.
+  if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN) {
     const oauth2 = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
     );
     oauth2.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
     driveClient = google.drive({ version: 'v3', auth: oauth2 });
+    logger.info('Google Drive: Autenticat amb OAuth2');
   } else {
-    throw new Error('Google Drive no configurat. Afegeix GOOGLE_SERVICE_ACCOUNT_KEY o credencials OAuth2 al .env');
+    // PRIORITAT 2: Service Account (només lectura / Shared Drives)
+    const keyFile = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+    const credentials = process.env.GOOGLE_CREDENTIALS_JSON;
+
+    if (keyFile && fs.existsSync(keyFile)) {
+      const auth = new google.auth.GoogleAuth({
+        keyFile,
+        scopes: ['https://www.googleapis.com/auth/drive'],
+      });
+      driveClient = google.drive({ version: 'v3', auth });
+      logger.info('Google Drive: Autenticat amb Service Account (fitxer)');
+    } else if (credentials) {
+      const parsed = JSON.parse(credentials);
+      const auth = new google.auth.GoogleAuth({
+        credentials: parsed,
+        scopes: ['https://www.googleapis.com/auth/drive'],
+      });
+      driveClient = google.drive({ version: 'v3', auth });
+      logger.info('Google Drive: Autenticat amb Service Account (inline)');
+    } else {
+      throw new Error(
+        'Google Drive no configurat. Executa: node scripts/setup-gdrive-oauth.js'
+      );
+    }
   }
 
   return driveClient;
@@ -63,7 +70,12 @@ async function findOrCreateFolder(name, parentId = null) {
     ? `name='${name}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`
     : `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
 
-  const res = await drive.files.list({ q: query, fields: 'files(id, name)' });
+  const res = await drive.files.list({
+    q: query,
+    fields: 'files(id, name)',
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+  });
 
   if (res.data.files.length > 0) {
     return res.data.files[0];
@@ -79,6 +91,7 @@ async function findOrCreateFolder(name, parentId = null) {
   const folder = await drive.files.create({
     resource: fileMetadata,
     fields: 'id, name',
+    supportsAllDrives: true,
   });
 
   logger.info(`Carpeta Google Drive creada: ${name} (${folder.data.id})`);
@@ -186,6 +199,7 @@ async function uploadFile(localFilePath, subfolder, customName = null, invoiceDa
       body: fs.createReadStream(localFilePath),
     },
     fields: 'id, name, webViewLink, webContentLink',
+    supportsAllDrives: true,
   });
 
   if (useDataStructure) {
@@ -211,6 +225,8 @@ async function listFiles(subfolder, pageSize = 50) {
     fields: 'files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink, webContentLink)',
     orderBy: 'modifiedTime desc',
     pageSize,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
   });
 
   return res.data.files;
@@ -225,6 +241,7 @@ async function getFileLink(fileId) {
   const res = await drive.files.get({
     fileId,
     fields: 'id, name, webViewLink, webContentLink',
+    supportsAllDrives: true,
   });
 
   return res.data;
@@ -237,7 +254,7 @@ async function downloadFile(fileId, destPath) {
   const drive = getDriveClient();
 
   const res = await drive.files.get(
-    { fileId, alt: 'media' },
+    { fileId, alt: 'media', supportsAllDrives: true },
     { responseType: 'stream' }
   );
 
@@ -263,7 +280,7 @@ async function moveFile(fileId, newParentId, oldParentId = null) {
 
   // Obtenir parent actual si no s'ha passat
   if (!oldParentId) {
-    const file = await drive.files.get({ fileId, fields: 'parents' });
+    const file = await drive.files.get({ fileId, fields: 'parents', supportsAllDrives: true });
     oldParentId = file.data.parents ? file.data.parents[0] : null;
   }
 
@@ -271,6 +288,7 @@ async function moveFile(fileId, newParentId, oldParentId = null) {
     fileId,
     addParents: newParentId,
     fields: 'id, name, parents',
+    supportsAllDrives: true,
   };
   if (oldParentId) params.removeParents = oldParentId;
 
@@ -284,7 +302,7 @@ async function moveFile(fileId, newParentId, oldParentId = null) {
  */
 async function deleteFile(fileId) {
   const drive = getDriveClient();
-  await drive.files.update({ fileId, resource: { trashed: true } });
+  await drive.files.update({ fileId, resource: { trashed: true }, supportsAllDrives: true });
   logger.info(`Fitxer eliminat de Google Drive: ${fileId}`);
 }
 
@@ -301,6 +319,8 @@ async function getNewFiles(subfolder, sinceDate) {
     q: `'${folderId}' in parents and trashed=false and modifiedTime > '${since}'`,
     fields: 'files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink)',
     orderBy: 'modifiedTime desc',
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
   });
 
   return res.data.files;
@@ -331,6 +351,8 @@ async function getNewFilesRecursive(subfolder, sinceDate) {
     const res = await drive.files.list({
       q: `'${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
       fields: 'files(id, name)',
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
     });
     for (const folder of res.data.files) {
       allFolderIds.push(folder.id);
@@ -347,6 +369,8 @@ async function getNewFilesRecursive(subfolder, sinceDate) {
       q: `'${fid}' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder' and createdTime > '${since}'`,
       fields: 'files(id, name, mimeType, size, createdTime, modifiedTime, webViewLink, parents)',
       orderBy: 'createdTime desc',
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
     });
     allFiles.push(...res.data.files);
   }

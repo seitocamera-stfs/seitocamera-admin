@@ -3,7 +3,6 @@ const { prisma } = require('../config/database');
 const { redis } = require('../config/redis');
 const zohoMail = require('../services/zohoMailService');
 const gdrive = require('../services/gdriveService');
-const pdfExtract = require('../services/pdfExtractService');
 const { logger } = require('../config/logger');
 const fs = require('fs');
 const path = require('path');
@@ -12,141 +11,345 @@ const os = require('os');
 // ===========================================
 // Cron Job: Sincronització Zoho Mail → Factures
 // ===========================================
-// Cada 15 minuts busca correus nous a la safata d'entrada
-// i crea factures automàticament si detecta PDFs de factura.
+// Cada 15 minuts busca correus nous a les carpetes configurades
+// i processa segons 3 categories:
+//   A) PDF_ATTACHED   → descarrega PDF i puja a GDrive inbox
+//   B) LINK_DETECTED  → crea recordatori amb link a la plataforma
+//   C) MANUAL_REVIEW  → crea recordatori de revisió manual
+//   NOT_INVOICE       → ignora (marca com vist)
 // ===========================================
 
 let isRunning = false;
 
+/**
+ * Busca un proveïdor a la BD pel remitent del correu.
+ * Primer per email exacte, després per domini.
+ */
+async function findSupplierByEmail(fromAddress) {
+  if (!fromAddress) return null;
+  const emailLower = fromAddress.toLowerCase().trim();
+  const domain = emailLower.split('@')[1];
+
+  const supplier = await prisma.supplier.findFirst({
+    where: {
+      isActive: true,
+      OR: [
+        { email: { equals: emailLower, mode: 'insensitive' } },
+        ...(domain ? [{ email: { endsWith: `@${domain}`, mode: 'insensitive' } }] : []),
+      ],
+    },
+    select: { id: true, name: true },
+  });
+
+  return supplier;
+}
+
+/**
+ * Obté l'ID de l'admin actiu per crear recordatoris.
+ */
+async function getAdminId() {
+  const admin = await prisma.user.findFirst({
+    where: { role: 'ADMIN', isActive: true },
+    select: { id: true },
+  });
+  return admin?.id || null;
+}
+
+/**
+ * Cas A: Correu amb PDF adjunt.
+ * Descarrega el PDF i puja a GDrive factures-rebudes/inbox/.
+ * Marca el correu com a llegit i el mou a FACTURA REBUDA.
+ */
+async function handlePdfAttached(email, supplier) {
+  const fromAddress = email.emailMeta.from || '';
+  let uploadedCount = 0;
+
+  // Preparar carpeta GDrive inbox UNA sola vegada (no per cada attachment)
+  const facturesId = await gdrive.getSubfolderId('factures-rebudes');
+  const inboxFolder = await gdrive.findOrCreateFolder('inbox', facturesId);
+  if (!inboxFolder || !inboxFolder.id) {
+    throw new Error('No s\'ha pogut obtenir la carpeta inbox a GDrive');
+  }
+
+  const drive = gdrive.getDriveClient();
+  const tmpDir = path.join(os.tmpdir(), 'seitocamera-zoho');
+  if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+
+  // Noms de fitxer que NO són factures (pressupostos, gear lists, CVs, etc.)
+  const NON_INVOICE_PATTERNS = [
+    /quotation/i, /pressupost/i, /gear\s*list/i, /camera\s*list/i,
+    /^cv[_\s.-]/i, /curriculum/i, /planols/i, /certificad/i,
+  ];
+
+  for (const att of email.pdfAttachments) {
+    let tmpPath = null;
+    try {
+      // Filtrar PDFs que clarament no són factures pel nom
+      const fileName = att.fileName || '';
+      const isNonInvoice = NON_INVOICE_PATTERNS.some(p => p.test(fileName));
+      if (isNonInvoice) {
+        logger.info(`Zoho cron [A]: Saltant ${fileName} (no és factura pel nom)`);
+        continue;
+      }
+
+      // Descarregar attachment de Zoho
+      logger.info(`Zoho cron [A]: Descarregant ${att.fileName} (${att.size || '?'} bytes) de ${fromAddress} [compte: ${email.accountId || '?'}]...`);
+      const buffer = await zohoMail.downloadAttachment(email.folderId, email.messageId, att.attachmentId, email.accountId);
+
+      // Validar que el buffer no està buit i sembla un PDF
+      if (!buffer || buffer.length < 100) {
+        logger.warn(`Zoho cron [A]: Buffer buit o massa petit per ${att.fileName} (${buffer?.length || 0} bytes), saltant`);
+        continue;
+      }
+
+      // Comprovar signatura PDF (%PDF-)
+      const header = buffer.slice(0, 5).toString('utf-8');
+      if (header !== '%PDF-') {
+        // Pot ser que Zoho hagi retornat un error JSON en lloc del PDF
+        const bodyStr = buffer.slice(0, 200).toString('utf-8');
+        if (bodyStr.includes('"error"') || bodyStr.includes('"errorCode"')) {
+          logger.warn(`Zoho cron [A]: Zoho ha retornat error en lloc de PDF per ${att.fileName}: ${bodyStr.substring(0, 150)}`);
+          continue;
+        }
+        logger.warn(`Zoho cron [A]: ${att.fileName} no té signatura PDF (header: ${header}), pujant igualment`);
+      }
+
+      // Escriure a temporal
+      const safeName = att.fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+      tmpPath = path.join(tmpDir, `${Date.now()}_${safeName}`);
+      fs.writeFileSync(tmpPath, buffer);
+
+      // Pujar a factures-rebudes/inbox/
+      const uploadResult = await drive.files.create({
+        resource: { name: att.fileName, parents: [inboxFolder.id] },
+        media: { mimeType: 'application/pdf', body: fs.createReadStream(tmpPath) },
+        fields: 'id, name',
+        supportsAllDrives: true,
+      });
+
+      logger.info(`Zoho cron [A]: PDF pujat a inbox: ${att.fileName} → GDrive ID: ${uploadResult.data.id} (de: ${fromAddress}${supplier ? `, proveïdor: ${supplier.name}` : ''})`);
+      uploadedCount++;
+
+    } catch (attErr) {
+      logger.error(`Zoho cron [A]: Error amb attachment ${att.fileName}: ${attErr.message}`);
+    } finally {
+      // Netejar temporal
+      if (tmpPath) {
+        setTimeout(() => { try { fs.unlinkSync(tmpPath); } catch {} }, 5000);
+      }
+    }
+  }
+
+  if (uploadedCount === 0) {
+    logger.warn(`Zoho cron [A]: Cap PDF pujat de ${email.pdfAttachments.length} attachments per ${fromAddress}`);
+    return;
+  }
+
+  // Marcar com a llegit
+  try {
+    await zohoMail.markAsRead(email.messageId, email.accountId);
+    logger.info(`Zoho cron [A]: Email marcat com a llegit (${fromAddress})`);
+  } catch (readErr) {
+    logger.warn(`Zoho cron [A]: No s'ha pogut marcar com a llegit: ${readErr.message}`);
+  }
+
+  // Moure a carpeta FACTURA REBUDA si no hi és ja
+  if (!email.folderPath?.toUpperCase().includes('FACTURA')) {
+    try {
+      const facturaFolderId = await zohoMail.getFolderId('FACTURA REBUDA', email.accountId);
+      await zohoMail.moveMessage(email.messageId, facturaFolderId, email.accountId);
+      logger.info(`Zoho cron [A]: Email mogut a FACTURA REBUDA (de: ${fromAddress})`);
+    } catch (moveErr) {
+      logger.warn(`Zoho cron [A]: No s'ha pogut moure a FACTURA REBUDA: ${moveErr.message}`);
+    }
+  }
+}
+
+/**
+ * Cas B: Correu sense PDF però amb plataforma coneguda o link detectat.
+ * Crea un recordatori amb instruccions específiques.
+ */
+async function handleLinkDetected(email, supplier, adminId) {
+  if (!adminId) return;
+
+  const from = email.emailMeta.from || 'desconegut';
+  const subject = email.emailMeta.subject || 'sense assumpte';
+  const platform = email.platform;
+  const date = email.emailMeta.date ? email.emailMeta.date.toISOString().split('T')[0] : 'data desconeguda';
+
+  const platformName = platform?.name || (supplier?.name || from);
+  const title = `Descarregar factura: ${platformName} — ${date}`;
+
+  let description = `Correu de factura detectat SENSE PDF adjunt.\n`;
+  description += `De: ${from}\n`;
+  description += `Assumpte: ${subject}\n`;
+  description += `Data: ${date}\n`;
+  description += `Score: ${email.scoring?.score || '?'} (${email.scoring?.reasons?.join(', ') || ''})\n\n`;
+
+  if (platform) {
+    description += `--- PLATAFORMA CONEGUDA ---\n`;
+    description += `Plataforma: ${platform.name}\n`;
+    description += `URL facturació: ${platform.billingUrl}\n`;
+    description += `Instruccions: ${platform.instructions}\n`;
+  } else {
+    description += `--- LINK DETECTAT ---\n`;
+    description += `El correu conté un link de descàrrega de factura.\n`;
+    description += `Revisar el correu original per trobar l'enllaç.\n`;
+  }
+
+  await prisma.reminder.create({
+    data: {
+      title,
+      description,
+      dueAt: new Date(Date.now() + 2 * 24 * 3600 * 1000), // 2 dies
+      priority: 'HIGH',
+      entityType: 'zoho_email',
+      entityId: email.messageId,
+      authorId: adminId,
+    },
+  });
+
+  // Marcar com a llegit
+  try { await zohoMail.markAsRead(email.messageId, email.accountId); } catch {}
+
+  logger.info(`Zoho cron [B]: Recordatori creat per ${platformName} (${from})`);
+}
+
+/**
+ * Cas C: Correu probable factura sense PDF ni link clar.
+ * Crea un recordatori de revisió manual.
+ */
+async function handleManualReview(email, supplier, adminId) {
+  if (!adminId) return;
+
+  const from = email.emailMeta.from || 'desconegut';
+  const subject = email.emailMeta.subject || 'sense assumpte';
+  const date = email.emailMeta.date ? email.emailMeta.date.toISOString().split('T')[0] : 'data desconeguda';
+
+  const title = `Revisar possible factura: ${supplier?.name || from} — ${date}`;
+
+  let description = `Correu que PODRIA ser una factura (sense PDF adjunt).\n`;
+  description += `De: ${from}\n`;
+  description += `Assumpte: ${subject}\n`;
+  description += `Data: ${date}\n`;
+  description += `Score: ${email.scoring?.score || '?'} (${email.scoring?.reasons?.join(', ') || ''})\n\n`;
+  description += `Revisar el correu manualment per determinar si és una factura\n`;
+  description += `i, si cal, descarregar el PDF de la plataforma corresponent.\n`;
+
+  await prisma.reminder.create({
+    data: {
+      title,
+      description,
+      dueAt: new Date(Date.now() + 3 * 24 * 3600 * 1000), // 3 dies
+      priority: 'NORMAL',
+      entityType: 'zoho_email',
+      entityId: email.messageId,
+      authorId: adminId,
+    },
+  });
+
+  // Marcar com a llegit
+  try { await zohoMail.markAsRead(email.messageId, email.accountId); } catch {}
+
+  logger.info(`Zoho cron [C]: Revisió manual per ${from} — ${subject}`);
+}
+
+// ===========================================
+// Sincronització principal
+// ===========================================
+
 async function syncZohoEmails() {
-  // Evitar execucions solapades
   if (isRunning) {
     logger.info('Zoho sync: Ja s\'està executant, s\'omet');
     return;
   }
 
-  // Comprovar que Zoho està configurat
-  if (!process.env.ZOHO_CLIENT_ID || !process.env.ZOHO_CLIENT_SECRET || !process.env.ZOHO_REFRESH_TOKEN || !process.env.ZOHO_ACCOUNT_ID) {
-    return; // Zoho no configurat, no fer res
+  // Acceptar ZOHO_ACCOUNT_IDS (multi-compte) o ZOHO_ACCOUNT_ID (single)
+  const hasAccounts = process.env.ZOHO_ACCOUNT_IDS || process.env.ZOHO_ACCOUNT_ID;
+  if (!process.env.ZOHO_CLIENT_ID || !process.env.ZOHO_CLIENT_SECRET || !process.env.ZOHO_REFRESH_TOKEN || !hasAccounts) {
+    return;
   }
 
   isRunning = true;
 
   try {
-    // Obtenir última sincronització
     const lastSync = await redis.get('zoho:lastSync');
     const since = lastSync
       ? new Date(parseInt(lastSync))
-      : new Date(Date.now() - 24 * 3600 * 1000); // 24h per defecte
+      : new Date(Date.now() - 24 * 3600 * 1000);
 
     logger.info(`Zoho cron sync: Buscant correus des de ${since.toISOString()}`);
 
-    // Escanejar correus
-    const results = await zohoMail.scanForInvoices({
-      folderName: 'Inbox',
-      since,
-      limit: 50,
-    });
+    // Escanejar TOTS els comptes configurats (multi-compte o single)
+    const results = await zohoMail.scanAllAccounts({ since, limit: 50 });
 
-    let processedCount = 0;
-    let errorCount = 0;
+    const stats = { pdfAttached: 0, linkDetected: 0, manualReview: 0, notInvoice: 0, skipped: 0, errors: 0 };
+    const adminId = await getAdminId();
 
     for (const email of results) {
       // Saltar si ja processat
       const alreadyProcessed = await redis.get(`zoho:processed:${email.messageId}`);
-      if (alreadyProcessed) continue;
-
-      // Només processar si té PDF o és rellevant per paraules clau
-      if (!email.hasPdf && !email.isRelevantByKeyword) continue;
+      if (alreadyProcessed) {
+        stats.skipped++;
+        continue;
+      }
 
       try {
-        // Si té PDF → pujar a inbox de GDrive (el gdriveSyncJob s'encarregarà de tot)
-        if (email.hasPdf && email.pdfAttachments[0]) {
-          const att = email.pdfAttachments[0];
-          try {
-            const buffer = await zohoMail.downloadAttachment(email.folderId, email.messageId, att.attachmentId);
-            const tmpDir = path.join(os.tmpdir(), 'seitocamera-zoho');
-            if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+        const classification = email.classification || 'NOT_INVOICE';
 
-            const safeName = att.fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-            const tmpPath = path.join(tmpDir, `${Date.now()}_${safeName}`);
-            fs.writeFileSync(tmpPath, buffer);
+        // Detectar proveïdor
+        const supplier = await findSupplierByEmail(email.emailMeta.from);
 
-            // Pujar a factures-rebudes/inbox/ → el gdriveSyncJob l'analitzarà i organitzarà
-            const facturesId = await gdrive.getSubfolderId('factures-rebudes');
-            const inboxFolder = await gdrive.findOrCreateFolder('inbox', facturesId);
-            const drive = gdrive.getDriveClient();
-            await drive.files.create({
-              resource: { name: att.fileName, parents: [inboxFolder.id] },
-              media: { mimeType: 'application/pdf', body: fs.createReadStream(tmpPath) },
-              fields: 'id',
-            });
+        switch (classification) {
+          case 'PDF_ATTACHED':
+            // A: descarregar PDF → GDrive inbox
+            await handlePdfAttached(email, supplier);
+            await redis.set(`zoho:processed:${email.messageId}`, 'pdf_uploaded', 'EX', 90 * 24 * 3600);
+            stats.pdfAttached++;
+            break;
 
-            logger.info(`Zoho cron: PDF pujat a inbox: ${att.fileName}`);
+          case 'LINK_DETECTED':
+            // B: recordatori amb instruccions de plataforma
+            await handleLinkDetected(email, supplier, adminId);
+            await redis.set(`zoho:processed:${email.messageId}`, 'link_reminder', 'EX', 90 * 24 * 3600);
+            stats.linkDetected++;
+            break;
 
-            // Netejar temporal
-            setTimeout(() => { try { fs.unlinkSync(tmpPath); } catch {} }, 5000);
-          } catch (dlErr) {
-            logger.warn(`Zoho cron: Error descarregant/pujant PDF: ${dlErr.message}`);
-          }
-        } else {
-          // Sense PDF → crear factura amb estat PDF_PENDING + recordatori
-          const invoiceNumber = `ZOHO-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-          const invoice = await prisma.receivedInvoice.create({
-            data: {
-              invoiceNumber,
-              source: 'EMAIL_NO_PDF',
-              status: 'PDF_PENDING',
-              description: `[Auto] ${email.emailMeta.from} — ${email.emailMeta.subject}`,
-              issueDate: email.emailMeta.date || new Date(),
-              subtotal: 0,
-              taxRate: 21,
-              taxAmount: 0,
-              totalAmount: 0,
-              currency: 'EUR',
-            },
-          });
+          case 'MANUAL_REVIEW':
+            // C: recordatori de revisió manual
+            await handleManualReview(email, supplier, adminId);
+            await redis.set(`zoho:processed:${email.messageId}`, 'manual_review', 'EX', 90 * 24 * 3600);
+            stats.manualReview++;
+            break;
 
-          // Recordatori per completar
-          try {
-            const admin = await prisma.user.findFirst({
-              where: { role: 'ADMIN', isActive: true },
-              select: { id: true },
-            });
-            if (admin) {
-              await prisma.reminder.create({
-                data: {
-                  title: `Completar factura: ${invoice.invoiceNumber}`,
-                  description: `Factura detectada per email sense PDF.\nDe: ${email.emailMeta.from}\nAssumpte: ${email.emailMeta.subject}`,
-                  dueAt: new Date(Date.now() + 3 * 24 * 3600 * 1000),
-                  priority: 'HIGH',
-                  entityType: 'received_invoice',
-                  entityId: invoice.id,
-                  authorId: admin.id,
-                },
-              });
-            }
-          } catch (remErr) {
-            logger.warn(`Zoho cron: Error creant recordatori: ${remErr.message}`);
-          }
+          default:
+            // NOT_INVOICE: marcar com a vist sense fer res
+            await redis.set(`zoho:processed:${email.messageId}`, 'not_invoice', 'EX', 30 * 24 * 3600);
+            stats.notInvoice++;
+            break;
         }
 
-        // Marcar com a processat i llegit
-        await redis.set(`zoho:processed:${email.messageId}`, 'done', 'EX', 90 * 24 * 3600);
-        try { await zohoMail.markAsRead(email.messageId); } catch {}
-
-        processedCount++;
       } catch (err) {
         logger.error(`Zoho cron: Error processant correu ${email.messageId}: ${err.message}`);
-        errorCount++;
+        stats.errors++;
       }
     }
 
     // Actualitzar timestamp
     await redis.set('zoho:lastSync', Date.now().toString());
 
-    if (processedCount > 0 || errorCount > 0) {
-      logger.info(`Zoho cron sync completat: ${processedCount} processats, ${errorCount} errors (de ${results.length} escanejats)`);
+    const total = stats.pdfAttached + stats.linkDetected + stats.manualReview + stats.notInvoice;
+    if (total > 0 || stats.errors > 0) {
+      logger.info(
+        `Zoho cron sync completat: ` +
+        `${stats.pdfAttached} PDFs pujats (A), ` +
+        `${stats.linkDetected} amb link/plataforma (B), ` +
+        `${stats.manualReview} revisió manual (C), ` +
+        `${stats.notInvoice} descartats, ` +
+        `${stats.skipped} ja processats, ` +
+        `${stats.errors} errors ` +
+        `(de ${results.length} escanejats)`
+      );
     }
   } catch (error) {
     logger.error(`Zoho cron sync error: ${error.message}`);
@@ -156,23 +359,31 @@ async function syncZohoEmails() {
 }
 
 /**
- * Inicialitza el cron job de sincronització
- * Cada 15 minuts, en horari laboral (8h-20h, dilluns a dissabte)
+ * Inicialitza els cron jobs de sincronització
+ * - Cada 15 minuts, de 8h a 20h, de dilluns a dissabte (horari laboral)
+ * - Cada 2 hores fora d'aquest horari (nits + diumenges)
  */
 function startZohoEmailSync() {
-  // Comprovar que Zoho està configurat
-  if (!process.env.ZOHO_CLIENT_ID || !process.env.ZOHO_CLIENT_SECRET || !process.env.ZOHO_REFRESH_TOKEN || !process.env.ZOHO_ACCOUNT_ID) {
+  const hasAccounts = process.env.ZOHO_ACCOUNT_IDS || process.env.ZOHO_ACCOUNT_ID;
+  if (!process.env.ZOHO_CLIENT_ID || !process.env.ZOHO_CLIENT_SECRET || !process.env.ZOHO_REFRESH_TOKEN || !hasAccounts) {
     logger.info('Zoho Mail sync: No configurat, cron desactivat');
     return null;
   }
 
-  // Cada 15 minuts, de 8h a 20h, de dilluns a dissabte
-  const task = cron.schedule('*/15 8-20 * * 1-6', syncZohoEmails, {
-    timezone: 'Europe/Madrid',
-  });
+  const accountIds = zohoMail.getConfiguredAccountIds();
+  logger.info(`Zoho Mail sync: ${accountIds.length} comptes configurats`);
 
-  logger.info('Zoho Mail sync: Cron activat (cada 15 min, 8h-20h, dl-ds)');
-  return task;
+  const opts = { timezone: 'Europe/Madrid' };
+
+  // Horari laboral: cada 15 min, 8h-20h, dl-ds
+  const taskPeak = cron.schedule('*/15 8-20 * * 1-6', syncZohoEmails, opts);
+
+  // Fora d'horari: cada 2h, nits (21h-7h) dl-ds + tot el diumenge
+  const taskOffNight = cron.schedule('0 0,2,4,6,21,23 * * 1-6', syncZohoEmails, opts);
+  const taskOffSunday = cron.schedule('0 */2 * * 0', syncZohoEmails, opts);
+
+  logger.info('Zoho Mail sync: Cron activat (cada 15 min 8h-20h dl-ds + cada 2h fora horari)');
+  return { taskPeak, taskOffNight, taskOffSunday };
 }
 
 module.exports = { startZohoEmailSync, syncZohoEmails };

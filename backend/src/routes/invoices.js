@@ -74,10 +74,19 @@ const statusUpdateSchema = z.object({
  */
 router.get('/received', async (req, res, next) => {
   try {
-    const { search, status, source, supplierId, conciliated, dateFrom, dateTo, page = 1, limit = 25 } = req.query;
+    const { search, status, source, supplierId, conciliated, paid, dateFrom, dateTo, deleted, page = 1, limit = 25 } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const where = {};
+
+    // Per defecte, excloure factures a la paperera (deletedAt != null)
+    // Amb ?deleted=true es mostren NOMÉS les de la paperera
+    // Amb ?deleted=all es mostren totes
+    if (deleted === 'true') {
+      where.deletedAt = { not: null };
+    } else if (deleted !== 'all') {
+      where.deletedAt = null;
+    }
 
     if (status) where.status = status;
     if (source) where.source = source;
@@ -91,9 +100,20 @@ router.get('/received', async (req, res, next) => {
 
     // Filtre per conciliació
     if (conciliated === 'true') {
-      where.conciliations = { some: { status: 'CONFIRMED' } };
+      where.conciliations = { some: { status: { in: ['CONFIRMED', 'MANUAL_MATCHED'] } } };
     } else if (conciliated === 'false') {
       where.conciliations = { none: {} };
+    }
+
+    // Filtre per pagament (pagada = conciliació confirmada O status PAID)
+    if (paid === 'true') {
+      where.OR = [
+        { status: 'PAID' },
+        { conciliations: { some: { status: { in: ['CONFIRMED', 'MANUAL_MATCHED'] } } } },
+      ];
+    } else if (paid === 'false') {
+      where.status = { not: 'PAID' };
+      where.conciliations = { none: { status: { in: ['CONFIRMED', 'MANUAL_MATCHED'] } } };
     }
 
     if (search) {
@@ -130,17 +150,28 @@ router.get('/received', async (req, res, next) => {
       prisma.receivedInvoice.count({ where }),
     ]);
 
-    // Enriquir cada factura amb l'estat de conciliació
+    // Enriquir cada factura amb l'estat de conciliació i pagament
     const enriched = invoices.map((inv) => {
       const confirmed = inv.conciliations.find((c) => c.status === 'CONFIRMED');
+      const manualMatched = inv.conciliations.find((c) => c.status === 'MANUAL_MATCHED');
       const autoMatched = inv.conciliations.find((c) => c.status === 'AUTO_MATCHED');
+
+      // Conciliació: CONFIRMED i MANUAL_MATCHED són equivalents (pagada)
+      const matchedConciliation = confirmed || manualMatched;
+
+      const conciliation = matchedConciliation
+        ? { status: 'CONFIRMED', bankMovement: matchedConciliation.bankMovement, matchType: matchedConciliation.status }
+        : autoMatched
+          ? { status: 'PENDING_CONFIRM', bankMovement: autoMatched.bankMovement, confidence: autoMatched.confidence }
+          : { status: 'NOT_MATCHED' };
+
+      // Pagament: pagada si té conciliació confirmada O status PAID
+      const isPaid = inv.status === 'PAID' || !!matchedConciliation;
+
       return {
         ...inv,
-        conciliation: confirmed
-          ? { status: 'CONFIRMED', bankMovement: confirmed.bankMovement }
-          : autoMatched
-            ? { status: 'PENDING_CONFIRM', bankMovement: autoMatched.bankMovement, confidence: autoMatched.confidence }
-            : { status: 'NOT_MATCHED' },
+        conciliation,
+        isPaid,
         hasPdf: !!inv.filePath || !!inv.gdriveFileId,
       };
     });
@@ -259,7 +290,7 @@ router.get('/received/:id/pdf', async (req, res, next) => {
       try {
         const drive = gdrive.getDriveClient();
         const fileRes = await drive.files.get(
-          { fileId: invoice.gdriveFileId, alt: 'media' },
+          { fileId: invoice.gdriveFileId, alt: 'media', supportsAllDrives: true },
           { responseType: 'stream' }
         );
         res.setHeader('Content-Type', 'application/pdf');
@@ -566,13 +597,37 @@ router.post('/received/:id/attach-pdf', authorize('ADMIN', 'EDITOR'), upload.sin
 
 router.put('/received/:id', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
   try {
-    const data = { ...req.body };
-    if (data.issueDate) data.issueDate = new Date(data.issueDate);
-    if (data.dueDate) data.dueDate = new Date(data.dueDate);
-    if (typeof data.subtotal === 'string') data.subtotal = parseFloat(data.subtotal);
-    if (typeof data.taxRate === 'string') data.taxRate = parseFloat(data.taxRate);
-    if (typeof data.taxAmount === 'string') data.taxAmount = parseFloat(data.taxAmount);
-    if (typeof data.totalAmount === 'string') data.totalAmount = parseFloat(data.totalAmount);
+    const body = req.body;
+
+    // Whitelist de camps editables — no passar camps extra a Prisma
+    const data = {};
+    if (body.invoiceNumber !== undefined) data.invoiceNumber = String(body.invoiceNumber).trim();
+    if (body.description !== undefined) data.description = body.description || null;
+    if (body.category !== undefined) data.category = body.category || null;
+
+    // Proveïdor: string buit → null
+    if (body.supplierId !== undefined) {
+      data.supplierId = body.supplierId || null;
+    }
+
+    // Dates: string buit → null (dueDate és opcional, issueDate obligatori)
+    if (body.issueDate !== undefined) {
+      data.issueDate = body.issueDate ? new Date(body.issueDate) : undefined; // no tocar si buit
+    }
+    if (body.dueDate !== undefined) {
+      data.dueDate = body.dueDate ? new Date(body.dueDate) : null;
+    }
+
+    // Imports numèrics
+    if (body.subtotal !== undefined) data.subtotal = parseFloat(body.subtotal) || 0;
+    if (body.taxRate !== undefined) data.taxRate = parseFloat(body.taxRate) || 0;
+    if (body.taxAmount !== undefined) data.taxAmount = parseFloat(body.taxAmount) || 0;
+    if (body.totalAmount !== undefined) data.totalAmount = parseFloat(body.totalAmount) || 0;
+
+    // Netejar camps amb valor undefined (no enviar-los a Prisma)
+    for (const key of Object.keys(data)) {
+      if (data[key] === undefined) delete data[key];
+    }
 
     const invoice = await prisma.receivedInvoice.update({
       where: { id: req.params.id },
@@ -583,6 +638,7 @@ router.put('/received/:id', authorize('ADMIN', 'EDITOR'), async (req, res, next)
     res.json(invoice);
   } catch (error) {
     if (error.code === 'P2025') return res.status(404).json({ error: 'Factura no trobada' });
+    if (error.code === 'P2002') return res.status(409).json({ error: 'Ja existeix una factura amb aquest número per aquest proveïdor' });
     next(error);
   }
 });
@@ -600,10 +656,43 @@ router.patch('/received/:id/status', authorize('ADMIN', 'EDITOR'), validate(stat
   }
 });
 
+/**
+ * DELETE /api/invoices/received/:id — Soft delete (mou a paperera)
+ * La factura es marca amb deletedAt i es pot recuperar durant 30 dies.
+ */
 router.delete('/received/:id', requireLevel('receivedInvoices', 'admin'), async (req, res, next) => {
   try {
-    await prisma.receivedInvoice.delete({ where: { id: req.params.id } });
-    res.json({ message: 'Factura eliminada' });
+    const invoice = await prisma.receivedInvoice.findUnique({ where: { id: req.params.id } });
+    if (!invoice) return res.status(404).json({ error: 'Factura no trobada' });
+
+    if (invoice.deletedAt) {
+      // Ja a la paperera → eliminació definitiva
+      await prisma.receivedInvoice.delete({ where: { id: req.params.id } });
+      res.json({ message: 'Factura eliminada definitivament' });
+    } else {
+      // Soft delete → moure a paperera
+      await prisma.receivedInvoice.update({
+        where: { id: req.params.id },
+        data: { deletedAt: new Date() },
+      });
+      res.json({ message: 'Factura moguda a la paperera' });
+    }
+  } catch (error) {
+    if (error.code === 'P2025') return res.status(404).json({ error: 'Factura no trobada' });
+    next(error);
+  }
+});
+
+/**
+ * POST /api/invoices/received/:id/restore — Restaurar de la paperera
+ */
+router.post('/received/:id/restore', requireLevel('receivedInvoices', 'admin'), async (req, res, next) => {
+  try {
+    await prisma.receivedInvoice.update({
+      where: { id: req.params.id },
+      data: { deletedAt: null },
+    });
+    res.json({ message: 'Factura restaurada' });
   } catch (error) {
     if (error.code === 'P2025') return res.status(404).json({ error: 'Factura no trobada' });
     next(error);
@@ -616,11 +705,17 @@ router.delete('/received/:id', requireLevel('receivedInvoices', 'admin'), async 
 
 router.get('/issued', async (req, res, next) => {
   try {
-    const { search, status, clientId, dateFrom, dateTo, page = 1, limit = 25 } = req.query;
+    const { search, status, clientId, conciliated, dateFrom, dateTo, page = 1, limit = 25 } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const where = {};
     if (status) where.status = status;
     if (clientId) where.clientId = clientId;
+    // Filtre per conciliació
+    if (conciliated === 'true') {
+      where.conciliations = { some: { status: 'CONFIRMED' } };
+    } else if (conciliated === 'false') {
+      where.conciliations = { none: {} };
+    }
     if (dateFrom || dateTo) {
       where.issueDate = {};
       if (dateFrom) where.issueDate.gte = new Date(dateFrom);

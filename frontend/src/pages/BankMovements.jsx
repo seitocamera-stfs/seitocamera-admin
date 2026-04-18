@@ -1,9 +1,59 @@
-import { useState } from 'react';
-import { Plus, Search, ArrowUpCircle, ArrowDownCircle, Trash2 } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Plus, Search, ArrowUpCircle, ArrowDownCircle, Trash2, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import Modal from '../components/shared/Modal';
 import { formatCurrency, formatDate } from '../lib/utils';
+import api from '../lib/api';
 import ExportButtons from '../components/shared/ExportButtons';
+
+function SyncStatus({ lastSync, onSync, syncing }) {
+  if (!lastSync && !syncing) {
+    return (
+      <button onClick={onSync} className="flex items-center gap-2 px-3 py-2 rounded-md border text-sm hover:bg-muted">
+        <RefreshCw size={14} /> Sync Qonto
+      </button>
+    );
+  }
+
+  const timeAgo = lastSync?.timestamp ? getTimeAgo(lastSync.timestamp) : null;
+
+  return (
+    <div className="flex items-center gap-2">
+      {lastSync?.success === true && (
+        <span className="flex items-center gap-1 text-xs text-muted-foreground" title={`${lastSync.created || 0} nous, ${lastSync.skipped || 0} omesos`}>
+          <CheckCircle2 size={12} className="text-green-500" />
+          Sync {timeAgo}
+          {lastSync.created > 0 && <span className="text-green-600 font-medium">+{lastSync.created}</span>}
+        </span>
+      )}
+      {lastSync?.success === false && (
+        <span className="flex items-center gap-1 text-xs text-red-500" title={lastSync.error}>
+          <AlertCircle size={12} /> Error sync {timeAgo}
+        </span>
+      )}
+      <button
+        onClick={onSync}
+        disabled={syncing}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs hover:bg-muted disabled:opacity-50"
+        title="Sincronitzar moviments de Qonto"
+      >
+        <RefreshCw size={12} className={syncing ? 'animate-spin' : ''} />
+        {syncing ? 'Sincronitzant...' : 'Sync'}
+      </button>
+    </div>
+  );
+}
+
+function getTimeAgo(dateStr) {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'ara';
+  if (mins < 60) return `fa ${mins} min`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `fa ${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `fa ${days}d`;
+}
 
 export default function BankMovements() {
   const [search, setSearch] = useState('');
@@ -12,9 +62,36 @@ export default function BankMovements() {
   const [page, setPage] = useState(1);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ date: '', description: '', amount: '', type: 'EXPENSE', reference: '' });
+  const [syncing, setSyncing] = useState(false);
+  const [lastSync, setLastSync] = useState(null);
 
   const { data, loading, refetch } = useApiGet('/bank', { search, type: typeFilter || undefined, conciliated: conciliatedFilter || undefined, page, limit: 50 });
   const { mutate } = useApiMutation();
+
+  // Carregar últim sync al muntar
+  const fetchLastSync = useCallback(async () => {
+    try {
+      const { data: syncData } = await api.get('/bank/qonto/last-sync');
+      setLastSync(syncData);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    fetchLastSync();
+  }, [fetchLastSync]);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      const { data: result } = await api.post('/bank/qonto/sync');
+      setLastSync({ ...result, timestamp: new Date().toISOString(), success: true });
+      refetch();
+    } catch (err) {
+      setLastSync({ success: false, error: err.response?.data?.error || err.message, timestamp: new Date().toISOString() });
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const handleSave = async (e) => {
     e.preventDefault();
@@ -42,6 +119,7 @@ export default function BankMovements() {
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold">Moviments bancaris</h2>
         <div className="flex items-center gap-3">
+          <SyncStatus lastSync={lastSync} onSync={handleSync} syncing={syncing} />
           <ExportButtons
             endpoint="/export/bank-movements"
             filters={{ search: search || undefined, type: typeFilter || undefined, conciliated: conciliatedFilter || undefined }}
@@ -92,7 +170,12 @@ export default function BankMovements() {
               data?.data?.map((m) => (
                 <tr key={m.id} className="border-t hover:bg-muted/30">
                   <td className="p-3 text-muted-foreground">{formatDate(m.date)}</td>
-                  <td className="p-3">{m.description}</td>
+                  <td className="p-3">
+                    <div>{m.description}</div>
+                    {m.counterparty && m.counterparty !== m.description && (
+                      <div className="text-xs text-muted-foreground">{m.counterparty}</div>
+                    )}
+                  </td>
                   <td className="p-3 text-muted-foreground text-xs">{m.reference || '—'}</td>
                   <td className={`p-3 text-right font-medium ${parseFloat(m.amount) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                     <span className="inline-flex items-center gap-1">

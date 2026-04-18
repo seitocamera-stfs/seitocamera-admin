@@ -115,6 +115,8 @@ app.use('/api/gdrive', require('./routes/gdrive'));
 app.use('/api/rentman', require('./routes/rentman'));
 app.use('/api/zoho', require('./routes/zoho'));
 app.use('/api/export', require('./routes/export'));
+app.use('/api/agent', require('./routes/agent'));
+app.use('/api/equipment', require('./routes/equipment'));
 
 // ===========================================
 // Gestió d'errors
@@ -148,12 +150,33 @@ async function start() {
     const { startZohoEmailSync } = require('./jobs/zohoEmailSync');
     const { startGdriveSyncJob } = require('./jobs/gdriveSyncJob');
     const { startRentmanSyncJob } = require('./jobs/rentmanSyncJob');
+    const { startQontoBankSyncJob } = require('./jobs/qontoBankSyncJob');
     startZohoEmailSync();
     startGdriveSyncJob();
     startRentmanSyncJob();
+    startQontoBankSyncJob();
+    const { startAccountingReviewJob } = require('./jobs/accountingReviewJob');
+    startAccountingReviewJob();
 
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       logger.info(`Servidor escoltant al port ${PORT}`);
+    });
+
+    server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        logger.warn(`Port ${PORT} ocupat, matant procés anterior...`);
+        const { execSync } = require('child_process');
+        try {
+          execSync(`lsof -ti :${PORT} | xargs kill -9`, { stdio: 'ignore' });
+        } catch {}
+        setTimeout(() => {
+          server.listen(PORT, () => {
+            logger.info(`Servidor escoltant al port ${PORT} (retry)`);
+          });
+        }, 1000);
+      } else {
+        throw err;
+      }
     });
   } catch (error) {
     logger.error('Error iniciant el servidor:', error);

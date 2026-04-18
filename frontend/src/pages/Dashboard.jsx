@@ -27,7 +27,7 @@ function formatMonth(ym) {
 // Labels per estats de factura
 const STATUS_LABELS = {
   PENDING: 'Pendent',
-  PDF_PENDING: 'Pendent PDF',
+  PDF_PENDING: 'Cal revisar',
   REVIEWED: 'Revisada',
   APPROVED: 'Aprovada',
   REJECTED: 'Rebutjada',
@@ -56,6 +56,15 @@ function getRangePreset(months) {
     from: from.toISOString().split('T')[0],
     to: to.toISOString().split('T')[0],
   };
+}
+
+// Format intel·ligent per l'eix Y (adapta unitats: €, k€, M€)
+function formatYAxis(value) {
+  if (value === 0) return '0';
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${(value / 1_000).toFixed(0)}k`;
+  return value.toFixed(0);
 }
 
 // Tooltip personalitzat per moneda
@@ -309,7 +318,7 @@ export default function Dashboard() {
                   <LineChart data={monthlyChartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                     <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-                    <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+                    <YAxis tick={{ fontSize: 12 }} tickFormatter={formatYAxis} />
                     <Tooltip content={<CurrencyTooltip />} />
                     <Legend wrapperStyle={{ fontSize: 13 }} />
                     <Line type="monotone" dataKey="Emeses" stroke="#0d9488" strokeWidth={2} dot={{ r: 3 }} />
@@ -338,7 +347,7 @@ export default function Dashboard() {
                   <LineChart data={bankBalanceData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                     <XAxis dataKey="dateLabel" tick={{ fontSize: 11 }} />
-                    <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+                    <YAxis tick={{ fontSize: 12 }} tickFormatter={formatYAxis} />
                     <Tooltip content={<CurrencyTooltip />} />
                     <Legend wrapperStyle={{ fontSize: 13 }} />
                     {stats.bankAccountNames.map((acc, idx) => (
@@ -376,7 +385,7 @@ export default function Dashboard() {
                   <ResponsiveContainer width="100%" height={Math.max(240, topClientsData.length * 32)}>
                     <BarChart data={topClientsData} layout="vertical" margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                      <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+                      <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={formatYAxis} />
                       <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={110} />
                       <Tooltip content={<CurrencyTooltip />} />
                       <Bar dataKey="total" fill="#0d9488" name="Total" radius={[0, 4, 4, 0]} />
@@ -402,7 +411,7 @@ export default function Dashboard() {
                   <ResponsiveContainer width="100%" height={Math.max(240, topSuppliersData.length * 32)}>
                     <BarChart data={topSuppliersData} layout="vertical" margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                      <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+                      <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={formatYAxis} />
                       <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={110} />
                       <Tooltip content={<CurrencyTooltip />} />
                       <Bar dataKey="total" fill="#3b82f6" name="Total" radius={[0, 4, 4, 0]} />

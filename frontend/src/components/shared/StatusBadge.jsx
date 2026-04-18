@@ -1,6 +1,6 @@
 const statusConfig = {
   PENDING: { label: 'Pendent', className: 'bg-yellow-100 text-yellow-800' },
-  PDF_PENDING: { label: 'Falta PDF', className: 'bg-amber-100 text-amber-800' },
+  PDF_PENDING: { label: 'Cal revisar', className: 'bg-amber-100 text-amber-800' },
   REVIEWED: { label: 'Revisada', className: 'bg-blue-100 text-blue-800' },
   APPROVED: { label: 'Aprovada', className: 'bg-green-100 text-green-800' },
   REJECTED: { label: 'Rebutjada', className: 'bg-red-100 text-red-800' },

@@ -160,7 +160,7 @@ router.put('/:id', authorize('ADMIN', 'EDITOR'), validate(supplierSchema), async
 // ===========================================
 // DELETE /api/suppliers/:id — Desactivar proveïdor (soft delete)
 // ===========================================
-router.delete('/:id', requireLevel('suppliers', 'admin'), async (req, res, next) => {
+router.delete('/:id', requireLevel('suppliers', 'write'), async (req, res, next) => {
   try {
     await prisma.supplier.update({
       where: { id: req.params.id },

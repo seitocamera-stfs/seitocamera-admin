@@ -43,6 +43,7 @@ model User {
   reminders         Reminder[]
   reminderMentions  ReminderMention[]
   activityLogs      ActivityLog[]
+  agentChats        AgentChat[]
 
   @@map("users")
 }
@@ -68,8 +69,54 @@ model Supplier {
 
   // Relacions
   receivedInvoices  ReceivedInvoice[]
+  template          SupplierTemplate?
+  equipment         Equipment[]
 
   @@map("suppliers")
+}
+
+// ===========================================
+// Plantilles de proveïdor (patrons apresos)
+// ===========================================
+model SupplierTemplate {
+  id              String   @id @default(cuid())
+  supplierId      String   @unique
+
+  // Patrons de número de factura apresos
+  // Ex: ["^FRA-\\d{4,}", "^\\d{4}/\\d+$"] — regex que encaixen amb els números d'aquest proveïdor
+  invoicePatterns Json?    // String[] de regex patterns
+
+  // Prefix comú del número de factura (ex: "FRA-", "2026/")
+  invoicePrefix   String?
+
+  // Patrons de nom de fitxer que identifiquen aquest proveïdor
+  // Ex: ["Fra_Cromalite", "cromalite", "CROMALITE"]
+  filePatterns    Json?    // String[] de patrons de nom de fitxer
+
+  // NIFs detectats als PDFs d'aquest proveïdor
+  knownNifs       Json?    // String[] de NIFs
+
+  // Rang d'imports habituals
+  avgAmount       Decimal? @db.Decimal(12, 2)
+  minAmount       Decimal? @db.Decimal(12, 2)
+  maxAmount       Decimal? @db.Decimal(12, 2)
+
+  // IVA habitual
+  commonTaxRate   Decimal? @db.Decimal(5, 2)
+
+  // Nombre de factures analitzades per generar la plantilla
+  sampleCount     Int      @default(0)
+
+  // Confiança global de la plantilla (0-1)
+  confidence      Float    @default(0)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relació
+  supplier        Supplier @relation(fields: [supplierId], references: [id])
+
+  @@map("supplier_templates")
 }
 
 model Client {
@@ -100,6 +147,7 @@ model Client {
 enum InvoiceStatus {
   PENDING
   PDF_PENDING
+  AMOUNT_PENDING
   REVIEWED
   APPROVED
   REJECTED
@@ -140,16 +188,31 @@ model ReceivedInvoice {
   duplicateOfId     String?       // ID de la factura original si és duplicat
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
+  deletedAt         DateTime?     // Soft delete: paperera (null = activa, data = eliminada)
+
+  // Classificació comptable (agent)
+  accountingType    String?       // 'EXPENSE' (despesa directa) o 'INVESTMENT' (inversió/immobilitzat)
+  pgcAccount        String?       // Compte PGC: "621", "628", "213", etc.
+  pgcAccountName    String?       // Nom: "Arrendaments", "Subministraments", etc.
+  classifiedBy      String?       // 'AGENT_AUTO', 'AGENT_CHAT', 'MANUAL'
+  classifiedAt      DateTime?
+
+  // Extracció d'equips
+  equipmentExtracted  Boolean   @default(false)  // Si ja s'ha intentat extreure equips
 
   // Relacions
-  supplier       Supplier?       @relation(fields: [supplierId], references: [id])
-  conciliations  Conciliation[]
+  supplier         Supplier?          @relation(fields: [supplierId], references: [id])
+  conciliations    Conciliation[]
+  agentSuggestions AgentSuggestion[]
+  equipment        Equipment[]
 
   @@unique([invoiceNumber, supplierId])  // Permet nulls: dues factures amb supplierId=null i diferent invoiceNumber no xoquen
   @@index([status])
   @@index([source])
   @@index([issueDate])
   @@index([supplierId])
+  @@index([accountingType])
+  @@index([deletedAt])
   @@map("received_invoices")
 }
 
@@ -368,4 +431,104 @@ model ActivityLog {
   @@index([userId])
   @@index([createdAt])
   @@map("activity_logs")
+}
+
+// ===========================================
+// Agent Comptable — Xat
+// ===========================================
+
+model AgentChat {
+  id          String   @id @default(cuid())
+  userId      String
+  title       String?        // Resum generat automàticament de la conversa
+  messages    Json           // Array de { role: 'user'|'assistant', content: string, timestamp: string }
+  context     Json?          // Dades de context usades (IDs factures, filters, etc.)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relacions
+  user  User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("agent_chats")
+}
+
+// ===========================================
+// Agent Comptable — Suggeriments
+// ===========================================
+
+enum SuggestionType {
+  CLASSIFICATION        // Classificació despesa vs inversió
+  PGC_ACCOUNT           // Assignació compte PGC
+  ANOMALY               // Detecció d'anomalia
+  DUPLICATE             // Possible duplicat
+  MISSING_DATA          // Dades que falten
+  TAX_WARNING           // IVA incorrecte o inusual
+}
+
+enum SuggestionStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+model AgentSuggestion {
+  id                  String           @id @default(cuid())
+  receivedInvoiceId   String
+  type                SuggestionType
+  status              SuggestionStatus @default(PENDING)
+  title               String           // Títol curt del suggeriment
+  description         String           // Explicació detallada
+  suggestedValue      Json?            // Valor suggerit: { accountingType, pgcAccount, pgcAccountName, ... }
+  confidence          Float?           // 0-1 confiança del suggeriment
+  reasoning           String?          // Raonament de l'agent
+  resolvedBy          String?          // 'user' o 'auto'
+  resolvedAt          DateTime?
+  createdAt           DateTime         @default(now())
+
+  // Relacions
+  receivedInvoice  ReceivedInvoice @relation(fields: [receivedInvoiceId], references: [id])
+
+  @@index([receivedInvoiceId])
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
+  @@map("agent_suggestions")
+}
+
+// ===========================================
+// Inventari d'Equips
+// ===========================================
+
+model Equipment {
+  id                  String   @id @default(cuid())
+  name                String           // Nom del producte/model (ex: "Sony FX6", "Canon RF 24-70mm f/2.8")
+  serialNumber        String?          // Número de sèrie
+  category            String?          // camera, lens, lighting, audio, accessory, other
+  brand               String?          // Marca extreta
+  model               String?          // Model específic
+  purchasePrice       Decimal? @db.Decimal(12, 2)  // Preu de compra unitari
+  purchaseDate        DateTime?        // Data de compra (= issueDate de la factura)
+  status              String   @default("ACTIVE")   // ACTIVE, SOLD, BROKEN, LOST
+  notes               String?
+  extractedBy         String   @default("MANUAL")   // MANUAL, AGENT_AUTO, AGENT_MANUAL
+  rawExtractedData    Json?            // Dades brutes de l'extracció (línia original del PDF)
+
+  // Relacions
+  receivedInvoiceId   String?
+  supplierId          String?
+  receivedInvoice     ReceivedInvoice? @relation(fields: [receivedInvoiceId], references: [id])
+  supplier            Supplier?        @relation(fields: [supplierId], references: [id])
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([receivedInvoiceId])
+  @@index([supplierId])
+  @@index([serialNumber])
+  @@index([category])
+  @@index([status])
+  @@map("equipment")
 }

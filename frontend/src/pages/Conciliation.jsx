@@ -21,6 +21,7 @@ export default function Conciliation() {
   const [manualSearch, setManualSearch] = useState('');
   const [searchType, setSearchType] = useState('auto');
   const [detailInvoice, setDetailInvoice] = useState(null);
+  const [selectedCandidates, setSelectedCandidates] = useState([]); // IDs seleccionats per multi-match
   const { mutate, loading: mutating } = useApiMutation();
 
   // Carregar detalls complets d'una factura emesa (per popup)
@@ -48,6 +49,7 @@ export default function Conciliation() {
 
   // Quan seleccionem un moviment, buscar candidats automàticament
   useEffect(() => {
+    setSelectedCandidates([]);
     if (selectedMovement && isPending) {
       findCandidates(selectedMovement);
     }
@@ -58,25 +60,73 @@ export default function Conciliation() {
     setCandidates([]);
     const absAmount = Math.abs(parseFloat(movement.amount));
     const isExpense = parseFloat(movement.amount) < 0;
-    const searchTerm = movement.counterparty || movement.description || '';
+    const rawText = movement.counterparty || movement.description || '';
+    const endpoint = isExpense ? '/invoices/received' : '/invoices/issued';
+
+    // Extreure paraules significatives (>2 chars, sense números purs ni stopwords)
+    const stopWords = ['s.c.a', 'sca', 'bv', 'nv', 'sa', 'sl', 'slu', 'slne', 'europe', 'international', 'payments', 'mktp', 'amzn'];
+    const words = rawText
+      .split(/[\s,.\-/]+/)
+      .map(w => w.replace(/[^a-zA-ZÀ-ÿ0-9]/g, ''))
+      .filter(w => w.length > 2 && !/^\d+$/.test(w) && !stopWords.includes(w.toLowerCase()));
 
     try {
-      // Buscar per nom del contrapart
-      const endpoint = isExpense ? '/invoices/received' : '/invoices/issued';
-      const { data } = await api.get(endpoint, { params: { search: searchTerm, limit: 30 } });
-      let results = (data.data || []).map(inv => ({ ...inv, _type: isExpense ? 'received' : 'issued' }));
+      const allResults = new Map(); // clau: invoice.id → objecte amb score
+      const addResults = (items, scoreBonus, reason) => {
+        for (const inv of items) {
+          const existing = allResults.get(inv.id);
+          if (existing) {
+            existing._score += scoreBonus;
+            if (!existing._matchReasons.includes(reason)) existing._matchReasons.push(reason);
+          } else {
+            allResults.set(inv.id, { ...inv, _type: isExpense ? 'received' : 'issued', _score: scoreBonus, _matchReasons: [reason] });
+          }
+        }
+      };
 
-      // Buscar també per import si no hi ha resultats per nom
-      if (results.length === 0 && absAmount > 0) {
-        const { data: data2 } = await api.get(endpoint, { params: { search: absAmount.toString(), limit: 20 } });
-        results = (data2.data || []).map(inv => ({ ...inv, _type: isExpense ? 'received' : 'issued' }));
+      // Estratègia 1: Buscar per import (sempre, no només com a fallback)
+      const searches = [];
+      if (absAmount > 0) {
+        searches.push(
+          api.get(endpoint, { params: { search: absAmount.toFixed(2), conciliated: 'false', limit: 20 } })
+            .then(({ data }) => addResults(data.data || [], 5, 'import'))
+            .catch(() => {})
+        );
       }
 
-      // Ordenar: primer els que coincideixen en import
+      // Estratègia 2: Buscar per nom complet del contrapart
+      if (rawText.trim()) {
+        searches.push(
+          api.get(endpoint, { params: { search: rawText.trim(), conciliated: 'false', limit: 20 } })
+            .then(({ data }) => addResults(data.data || [], 3, 'nom complet'))
+            .catch(() => {})
+        );
+      }
+
+      // Estratègia 3: Buscar per cada paraula significativa individualment
+      for (const word of words.slice(0, 3)) { // max 3 paraules per no fer masses requests
+        searches.push(
+          api.get(endpoint, { params: { search: word, conciliated: 'false', limit: 10 } })
+            .then(({ data }) => addResults(data.data || [], 2, `paraula: ${word}`))
+            .catch(() => {})
+        );
+      }
+
+      await Promise.all(searches);
+
+      // Calcular score final: bonus per coincidència d'import
+      let results = Array.from(allResults.values());
+      for (const inv of results) {
+        const diff = Math.abs(parseFloat(inv.totalAmount) - absAmount);
+        if (diff < 0.03) inv._score += 10;       // match exacte
+        else if (diff < 1) inv._score += 5;       // quasi exacte
+        else if (diff < 5) inv._score += 2;       // proper
+      }
+
+      // Ordenar per score (major primer), desempat per diferència d'import
       results.sort((a, b) => {
-        const aDiff = Math.abs(parseFloat(a.totalAmount) - absAmount);
-        const bDiff = Math.abs(parseFloat(b.totalAmount) - absAmount);
-        return aDiff - bDiff;
+        if (b._score !== a._score) return b._score - a._score;
+        return Math.abs(parseFloat(a.totalAmount) - absAmount) - Math.abs(parseFloat(b.totalAmount) - absAmount);
       });
 
       setCandidates(results);
@@ -102,7 +152,19 @@ export default function Conciliation() {
     setSearchingCandidates(false);
   };
 
-  // Conciliar manualment
+  // Toggle selecció d'una factura candidata (per multi-match)
+  const toggleCandidate = (inv) => {
+    setSelectedCandidates((prev) => {
+      const exists = prev.find((s) => s.id === inv.id);
+      if (exists) return prev.filter((s) => s.id !== inv.id);
+      return [...prev, { id: inv.id, type: inv._type, totalAmount: parseFloat(inv.totalAmount) }];
+    });
+  };
+
+  // Suma de les factures seleccionades
+  const selectedTotal = selectedCandidates.reduce((sum, s) => sum + s.totalAmount, 0);
+
+  // Conciliar 1 factura directament (clic "OK")
   const handleMatch = async (movement, invoice) => {
     try {
       await mutate('post', '/conciliation/manual', {
@@ -112,6 +174,7 @@ export default function Conciliation() {
       });
       setSelectedMovement(null);
       setCandidates([]);
+      setSelectedCandidates([]);
       pendingQuery.refetch();
       matchedQuery.refetch();
     } catch (err) {
@@ -119,11 +182,35 @@ export default function Conciliation() {
     }
   };
 
+  // Conciliar múltiples factures amb 1 moviment
+  const handleMultiMatch = async () => {
+    if (!selectedMovement || selectedCandidates.length === 0) return;
+    try {
+      await mutate('post', '/conciliation/multi', {
+        bankMovementId: selectedMovement.id,
+        invoices: selectedCandidates.map((s) => ({ id: s.id, type: s.type })),
+      });
+      setSelectedMovement(null);
+      setCandidates([]);
+      setSelectedCandidates([]);
+      pendingQuery.refetch();
+      matchedQuery.refetch();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error conciliant múltiples factures');
+    }
+  };
+
   // Auto-conciliar tots
   const handleAutoMatch = async () => {
     try {
       const result = await mutate('post', '/conciliation/auto');
-      alert(`Processats: ${result.processed} | Conciliats: ${result.matched} | Sense match: ${result.unmatched}`);
+      const parts = [
+        `Processats: ${result.processed}`,
+        `Conciliats: ${result.matched} (${result.autoConfirmed} auto-confirmats, ${result.pendingReview} per revisar)`,
+        `Sense match: ${result.unmatched}`,
+      ];
+      if (result.dismissedTransfers > 0) parts.push(`Transferències internes descartades: ${result.dismissedTransfers}`);
+      alert(parts.join('\n'));
       pendingQuery.refetch();
       matchedQuery.refetch();
     } catch (err) {
@@ -137,11 +224,17 @@ export default function Conciliation() {
     matchedQuery.refetch();
   };
 
-  // Rebutjar conciliació (esborrar vincle)
-  const handleReject = async (id) => {
+  // Rebutjar conciliació (esborrar vincle) → tornar a "Per conciliar" amb el moviment seleccionat
+  const handleReject = async (id, bankMovement) => {
     await mutate('patch', `/conciliation/${id}/reject`);
     matchedQuery.refetch();
     pendingQuery.refetch();
+    // Canviar a la pestanya "Per conciliar" i seleccionar el moviment per buscar nous candidats
+    if (bankMovement) {
+      setTab('pending');
+      setPage(1);
+      setSelectedMovement(bankMovement);
+    }
   };
 
   // Veure PDF
@@ -197,12 +290,16 @@ export default function Conciliation() {
           <div>
             <h3 className="text-sm font-semibold text-muted-foreground mb-2 uppercase tracking-wide">Moviments bancaris</h3>
             <div className="space-y-2">
-              {activeQuery.loading ? (
+              {activeQuery.loading && !selectedMovement ? (
                 <div className="bg-card border rounded-lg p-8 text-center text-muted-foreground">Carregant...</div>
-              ) : movements.length === 0 ? (
+              ) : movements.length === 0 && !selectedMovement ? (
                 <div className="bg-card border rounded-lg p-8 text-center text-muted-foreground">Tots els moviments estan conciliats!</div>
               ) : (
-                movements.map((m) => {
+                // Si el moviment seleccionat no és a la llista (ve d'un rebutjar), afegir-lo al principi
+                (selectedMovement && !movements.find(m => m.id === selectedMovement.id)
+                  ? [selectedMovement, ...movements]
+                  : movements
+                ).map((m) => {
                   const isSelected = selectedMovement?.id === m.id;
                   const isExpense = parseFloat(m.amount) < 0;
                   return (
@@ -271,56 +368,106 @@ export default function Conciliation() {
                     Cap factura candidata trobada. Prova la cerca manual.
                   </div>
                 ) : (
-                  <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-                    {candidates.map((inv) => {
-                      const absMovAmount = Math.abs(parseFloat(selectedMovement.amount));
-                      const invAmount = parseFloat(inv.totalAmount);
-                      const amountMatch = Math.abs(invAmount - absMovAmount) < 0.02;
-                      const entityName = inv._type === 'received' ? inv.supplier?.name : inv.client?.name;
-
-                      return (
-                        <div key={inv.id} className={`bg-card border rounded-lg p-3 ${amountMatch ? 'border-green-300 bg-green-50/30' : ''}`}>
-                          <div className="flex items-start justify-between">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2">
-                                <span className="font-medium text-sm">{inv.invoiceNumber}</span>
-                                {amountMatch && <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded">Import coincident</span>}
-                                {inv._type === 'received' && <span className="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded">Rebuda</span>}
-                                {inv._type === 'issued' && <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Emesa</span>}
-                              </div>
-                              <div className="text-xs text-muted-foreground mt-1">
-                                {entityName || '—'} · {formatDate(inv.issueDate)}
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <div className="font-semibold text-sm">{formatCurrency(inv.totalAmount)}</div>
-                            </div>
-                          </div>
-                          <div className="flex items-center justify-end gap-2 mt-2 pt-2 border-t">
-                            {inv._type === 'received' && (inv.gdriveFileId || inv.hasPdf) && (
-                              <button onClick={() => handleViewPdf(inv)} className="text-xs text-blue-600 hover:underline flex items-center gap-1">
-                                <FileText size={12} /> Veure PDF
-                              </button>
+                  <>
+                    {/* Barra de multi-selecció */}
+                    {selectedCandidates.length > 0 && (
+                      <div className="bg-teal-50 border border-teal-200 rounded-lg p-3 mb-2">
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm">
+                            <span className="font-medium">{selectedCandidates.length} factura{selectedCandidates.length > 1 ? 'es' : ''} seleccionada{selectedCandidates.length > 1 ? 'es' : ''}</span>
+                            <span className="mx-2">·</span>
+                            <span className="font-semibold">{formatCurrency(selectedTotal)}</span>
+                            <span className="mx-1 text-muted-foreground">de</span>
+                            <span className="font-semibold">{formatCurrency(Math.abs(parseFloat(selectedMovement.amount)))}</span>
+                            {Math.abs(selectedTotal - Math.abs(parseFloat(selectedMovement.amount))) < 0.02 ? (
+                              <span className="ml-2 text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-medium">Suma exacta</span>
+                            ) : (
+                              <span className="ml-2 text-xs text-muted-foreground">
+                                (dif: {formatCurrency(Math.abs(selectedTotal - Math.abs(parseFloat(selectedMovement.amount))))})
+                              </span>
                             )}
-                            {inv._type === 'issued' && (
-                              <button
-                                onClick={() => handleViewIssuedDetails(inv.id)}
-                                className="text-xs text-indigo-600 hover:underline flex items-center gap-1"
-                              >
-                                <Eye size={12} /> Veure detalls
-                              </button>
-                            )}
-                            <button
-                              onClick={() => handleMatch(selectedMovement, inv)}
-                              className="px-4 py-1.5 rounded-md bg-teal-600 text-white text-xs font-semibold hover:bg-teal-700"
-                            >
-                              OK
-                            </button>
                           </div>
+                          <button
+                            onClick={handleMultiMatch}
+                            disabled={mutating}
+                            className="px-4 py-1.5 rounded-md bg-teal-600 text-white text-xs font-semibold hover:bg-teal-700 disabled:opacity-50"
+                          >
+                            Conciliar {selectedCandidates.length} factures
+                          </button>
                         </div>
-                      );
-                    })}
-                  </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+                      {candidates.map((inv) => {
+                        const absMovAmount = Math.abs(parseFloat(selectedMovement.amount));
+                        const invAmount = parseFloat(inv.totalAmount);
+                        const amountMatch = Math.abs(invAmount - absMovAmount) < 0.02;
+                        const entityName = inv._type === 'received' ? inv.supplier?.name : inv.client?.name;
+                        const isSelected = selectedCandidates.some((s) => s.id === inv.id);
+
+                        return (
+                          <div key={inv.id} className={`bg-card border rounded-lg p-3 transition-colors ${amountMatch ? 'border-green-300 bg-green-50/30' : ''} ${isSelected ? 'border-teal-400 bg-teal-50/40 ring-1 ring-teal-300' : ''}`}>
+                            <div className="flex items-start gap-2">
+                              {/* Checkbox per multi-selecció */}
+                              <label className="mt-1 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => toggleCandidate(inv)}
+                                  className="rounded border-gray-300 text-teal-600 focus:ring-teal-500"
+                                />
+                              </label>
+                              <div className="flex-1">
+                                <div className="flex items-start justify-between">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="font-medium text-sm">{inv.invoiceNumber}</span>
+                                      {amountMatch && <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded">Import coincident</span>}
+                                      {inv._matchReasons?.length > 0 && !amountMatch && (
+                                        <span className="text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded">
+                                          {inv._matchReasons.filter(r => r !== 'import').join(', ')}
+                                        </span>
+                                      )}
+                                      {inv._type === 'received' && <span className="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded">Rebuda</span>}
+                                      {inv._type === 'issued' && <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Emesa</span>}
+                                    </div>
+                                    <div className="text-xs text-muted-foreground mt-1">
+                                      {entityName || '—'} · {formatDate(inv.issueDate)}
+                                    </div>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="font-semibold text-sm">{formatCurrency(inv.totalAmount)}</div>
+                                  </div>
+                                </div>
+                                <div className="flex items-center justify-end gap-2 mt-2 pt-2 border-t">
+                                  {inv._type === 'received' && (inv.gdriveFileId || inv.hasPdf) && (
+                                    <button onClick={() => handleViewPdf(inv)} className="text-xs text-blue-600 hover:underline flex items-center gap-1">
+                                      <FileText size={12} /> Veure PDF
+                                    </button>
+                                  )}
+                                  {inv._type === 'issued' && (
+                                    <button
+                                      onClick={() => handleViewIssuedDetails(inv.id)}
+                                      className="text-xs text-indigo-600 hover:underline flex items-center gap-1"
+                                    >
+                                      <Eye size={12} /> Veure detalls
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={() => handleMatch(selectedMovement, inv)}
+                                    className="px-4 py-1.5 rounded-md bg-teal-600 text-white text-xs font-semibold hover:bg-teal-700"
+                                  >
+                                    OK
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
                 )}
               </div>
             ) : (
@@ -342,15 +489,16 @@ export default function Conciliation() {
                 <th className="text-left p-3 font-medium text-xs text-muted-foreground uppercase">Moviment</th>
                 <th className="text-right p-3 font-medium text-xs text-muted-foreground uppercase">Import</th>
                 <th className="text-left p-3 font-medium text-xs text-muted-foreground uppercase">Factura vinculada</th>
+                <th className="text-right p-3 font-medium text-xs text-muted-foreground uppercase">Import factura</th>
                 <th className="text-center p-3 font-medium text-xs text-muted-foreground uppercase">Confiança</th>
                 <th className="text-right p-3 font-medium text-xs text-muted-foreground uppercase">Accions</th>
               </tr>
             </thead>
             <tbody>
               {activeQuery.loading ? (
-                <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
+                <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
               ) : conciliations.length === 0 ? (
-                <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">Cap conciliació en aquest estat.</td></tr>
+                <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">Cap conciliació en aquest estat.</td></tr>
               ) : (
                 conciliations.map((c) => {
                   const invoice = c.receivedInvoice || c.issuedInvoice;
@@ -388,6 +536,9 @@ export default function Conciliation() {
                           )}
                         </div>
                       </td>
+                      <td className="p-3 text-right font-medium">
+                        {invoice?.totalAmount ? formatCurrency(parseFloat(invoice.totalAmount)) : '—'}
+                      </td>
                       <td className="p-3 text-center text-xs">
                         {c.confidence ? `${Math.round(c.confidence * 100)}%` : '—'}
                       </td>
@@ -396,7 +547,7 @@ export default function Conciliation() {
                           {(c.status === 'AUTO_MATCHED' || c.status === 'MANUAL_MATCHED') && (
                             <>
                               <button onClick={() => handleConfirm(c.id)} className="px-2 py-1 rounded bg-green-600 text-white text-xs font-medium hover:bg-green-700">Confirmar</button>
-                              <button onClick={() => handleReject(c.id)} className="px-2 py-1 rounded bg-red-100 text-red-700 text-xs font-medium hover:bg-red-200">Rebutjar</button>
+                              <button onClick={() => handleReject(c.id, c.bankMovement)} className="px-2 py-1 rounded bg-red-100 text-red-700 text-xs font-medium hover:bg-red-200">Rebutjar</button>
                             </>
                           )}
                           {c.status === 'CONFIRMED' && (

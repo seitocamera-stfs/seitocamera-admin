@@ -134,15 +134,17 @@ function detectInvoiceNumber(text) {
   const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   const normalized = text.replace(/\r\n/g, '\n').replace(/\s+/g, ' ');
 
+  // ===========================================
   // ESTRATÈGIA 1: Patrons línia per línia (més precís)
+  // ===========================================
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     let m;
 
+    // --- CATALÀ ---
     // "Nº Factura: A26 / " → buscar el número a la línia següent si està tallat
     m = line.match(/n[ºúo°]\.?\s*factura\s*[:\s]\s*([A-Z0-9][\w\-]*)\s*\/\s*$/i);
     if (m && i + 1 < lines.length) {
-      // El número continua a la línia següent: "A26 / \n3275" → buscar número a prop
       const nextLine = lines[i + 1].trim();
       const nextNum = nextLine.match(/^(\w+)/);
       if (nextNum) return m[1] + '/' + nextNum[1];
@@ -152,63 +154,106 @@ function detectInvoiceNumber(text) {
     m = line.match(/n[ºúo°]\.?\s*factura\s*[:\s]\s*([A-Z0-9][\w\-]*)\s*\/\s*(\w+)/i);
     if (m) return m[1] + '/' + m[2];
 
-    // "Nº Factura: A26 /" (sense res després del /)
+    // "Nº Factura: A26 /"
     m = line.match(/n[ºúo°]\.?\s*factura\s*[:\s]\s*([A-Z0-9][\w\-\/\.]{2,})/i);
     if (m && !isGenericWord(m[1])) return cleanInvoiceNumber(m[1]);
 
-    // "Factura Nº" seguit de número a la mateixa línia
+    // "Factura Nº" seguit de número
     m = line.match(/factura\s*n[ºúo°]\.?\s*[:\s]?\s*([A-Z0-9][\w\-\/\.]{2,})/i);
     if (m && !isGenericWord(m[1])) return cleanInvoiceNumber(m[1]);
 
-    // "Invoice numberUZQPSJGM0002" (Stripe/Anthropic sense espai — capturar TOT incloent números)
+    // --- CASTELLÀ ---
+    // "Número de factura: XXX" / "Num. factura: XXX"
+    m = line.match(/n[úu]mero\s*(?:de\s+)?factura\s*[:\s]\s*([A-Z0-9][\w\-\/\.]{2,})/i);
+    if (m && !isGenericWord(m[1]) && !isDateLike(m[1])) return cleanInvoiceNumber(m[1]);
+
+    // "Nro. Factura: XXX" / "Nro Factura XXX"
+    m = line.match(/nro\.?\s*(?:de\s+)?factura\s*[:\s]\s*([A-Z0-9][\w\-\/\.]{2,})/i);
+    if (m && !isGenericWord(m[1]) && !isDateLike(m[1])) return cleanInvoiceNumber(m[1]);
+
+    // "Ref. Factura: XXX" / "Referencia factura: XXX"
+    m = line.match(/ref(?:erencia)?\.?\s*(?:de\s+)?factura\s*[:\s]\s*([A-Z0-9][\w\-\/\.]{2,})/i);
+    if (m && !isGenericWord(m[1]) && !isDateLike(m[1])) return cleanInvoiceNumber(m[1]);
+
+    // --- ANGLÈS ---
+    // "Invoice numberUZQPSJGM0002" (Stripe/Anthropic sense espai)
     m = line.match(/invoice\s*number\s*([A-Z][A-Z0-9\-]{4,})/i);
     if (m) return cleanInvoiceNumber(m[1]);
 
-    // "Invoice number: XXX" / "Invoice no: XXX"
-    m = line.match(/invoice\s*(?:number|no\.?|n[ºo°]\.?|#)\s*[:\s]\s*([A-Z0-9][\w\-\/\.]+)/i);
-    if (m) return cleanInvoiceNumber(m[1]);
+    // "Invoice number: XXX" / "Invoice no: XXX" / "Invoice #XXX" / "Invoice ID: XXX"
+    m = line.match(/invoice\s*(?:number|no\.?|n[ºo°]\.?|#|id)\s*[:\s]\s*([A-Z0-9][\w\-\/\.]+)/i);
+    if (m && !isGenericWord(m[1])) return cleanInvoiceNumber(m[1]);
 
+    // "Invoice: XXX" (sol)
+    m = line.match(/^invoice\s*:\s*([A-Z0-9][\w\-\/\.]{3,})/i);
+    if (m && !isDateLike(m[1]) && !isGenericWord(m[1])) return cleanInvoiceNumber(m[1]);
+
+    // "Receipt number: XXX" / "Receipt #XXX"
+    m = line.match(/receipt\s*(?:number|no\.?|#|id)\s*[:\s]\s*([A-Z0-9][\w\-\/\.]+)/i);
+    if (m && !isGenericWord(m[1])) return cleanInvoiceNumber(m[1]);
+
+    // "Credit note: XXX" / "Credit memo: XXX"
+    m = line.match(/credit\s*(?:note|memo)\s*(?:number|no\.?|#|id)?\s*[:\s]\s*([A-Z0-9][\w\-\/\.]+)/i);
+    if (m && !isGenericWord(m[1])) return cleanInvoiceNumber(m[1]);
+
+    // "Bill number: XXX" / "Bill no: XXX"
+    m = line.match(/bill\s*(?:number|no\.?|#|id)\s*[:\s]\s*([A-Z0-9][\w\-\/\.]+)/i);
+    if (m && !isGenericWord(m[1])) return cleanInvoiceNumber(m[1]);
+
+    // "Document number: XXX" / "Document no: XXX" (en/es)
+    m = line.match(/document[o]?\s*(?:number|no\.?|n[ºúo°]\.?|#)\s*[:\s]\s*([A-Z0-9][\w\-\/\.]+)/i);
+    if (m && !isGenericWord(m[1])) return cleanInvoiceNumber(m[1]);
+
+    // --- GENÈRICS ---
     // "Factura:20260489" (sense espai) / "Factura: 20260489"
     m = line.match(/^factura\s*:\s*([A-Z0-9][\w\-\/\.]{3,})/i);
     if (m && !isDateLike(m[1]) && !isGenericWord(m[1])) return cleanInvoiceNumber(m[1]);
 
-    // "FACTURA: 26-00265" que pot tenir data enganxada - separar amb regex
+    // "FACTURA: 26-00265" que pot tenir data enganxada
     m = line.match(/factura\s*:\s*(\d{2,4}[\-]\d{3,6})(?:\d{2}[\-]\d{2}[\-]\d{2,4})?/i);
     if (m) return cleanInvoiceNumber(m[1]);
 
-    // "Núm : FA2604-0129"
-    m = line.match(/^n[ºúo°u]m\.?\s*[:\s]\s*([A-Z][A-Z0-9][\w\-\/\.]{2,})/i);
+    // "Núm : FA2604-0129" / "Número: 2026/0489"
+    m = line.match(/^n[ºúo°u]m(?:ero)?\.?\s*[:\s]\s*([A-Z0-9][\w\-\/\.]{2,})/i);
     if (m && !isDateLike(m[1]) && !isGenericWord(m[1])) return cleanInvoiceNumber(m[1]);
+
+    // "ADJUNTAMOS FACTURA Nº 20260489" / "su factura nº 123"
+    m = line.match(/factura\s*(?:n[ºúo°]\.?|num\.?|número|number)\s*[:\s]?\s*([A-Z0-9][\w\-\/\.]{2,})/i);
+    if (m && !isGenericWord(m[1]) && !isDateLike(m[1])) return cleanInvoiceNumber(m[1]);
   }
 
-  // ESTRATÈGIA 2: Patrons multi-línia — buscar etiquetes seguides del valor a la línia següent
+  // ===========================================
+  // ESTRATÈGIA 2: Patrons multi-línia — etiqueta + valor a línia següent
+  // ===========================================
   for (let i = 0; i < lines.length; i++) {
-    // "Núm.factura" a una línia i el valor a alguna línia posterior (Aigües BCN)
-    // Aigües BCN: "Núm.factura" és una etiqueta de columna, el valor real és unes línies avall
-    if (/^n[ºúo°u]m\.?\s*factura$/i.test(lines[i])) {
-      // Buscar el primer número llarg (5+ dígits) a les línies properes
-      for (let j = i + 1; j < Math.min(lines.length, i + 10); j++) {
-        const numMatch = lines[j].match(/^(\d{5,})$/);
-        if (numMatch) return numMatch[1];
+    // Etiquetes que indiquen número de factura en qualsevol idioma
+    const isInvoiceLabel = /^(?:n[ºúo°u]m\.?\s*(?:de\s+)?factura|invoice\s*(?:number|no\.?|#)|factura\s*n[ºúo°]|receipt\s*(?:number|no\.?|#)|bill\s*(?:number|no\.?)|n[úu]mero\s*(?:de\s+)?factura|ref\.?\s*factura)$/i;
+
+    if (isInvoiceLabel.test(lines[i])) {
+      // Buscar valor a les línies properes
+      for (let j = i + 1; j < Math.min(lines.length, i + 5); j++) {
+        const val = lines[j].trim();
+        // Acceptar número alfanumèric (no dates, no paraules genèriques)
+        if (/^[A-Z0-9][\w\-\/\.]{2,}$/i.test(val) && !isDateLike(val) && !isGenericWord(val) && !isNifLike(val)) {
+          return cleanInvoiceNumber(val);
+        }
+        // Acceptar número llarg (5+ dígits)
+        if (/^\d{5,}$/.test(val)) return val;
       }
     }
 
     // "Nº Factura: A26 /" on la línia següent és "C/ ..." (adreça, no el número)
-    // Buscar el número real a la línia ANTERIOR (JUPE: "3275" està abans de "Nº Factura")
     const jupeMatch = lines[i].match(/n[ºúo°]\.?\s*factura\s*:\s*([A-Z0-9]+)\s*\/\s*$/i);
     if (jupeMatch) {
-      // Buscar un número sol a les línies anteriors properes
       for (let j = i - 1; j >= Math.max(0, i - 5); j--) {
         const prevNum = lines[j].match(/^(\d{3,})$/);
         if (prevNum) return jupeMatch[1] + '/' + prevNum[1];
       }
-      // Si no trobem el número anterior, retornar el que tenim
       return jupeMatch[1];
     }
 
     // "Factura Nº" a una línia, valor a una altra (GRAU format)
     if (/^factura\s*n[ºúo°]/i.test(lines[i])) {
-      // Buscar "Referencia" + "X / Y.YYY.YYY" (GRAU usa referència com a número)
       for (let j = i + 1; j < Math.min(lines.length, i + 15); j++) {
         if (/^referencia$/i.test(lines[j]) && j + 1 < lines.length) {
           const refMatch = lines[j + 1].match(/^(\d+\s*\/\s*[\d.]+)/);
@@ -218,12 +263,20 @@ function detectInvoiceNumber(text) {
     }
   }
 
+  // ===========================================
   // ESTRATÈGIA 3: Patrons sobre text normalitzat (fallback)
+  // ===========================================
   const fallbackPatterns = [
-    // "FRA-XXXX" / "FRA/XXXX"
-    /\b(FRA[\-\/][A-Z0-9][\w\-\/\.]+)/i,
-    // "Albarà nº: XXX"
-    /(?:albar[àa]|albaran)\s*(?:n[ºúo°]\.?|n[uú]m\.?)\s*[:\s]?\s*([A-Z0-9][\w\-\/\.]+)/i,
+    // "FRA-XXXX" / "FRA/XXXX" / "FRA.XXXX"
+    /\b(FRA[\-\/\.][A-Z0-9][\w\-\/\.]+)/i,
+    // "INV-XXXX" / "INV/XXXX"
+    /\b(INV[\-\/][A-Z0-9][\w\-\/\.]+)/i,
+    // "REC-XXXX" (receipt)
+    /\b(REC[\-\/][A-Z0-9][\w\-\/\.]+)/i,
+    // "Albarà nº: XXX" / "Albarán nº: XXX"
+    /(?:albar[àa]n?)\s*(?:n[ºúo°]\.?|n[uú]m\.?)\s*[:\s]?\s*([A-Z0-9][\w\-\/\.]+)/i,
+    // "Pressupost nº: XXX" / "Presupuesto nº: XXX"
+    /(?:pressupost|presupuesto)\s*(?:n[ºúo°]\.?|n[uú]m\.?)\s*[:\s]?\s*([A-Z0-9][\w\-\/\.]+)/i,
   ];
 
   for (const pattern of fallbackPatterns) {
@@ -234,7 +287,36 @@ function detectInvoiceNumber(text) {
     }
   }
 
+  // ===========================================
+  // ESTRATÈGIA 4: Últim recurs — buscar patrons comuns de número de factura
+  // Format: YYYY/NNN, YYYY-NNN, XX-NNNNN, XXYY-NNN
+  // ATENCIÓ: Exclou patrons coneguts que NO són factures:
+  //   - 2006/112 = Directiva EU sobre IVA (apareix a factures Amazon, etc.)
+  //   - Anys anteriors a 2020 són sospitosos (probablement referència legal)
+  // ===========================================
+  const knownNonInvoice = ['2006/112', '2006-112'];
+
+  for (const line of lines) {
+    // "2026/0489" o "2026-0489" (any/seqüencial) — però no dates
+    // Només anys recents (2020+) per evitar referències legals
+    let m = line.match(/\b(20[2-9]\d[\/-]\d{3,6})\b/);
+    if (m && !isDateLike(m[1]) && !knownNonInvoice.includes(m[1])) {
+      return cleanInvoiceNumber(m[1]);
+    }
+
+    // "A26/3275" (lletra + any curt + número) — mínim 3 dígits després del /
+    m = line.match(/\b([A-Z]\d{2}[\/-]\d{3,6})\b/);
+    if (m) return cleanInvoiceNumber(m[1]);
+  }
+
   return null;
+}
+
+/**
+ * Comprova si un string sembla un NIF/CIF (per no confondre'l amb número de factura)
+ */
+function isNifLike(str) {
+  return /^[A-Z]\d{7}[A-Z0-9]$/.test(str) || /^\d{8}[A-Z]$/.test(str);
 }
 
 /**
@@ -253,6 +335,14 @@ function cleanInvoiceNumber(num) {
   }
   // Eliminar "/" final
   clean = clean.replace(/\/+$/, '');
+
+  // Rebutjar si acaba en "/X" (una sola lletra) — probablement columna de taula truncada
+  // Ex: "A26/C" (on C és una columna), "A26/D" (on D és "Descripció")
+  if (/\/[A-Za-z]$/.test(clean)) return null;
+
+  // Rebutjar si és purament una paraula genèrica
+  if (isGenericWord(clean)) return null;
+
   // Validar longitud
   if (clean.length >= 3 && clean.length <= 50) return clean;
   return null;
@@ -269,8 +359,28 @@ function isDateLike(str) {
  * Comprova si és una paraula genèrica que no és un número de factura
  */
 function isGenericWord(str) {
-  const words = ['fecha', 'fechac', 'page', 'pagina', 'total', 'per', 'periodo', 'periode'];
-  return words.includes(str.toLowerCase());
+  const lower = str.toLowerCase();
+  const words = [
+    'fecha', 'fechac', 'page', 'pagina', 'total', 'per', 'periodo', 'periode',
+    'data', 'date', 'from', 'to', 'de', 'del', 'client', 'cliente', 'amount',
+    'importe', 'import', 'name', 'nombre', 'nom', 'vencimiento', 'venciment',
+    'emision', 'emisio', 'emisión', 'emissió', 'description', 'descripcion',
+    'descripcio', 'concepto', 'concepte', 'payment', 'pago', 'pagament',
+    'subtotal', 'base', 'iva', 'irpf', 'retencio', 'retencion',
+    // Documents fiscals — NO són números de factura
+    'nif', 'cif', 'nie', 'dni', 'vat', 'tax', 'fiscal',
+    // Paraules que el detector confon amb números
+    'factura', 'invoice', 'receipt', 'bill', 'credit', 'debit',
+    'numero', 'number', 'num', 'ref', 'referencia', 'reference',
+    // Columnes de taula
+    'descripció', 'descripcion', 'description', 'detall', 'detalle', 'detail',
+    'quantitat', 'cantidad', 'quantity', 'preu', 'precio', 'price',
+    'unitat', 'unidad', 'unit', 'servei', 'servicio', 'service',
+  ];
+  if (words.includes(lower)) return true;
+  // Paraules que comencen amb prefix genèric (Descripci..., Referenci...)
+  if (/^(descripci|referenci|quantita|cantida|servici)/i.test(lower)) return true;
+  return false;
 }
 
 // ===========================================
@@ -440,11 +550,28 @@ const TOTAL_PATTERNS = [
  */
 function parseEuropeanNumber(numStr) {
   let s = numStr.trim();
-  // Format europeu: 1.234,56 → 1234.56
+  // Format europeu complet: 1.234,56 → 1234.56
   if (s.includes(',') && s.includes('.')) {
     s = s.replace(/\./g, '').replace(',', '.');
   } else if (s.includes(',')) {
+    // Només coma (decimal europeu): 1234,56 → 1234.56
     s = s.replace(',', '.');
+  } else if (s.includes('.')) {
+    // Només punt: determinar si és separador de milers o decimal
+    // Si hi ha múltiples punts → sempre milers: "1.234.567" → "1234567"
+    const dotCount = (s.match(/\./g) || []).length;
+    if (dotCount > 1) {
+      s = s.replace(/\./g, '');
+    } else {
+      // Un sol punt: comprovar si el que hi ha després del punt són exactament 3 dígits
+      // "1.234" → milers (1234), "12.34" → decimal (12.34), "1.2" → decimal (1.2)
+      const parts = s.split('.');
+      if (parts[1] && parts[1].length === 3) {
+        // Separador de milers: "1.234" → "1234", "12.345" → "12345"
+        s = s.replace('.', '');
+      }
+      // Si no són 3 dígits, és un decimal anglosaxó: "12.34" → 12.34
+    }
   }
   return parseFloat(s);
 }
@@ -508,6 +635,32 @@ function detectTotalAmount(text) {
     }
   }
 
+  // Estratègia 4 (últim recurs): buscar el número amb € més gran del text complet
+  // Per PDFs amb formats no estàndard (Stripe, plataformes SaaS, etc.)
+  if (amounts.length === 0) {
+    const allAmounts = [];
+    // Buscar tots els patrons "XX,XX €" o "€XX.XX" o "XX.XX EUR" al text sencer
+    const globalPatterns = [
+      /([\d.,]+)\s*€/g,
+      /€\s*([\d.,]+)/g,
+      /([\d.,]+)\s*EUR\b/gi,
+      /USD\s*([\d.,]+)/gi,
+      /\$\s*([\d.,]+)/g,
+    ];
+    for (const gp of globalPatterns) {
+      let m;
+      while ((m = gp.exec(normalized)) !== null) {
+        const num = parseEuropeanNumber(m[1]);
+        if (!isNaN(num) && num > 0.5) allAmounts.push(num);
+      }
+    }
+    if (allAmounts.length > 0) {
+      // Agafar el més gran (probablement el total)
+      amounts.push(Math.max(...allAmounts));
+      logger.debug(`detectTotalAmount: últim recurs → ${Math.max(...allAmounts)} (de ${allAmounts.length} imports trobats)`);
+    }
+  }
+
   if (amounts.length === 0) return null;
 
   // Retornar el valor més gran (normalment el total amb IVA)
@@ -518,19 +671,54 @@ function detectTotalAmount(text) {
 // Detecció de data de factura
 // ===========================================
 
-const DATE_PATTERNS = [
-  // "Fecha facturación : 06/04/2026" / "Fecha factura: 13/04/2026"
+// Mapes de mesos textuals → número (0-indexed)
+const MONTH_NAMES = {
+  // Català
+  gener: 0, febrer: 1, març: 2, 'mar\u00e7': 2, abril: 3, maig: 4, juny: 5,
+  juliol: 6, agost: 7, setembre: 8, octubre: 9, novembre: 10, desembre: 11,
+  // Castellà
+  enero: 0, febrero: 1, marzo: 2, mayo: 4, junio: 5,
+  julio: 6, agosto: 7, septiembre: 8, noviembre: 10, diciembre: 11,
+  // Anglès
+  january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
+  july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
+  // Abreviatures comunes
+  jan: 0, feb: 1, mar: 2, apr: 3, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+  ene: 0, abr: 3, ago: 7, dic: 11,
+  gen: 0, set: 8, des: 11,
+};
+
+const MONTH_PATTERN = Object.keys(MONTH_NAMES).join('|');
+
+// Patrons de dates numèriques (DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY)
+const DATE_PATTERNS_NUMERIC = [
+  // Amb paraula clau davant: "Fecha facturación:", "Fecha factura:", "Fecha emisión:", "Fecha:"
   /fecha\s*(?:de\s+)?(?:facturaci[oó]n|factura|emisi[oó]n)\s*[:\s]\s*(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})/i,
-  // "Fecha: 13/04/2026" / "Data: 13-04-2026" / "Date: ..."
   /(?:fecha|data|date)\s*[:\s]\s*(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})/i,
-  // "Data factura: 13/04/2026" / "Data emissió: ..."
   /data\s*(?:de\s+)?(?:factura|emissi[oó])\s*[:\s]\s*(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})/i,
-  // Format "13.04.2026" o "13.04.26" al costat de paraules clau
-  /(?:fecha|data|date|factura)\s*[:\s]\s*(\d{2}\.\d{2}\.\d{2,4})/i,
+  /(?:fecha|data|date|factura|invoice\s*date)\s*[:\s]\s*(\d{2}\.\d{2}\.\d{2,4})/i,
+  // "Emissió: 13/01/2026" / "Emisión: 13/01/2026"
+  /emissi[oó]n?\s*[:\s]\s*(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})/i,
 ];
 
 /**
+ * Parseja una cadena de data numèrica DD/MM/YYYY (o DD-MM-YYYY, DD.MM.YYYY) → Date (UTC migdia)
+ * Usem UTC 12:00 per evitar problemes de timezone que desplacen la data un dia
+ */
+function parseNumericDate(dateStr) {
+  const parts = dateStr.split(/[\/.\-]/);
+  if (parts.length !== 3) return null;
+  let [day, month, year] = parts.map(Number);
+  if (year < 100) year += 2000;
+  if (day > 0 && day <= 31 && month > 0 && month <= 12 && year >= 2000 && year <= 2100) {
+    return new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+  }
+  return null;
+}
+
+/**
  * Detecta la data de factura dins del text
+ * Prova múltiples estratègies: numèriques amb paraula clau, textuals, i fallback genèric
  * @param {string} text
  * @returns {Date|null}
  */
@@ -539,18 +727,81 @@ function detectInvoiceDate(text) {
 
   const normalized = text.replace(/\s+/g, ' ');
 
-  for (const pattern of DATE_PATTERNS) {
+  // 1) Patrons numèrics amb paraula clau (més fiables)
+  for (const pattern of DATE_PATTERNS_NUMERIC) {
     const match = normalized.match(pattern);
     if (match && match[1]) {
-      const parts = match[1].split(/[\/.\-]/);
-      if (parts.length === 3) {
-        let [day, month, year] = parts.map(Number);
-        if (year < 100) year += 2000;
-        if (day > 0 && day <= 31 && month > 0 && month <= 12 && year >= 2000) {
-          return new Date(year, month - 1, day);
-        }
-      }
+      const date = parseNumericDate(match[1]);
+      if (date) return date;
     }
+  }
+
+  // 2) Dates textuals: "13 de enero de 2026", "13 gener 2026", "January 13, 2026"
+  // Format europeu: DD de MES de YYYY / DD MES YYYY
+  const textualEU = new RegExp(
+    `(\\d{1,2})\\s*(?:de\\s+|d[''])?\\s*(${MONTH_PATTERN})\\.?\\s*(?:de\\s+|del\\s+|d[''])?\\s*(\\d{4})`,
+    'i'
+  );
+  const matchEU = normalized.match(textualEU);
+  if (matchEU) {
+    const day = parseInt(matchEU[1]);
+    const monthName = matchEU[2].toLowerCase();
+    const year = parseInt(matchEU[3]);
+    const month = MONTH_NAMES[monthName];
+    if (month !== undefined && day > 0 && day <= 31 && year >= 2000 && year <= 2100) {
+      return new Date(Date.UTC(year, month, day, 12, 0, 0));
+    }
+  }
+
+  // Format anglès: "January 13, 2026" / "Jan 13 2026"
+  const textualEN = new RegExp(
+    `(${MONTH_PATTERN})\\.?\\s+(\\d{1,2}),?\\s+(\\d{4})`,
+    'i'
+  );
+  const matchEN = normalized.match(textualEN);
+  if (matchEN) {
+    const monthName = matchEN[1].toLowerCase();
+    const day = parseInt(matchEN[2]);
+    const year = parseInt(matchEN[3]);
+    const month = MONTH_NAMES[monthName];
+    if (month !== undefined && day > 0 && day <= 31 && year >= 2000 && year <= 2100) {
+      return new Date(Date.UTC(year, month, day, 12, 0, 0));
+    }
+  }
+
+  // 3) Fallback: primera data DD/MM/YYYY que trobem prop de "factura" o a l'inici del document
+  // Busquem totes les dates numèriques al text
+  const allDates = [];
+  const genericDateRegex = /(\d{1,2})[\/\-.] ?(\d{1,2})[\/\-.] ?(\d{4})/g;
+  let m;
+  while ((m = genericDateRegex.exec(normalized)) !== null) {
+    const day = parseInt(m[1]);
+    const month = parseInt(m[2]);
+    const year = parseInt(m[3]);
+    if (day > 0 && day <= 31 && month > 0 && month <= 12 && year >= 2000 && year <= 2100) {
+      allDates.push({ date: new Date(Date.UTC(year, month - 1, day, 12, 0, 0)), index: m.index });
+    }
+  }
+
+  if (allDates.length === 1) {
+    // Si només hi ha una data al document, és molt probable que sigui la de la factura
+    return allDates[0].date;
+  }
+
+  if (allDates.length > 1) {
+    // Buscar la data més propera a paraules clau de factura
+    const keywords = /(?:fecha|data|date|factura|invoice|emissi[oó]n?|emisi[oó]n)/i;
+    const keywordMatch = normalized.match(keywords);
+    if (keywordMatch) {
+      const kwPos = keywordMatch.index;
+      // Agafar la data més propera (dins de 100 caràcters) a la paraula clau
+      const nearby = allDates
+        .filter((d) => Math.abs(d.index - kwPos) < 100)
+        .sort((a, b) => Math.abs(a.index - kwPos) - Math.abs(b.index - kwPos));
+      if (nearby.length > 0) return nearby[0].date;
+    }
+    // Si no hi ha paraula clau, agafar la primera data del document
+    return allDates[0].date;
   }
 
   return null;
@@ -702,18 +953,42 @@ async function analyzePdf(filePathOrBuffer) {
 }
 
 /**
- * Comprova si una factura és duplicada buscant pel número de factura extret
+ * Comprova si una factura és duplicada buscant pel número de factura extret.
+ *
+ * Regles de duplicat:
+ *   1. Si tenim proveïdor: només és duplicat si coincideix nº factura + proveïdor + import similar
+ *   2. Si NO tenim proveïdor: només és duplicat si coincideix nº factura + import exacte
+ *   3. Si l'import és diferent (>1€ diferència), NO és duplicat (pot ser rectificativa)
+ *   4. Si el número de factura és provisional (PROV-), MAI és duplicat
+ *   5. Números curts (<4 caràcters) no es consideren fiables per duplicats
+ *
  * @param {string} invoiceNumber - Número de factura detectat
  * @param {string} [supplierId] - ID del proveïdor (opcional, per precisió)
+ * @param {number} [totalAmount] - Import total detectat (opcional, per verificar)
  * @returns {Object|null} Factura existent si és duplicada, null si no
  */
-async function checkDuplicateByContent(invoiceNumber, supplierId = null) {
+async function checkDuplicateByContent(invoiceNumber, supplierId = null, totalAmount = null) {
   if (!invoiceNumber) return null;
+
+  // Números provisionals no es consideren per duplicats
+  if (invoiceNumber.startsWith('PROV-') || invoiceNumber.startsWith('GDRIVE-')) return null;
+
+  // Números massa curts (1, 01, 001) són poc fiables — molts proveïdors usen seqüències simples
+  if (invoiceNumber.replace(/[^a-zA-Z0-9]/g, '').length < 4) return null;
 
   const { prisma } = require('../config/database');
 
+  // OBLIGATORI: cal proveïdor per detectar duplicat
+  // Sense proveïdor, el risc de fals positiu és massa alt
+  if (!supplierId) {
+    // Excepció: si el número és molt específic (8+ chars alfanumèrics), buscar globalment
+    const alphanumLength = invoiceNumber.replace(/[^a-zA-Z0-9]/g, '').length;
+    if (alphanumLength < 8) return null;
+  }
+
   const where = {
     invoiceNumber: { equals: invoiceNumber, mode: 'insensitive' },
+    isDuplicate: false,  // No comparar amb altres duplicats
   };
   if (supplierId) where.supplierId = supplierId;
 
@@ -726,11 +1001,26 @@ async function checkDuplicateByContent(invoiceNumber, supplierId = null) {
       status: true,
       issueDate: true,
       source: true,
-      supplier: { select: { name: true } },
+      supplier: { select: { id: true, name: true } },
     },
   });
 
-  return existing || null;
+  if (!existing) return null;
+
+  // Si tenim imports d'ambdues factures, comparar-los
+  // Si la diferència és >1€, probablement NO és duplicat (rectificativa, abonament, etc.)
+  if (totalAmount !== null && totalAmount > 0 && existing.totalAmount > 0) {
+    const diff = Math.abs(totalAmount - existing.totalAmount);
+    if (diff > 1) {
+      logger.info(
+        `checkDuplicate: Nº ${invoiceNumber} existeix però import diferent ` +
+        `(${totalAmount}€ vs ${existing.totalAmount}€, diff: ${diff.toFixed(2)}€) — NO duplicat`
+      );
+      return null;
+    }
+  }
+
+  return existing;
 }
 
 /**
@@ -857,6 +1147,217 @@ async function findOrCreateSupplier(nifCifList, supplierName) {
   return null;
 }
 
+// ===========================================
+// SISTEMA DE PLANTILLES (APRENENTATGE)
+// ===========================================
+
+/**
+ * Busca un proveïdor per patró del nom de fitxer.
+ * Utilitza les plantilles guardades a SupplierTemplate.
+ * @param {string} fileName - Nom del fitxer PDF
+ * @returns {Object|null} { supplier, template } o null
+ */
+async function findSupplierByFileName(fileName) {
+  if (!fileName) return null;
+  const { prisma } = require('../config/database');
+
+  const templates = await prisma.supplierTemplate.findMany({
+    where: { filePatterns: { not: null } },
+    include: { supplier: { select: { id: true, name: true, nif: true } } },
+  });
+
+  const lowerFile = fileName.toLowerCase();
+  for (const tmpl of templates) {
+    const patterns = tmpl.filePatterns;
+    if (!Array.isArray(patterns)) continue;
+    for (const pattern of patterns) {
+      if (lowerFile.includes(pattern.toLowerCase())) {
+        logger.info(`Template: Fitxer "${fileName}" → proveïdor "${tmpl.supplier.name}" (patró: "${pattern}")`);
+        return { supplier: tmpl.supplier, template: tmpl };
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Busca un proveïdor per NIF usant les plantilles (knownNifs).
+ * Complementa findSupplierByNif quan el NIF no està al camp supplier.nif
+ * @param {string[]} nifList - NIFs detectats al PDF
+ * @returns {Object|null} { supplier, template } o null
+ */
+async function findSupplierByTemplateNif(nifList) {
+  if (!nifList || !nifList.length) return null;
+  const { prisma } = require('../config/database');
+
+  const templates = await prisma.supplierTemplate.findMany({
+    where: { knownNifs: { not: null } },
+    include: { supplier: { select: { id: true, name: true, nif: true } } },
+  });
+
+  for (const tmpl of templates) {
+    const knownNifs = tmpl.knownNifs;
+    if (!Array.isArray(knownNifs)) continue;
+    for (const nif of nifList) {
+      if (knownNifs.includes(nif)) {
+        logger.info(`Template: NIF "${nif}" → proveïdor "${tmpl.supplier.name}"`);
+        return { supplier: tmpl.supplier, template: tmpl };
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Valida un número de factura detectat contra la plantilla del proveïdor.
+ * Si el número no encaixa amb els patrons coneguts, pot ser un error d'extracció.
+ * @param {string} invoiceNumber - Número detectat
+ * @param {Object} template - SupplierTemplate
+ * @returns {{ valid: boolean, confidence: number }}
+ */
+function validateInvoiceNumber(invoiceNumber, template) {
+  if (!invoiceNumber || !template) return { valid: true, confidence: 0 };
+
+  const patterns = template.invoicePatterns;
+  if (!Array.isArray(patterns) || !patterns.length) return { valid: true, confidence: 0 };
+
+  for (const pattern of patterns) {
+    try {
+      if (new RegExp(pattern, 'i').test(invoiceNumber)) {
+        return { valid: true, confidence: 0.9 };
+      }
+    } catch {
+      // regex invàlid, ignorar
+    }
+  }
+
+  // No encaixa amb cap patró — pot ser erroni
+  // Però si el prefix coincideix, acceptable
+  if (template.invoicePrefix && invoiceNumber.startsWith(template.invoicePrefix)) {
+    return { valid: true, confidence: 0.6 };
+  }
+
+  return { valid: false, confidence: 0.2 };
+}
+
+/**
+ * Intenta trobar un número de factura al text usant el prefix del proveïdor.
+ * Útil quan l'extracció genèrica falla però sabem quin format esperar.
+ * @param {string} text - Text del PDF
+ * @param {Object} template - SupplierTemplate
+ * @returns {string|null} Número de factura o null
+ */
+function detectInvoiceNumberWithTemplate(text, template) {
+  if (!text || !template) return null;
+
+  // Provar amb el prefix conegut
+  if (template.invoicePrefix) {
+    const escaped = template.invoicePrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const prefixRegex = new RegExp(`${escaped}[\\w/\\-]{2,20}`, 'gm');
+    const matches = text.match(prefixRegex);
+    if (matches && matches.length > 0) {
+      // Agafar el primer que sembli un número de factura real
+      for (const m of matches) {
+        const alphaNum = m.replace(/[^a-zA-Z0-9]/g, '');
+        if (alphaNum.length >= 4) {
+          logger.info(`Template: Número detectat amb prefix "${template.invoicePrefix}": ${m}`);
+          return m.trim();
+        }
+      }
+    }
+  }
+
+  // Provar amb els patrons regex
+  if (Array.isArray(template.invoicePatterns)) {
+    for (const pattern of template.invoicePatterns) {
+      try {
+        // Convertir el patró d'ancoratge (^...$) a cerca global
+        const searchPattern = pattern.replace(/^\^/, '').replace(/\$$/, '');
+        const regex = new RegExp(`(${searchPattern})`, 'gm');
+        const matches = text.match(regex);
+        if (matches && matches.length > 0) {
+          logger.info(`Template: Número detectat amb patró "${pattern}": ${matches[0]}`);
+          return matches[0].trim();
+        }
+      } catch {
+        // regex invàlid
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Anàlisi millorada de PDF que utilitza les plantilles de proveïdor.
+ * Flux:
+ *   1. Extracció estàndard (analyzePdf)
+ *   2. Si tenim plantilla (per fileName o NIF), validar i millorar resultats
+ *   3. Si l'extracció estàndard falla, intentar amb patrons del proveïdor
+ *
+ * @param {string} filePath - Ruta del PDF
+ * @param {string} fileName - Nom original del fitxer
+ * @returns {Object} Resultat millorat amb camp `templateUsed`
+ */
+async function analyzePdfWithTemplates(filePath, fileName) {
+  // 1. Extracció estàndard
+  const result = await analyzePdf(filePath);
+
+  // 2. Buscar plantilla per nom de fitxer
+  let templateMatch = await findSupplierByFileName(fileName);
+
+  // 3. Si no trobat per fitxer, buscar per NIF detectat
+  if (!templateMatch && result.nifCif.length > 0) {
+    templateMatch = await findSupplierByTemplateNif(result.nifCif);
+  }
+
+  if (!templateMatch) {
+    return { ...result, templateUsed: false, matchedSupplierFromTemplate: null };
+  }
+
+  const { supplier, template } = templateMatch;
+
+  // 4. Validar número de factura
+  if (result.invoiceNumber) {
+    const validation = validateInvoiceNumber(result.invoiceNumber, template);
+    if (!validation.valid) {
+      // El número detectat no encaixa — intentar trobar-ne un millor
+      logger.warn(`Template: Número "${result.invoiceNumber}" no encaixa amb patrons de ${supplier.name}. Buscant alternatiu...`);
+      const betterNumber = detectInvoiceNumberWithTemplate(result.text, template);
+      if (betterNumber) {
+        result.invoiceNumber = betterNumber;
+        logger.info(`Template: Número corregit a "${betterNumber}" per ${supplier.name}`);
+      }
+    }
+  } else {
+    // No s'ha detectat número — intentar amb plantilla
+    const templateNumber = detectInvoiceNumberWithTemplate(result.text, template);
+    if (templateNumber) {
+      result.invoiceNumber = templateNumber;
+      logger.info(`Template: Número trobat amb plantilla de ${supplier.name}: "${templateNumber}"`);
+    }
+  }
+
+  // 5. Validar import (si l'import és 0 o molt fora de rang, marcar)
+  if (template.minAmount && template.maxAmount && result.totalAmount) {
+    const min = parseFloat(template.minAmount);
+    const max = parseFloat(template.maxAmount);
+    const total = result.totalAmount;
+    if (total < min * 0.5 || total > max * 2) {
+      logger.warn(`Template: Import ${total}€ fora del rang habitual de ${supplier.name} (${min}€-${max}€)`);
+      result._amountWarning = `Import fora del rang habitual (${min}€-${max}€)`;
+    }
+  }
+
+  return {
+    ...result,
+    templateUsed: true,
+    matchedSupplierFromTemplate: supplier,
+  };
+}
+
 module.exports = {
   extractText,
   extractTextFromBuffer,
@@ -867,8 +1368,12 @@ module.exports = {
   detectInvoiceDate,
   detectSupplierName,
   analyzePdf,
+  analyzePdfWithTemplates,
   checkDuplicateByContent,
   findSupplierByNif,
   findSupplierByName,
   findOrCreateSupplier,
+  findSupplierByFileName,
+  findSupplierByTemplateNif,
+  validateInvoiceNumber,
 };

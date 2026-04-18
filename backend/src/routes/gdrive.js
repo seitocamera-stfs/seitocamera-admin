@@ -120,10 +120,11 @@ router.get('/file/:fileId/download', async (req, res, next) => {
     const meta = await drive.files.get({
       fileId: req.params.fileId,
       fields: 'name, mimeType',
+      supportsAllDrives: true,
     });
 
     const response = await drive.files.get(
-      { fileId: req.params.fileId, alt: 'media' },
+      { fileId: req.params.fileId, alt: 'media', supportsAllDrives: true },
       { responseType: 'stream' }
     );
 
@@ -214,6 +215,8 @@ router.get('/inbox', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
       q: `'${inbox.id}' in parents and trashed=false`,
       fields: 'files(id, name, mimeType, size, createdTime, modifiedTime)',
       orderBy: 'createdTime desc',
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
     });
 
     res.json({

@@ -38,6 +38,21 @@ router.get('/', async (req, res, next) => {
     if (type) where.type = type;
     if (conciliated !== undefined) where.isConciliated = conciliated === 'true';
 
+    // Excloure transferències internes dels pendents de conciliar
+    if (conciliated === 'false') {
+      where.AND = [
+        { operationType: { not: 'transfer' } },
+        { NOT: {
+          AND: [
+            { counterparty: { contains: 'SEITO CAMERA', mode: 'insensitive' } },
+          ]
+        }},
+        { NOT: {
+          description: { contains: 'Internal transfer', mode: 'insensitive' },
+        }},
+      ];
+    }
+
     if (dateFrom || dateTo) {
       where.date = {};
       if (dateFrom) where.date.gte = new Date(dateFrom);
@@ -82,15 +97,31 @@ router.get('/', async (req, res, next) => {
 // SINCRONITZACIÓ QONTO (ha d'anar ABANS de /:id)
 // ===========================================
 
-const qontoSync = require('../services/qontoSyncService');
+const { runQontoSync, getLastSyncResult } = require('../jobs/qontoBankSyncJob');
 
 /**
- * GET /api/bank/qonto/status — Estat de connexió amb Qonto
+ * GET /api/bank/qonto/status — Estat de connexió i últim sync
  */
 router.get('/qonto/status', authorize('ADMIN'), async (req, res, next) => {
   try {
-    const result = await qontoSync.testConnection();
-    res.json(result);
+    const qontoSync = require('../services/qontoSyncService');
+    const [connection, lastSync] = await Promise.all([
+      qontoSync.testConnection(),
+      getLastSyncResult(),
+    ]);
+    res.json({ ...connection, lastSync });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/bank/qonto/last-sync — Últim resultat de sincronització
+ */
+router.get('/qonto/last-sync', async (req, res, next) => {
+  try {
+    const lastSync = await getLastSyncResult();
+    res.json(lastSync || { success: null, timestamp: null });
   } catch (error) {
     next(error);
   }
@@ -102,7 +133,7 @@ router.get('/qonto/status', authorize('ADMIN'), async (req, res, next) => {
 router.post('/qonto/sync', authorize('ADMIN'), async (req, res, next) => {
   try {
     const { fullSync = false } = req.body || {};
-    const result = await qontoSync.syncQontoTransactions({ fullSync });
+    const result = await runQontoSync({ fullSync });
     res.json({ message: 'Sincronització Qonto completada', ...result });
   } catch (error) {
     next(error);
