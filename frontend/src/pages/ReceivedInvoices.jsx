@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import {
-  Plus, Search, Trash2, Check, X as XIcon,
+  Plus, Search, Trash2, Check, X as XIcon, CheckCircle,
   FileText, Upload, Eye, Link2, AlertTriangle, Ban,
   ChevronRight, Paperclip, Pencil, RefreshCw, GitMerge,
 } from 'lucide-react';
@@ -141,6 +141,8 @@ export default function ReceivedInvoices() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [showTrash, setShowTrash] = useState(false);
   const [showAlerts, setShowAlerts] = useState(false);
+  const [bulkRescanRunning, setBulkRescanRunning] = useState(false);
+  const [bulkRescanResult, setBulkRescanResult] = useState(null);
   const [showNewSupplier, setShowNewSupplier] = useState(false);
   const [newSupplierForm, setNewSupplierForm] = useState({ name: '', nif: '', email: '' });
   const [newSupplierLoading, setNewSupplierLoading] = useState(false);
@@ -593,9 +595,18 @@ export default function ReceivedInvoices() {
       if (scan.invoiceDate) updates.issueDate = new Date(scan.invoiceDate).toISOString().slice(0, 10);
       if (scan.totalAmount) updates.totalAmount = String(scan.totalAmount);
       if (scan.subtotal) updates.subtotal = String(scan.subtotal);
-      if (scan.taxRate) updates.taxRate = String(scan.taxRate);
+      if (scan.taxRate !== undefined) updates.taxRate = String(scan.taxRate);
       if (scan.taxAmount) updates.taxAmount = String(scan.taxAmount);
-      if (scan.matchedSupplier?.id) updates.supplierId = scan.matchedSupplier.id;
+      if (scan.irpfRate) updates.irpfRate = String(scan.irpfRate);
+      if (scan.irpfAmount) updates.irpfAmount = String(scan.irpfAmount);
+      if (scan.matchedSupplier?.id) {
+        updates.supplierId = scan.matchedSupplier.id;
+        // Si és un proveïdor nou (auto-creat), refrescar la llista
+        if (!suppliersList.find(s => s.id === scan.matchedSupplier.id)) {
+          refetchSuppliers();
+        }
+      }
+      if (scan.description && !editForm.description) updates.description = scan.description;
 
       setEditForm((prev) => ({ ...prev, ...updates }));
     } catch (err) {
@@ -635,6 +646,23 @@ export default function ReceivedInvoices() {
     if (!confirm('Moure a la paperera? (Es pot restaurar durant 30 dies)')) return;
     await mutate('delete', `/invoices/received/${id}`);
     refetch();
+  };
+
+  // Re-escanejar múltiples factures seleccionades
+  const handleBulkRescan = async () => {
+    if (!confirm(`Re-escanejar ${selectedIds.length} factures amb IA? Pot trigar uns segons per factura.`)) return;
+    setBulkRescanRunning(true);
+    setBulkRescanResult(null);
+    try {
+      const { data: result } = await api.post('/invoices/received/bulk-rescan', { ids: selectedIds });
+      setBulkRescanResult(result);
+      setSelectedIds([]);
+      refetch();
+    } catch (err) {
+      setBulkRescanResult({ error: err.response?.data?.error || err.message });
+    } finally {
+      setBulkRescanRunning(false);
+    }
   };
 
   // Eliminar múltiples factures seleccionades (moure a paperera)
@@ -736,12 +764,22 @@ export default function ReceivedInvoices() {
           </span>
           <div className="flex items-center gap-3">
             {!showTrash && (
-              <button
-                onClick={handleBulkDelete}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-destructive text-destructive-foreground text-xs font-medium hover:opacity-90"
-              >
-                <Trash2 size={13} /> Moure a la paperera
-              </button>
+              <>
+                <button
+                  onClick={handleBulkRescan}
+                  disabled={bulkRescanRunning}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-teal-600 text-white text-xs font-medium hover:bg-teal-700 disabled:opacity-50"
+                >
+                  <RefreshCw size={13} className={bulkRescanRunning ? 'animate-spin' : ''} />
+                  {bulkRescanRunning ? 'Re-escanejant...' : 'Re-escanejar'}
+                </button>
+                <button
+                  onClick={handleBulkDelete}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-destructive text-destructive-foreground text-xs font-medium hover:opacity-90"
+                >
+                  <Trash2 size={13} /> Paperera
+                </button>
+              </>
             )}
             <button
               onClick={clearSelection}
@@ -750,6 +788,49 @@ export default function ReceivedInvoices() {
               Netejar selecció
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Resultat del bulk rescan */}
+      {bulkRescanResult && (
+        <div className={`mb-3 rounded-lg border p-3 ${bulkRescanResult.error ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
+          {bulkRescanResult.error ? (
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-red-700">Error: {bulkRescanResult.error}</span>
+              <button onClick={() => setBulkRescanResult(null)} className="text-red-500 hover:text-red-700"><XIcon size={16} /></button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-green-800">
+                  Re-scan completat: {bulkRescanResult.updated} actualitzades, {bulkRescanResult.processed - bulkRescanResult.updated - bulkRescanResult.errors} sense canvis, {bulkRescanResult.skipped} sense PDF, {bulkRescanResult.errors} errors
+                </span>
+                <button onClick={() => setBulkRescanResult(null)} className="text-green-600 hover:text-green-800"><XIcon size={16} /></button>
+              </div>
+              {bulkRescanResult.details?.filter(d => d.status === 'updated').length > 0 && (
+                <details className="text-xs text-green-700">
+                  <summary className="cursor-pointer font-medium">Detall de {bulkRescanResult.details.filter(d => d.status === 'updated').length} actualitzades</summary>
+                  <ul className="mt-1 space-y-0.5 ml-4">
+                    {bulkRescanResult.details.filter(d => d.status === 'updated').map(d => (
+                      <li key={d.id}>
+                        <strong>{d.num}</strong>: {d.changes?.join(', ')} {d.aiExtracted && <span className="text-teal-600">(AI)</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+              {bulkRescanResult.details?.filter(d => d.status === 'error').length > 0 && (
+                <details className="text-xs text-red-600">
+                  <summary className="cursor-pointer font-medium">{bulkRescanResult.details.filter(d => d.status === 'error').length} errors</summary>
+                  <ul className="mt-1 space-y-0.5 ml-4">
+                    {bulkRescanResult.details.filter(d => d.status === 'error').map(d => (
+                      <li key={d.id}><strong>{d.num}</strong>: {d.reason}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1062,22 +1143,34 @@ export default function ReceivedInvoices() {
         {editForm && (
           <form onSubmit={handleEditSave} className="space-y-3">
             {/* Banner de duplicat: comparació amb l'original */}
-            {(editForm.isDuplicate || editForm.invoiceNumber?.includes('-DUP-') || duplicateOriginal) && (
-              <div className="rounded-lg border-2 border-amber-300 bg-amber-50 p-3 space-y-2">
-                <div className="flex items-center gap-2 text-amber-800 font-medium text-sm">
+            {(editForm.isDuplicate || editForm.invoiceNumber?.includes('-DUP-') || duplicateOriginal) && (() => {
+              // Detectar si és probablement un fals positiu
+              const origDate = duplicateOriginal?.issueDate ? new Date(duplicateOriginal.issueDate).toISOString().slice(0, 10) : null;
+              const thisDate = editForm.issueDate || null;
+              const numbersDiffer = duplicateOriginal && editForm.invoiceNumber && duplicateOriginal.invoiceNumber
+                && editForm.invoiceNumber.toLowerCase() !== duplicateOriginal.invoiceNumber.toLowerCase();
+              const datesDiffer = duplicateOriginal && origDate && thisDate && origDate !== thisDate;
+              const probablyNotDuplicate = numbersDiffer && datesDiffer;
+
+              return (
+              <div className={`rounded-lg border-2 p-3 space-y-2 ${probablyNotDuplicate ? 'border-green-300 bg-green-50' : 'border-amber-300 bg-amber-50'}`}>
+                <div className={`flex items-center gap-2 font-medium text-sm ${probablyNotDuplicate ? 'text-green-800' : 'text-amber-800'}`}>
                   <AlertTriangle size={16} />
-                  Factura duplicada {duplicateOriginal ? `— original trobada` : '— buscant original...'}
+                  {probablyNotDuplicate
+                    ? 'Probablement NO és duplicat — número i data són diferents'
+                    : `Factura duplicada ${duplicateOriginal ? '— original trobada' : '— buscant original...'}`
+                  }
                 </div>
                 {duplicateOriginal && (
                   <>
                     <div className="grid grid-cols-3 gap-2 text-xs">
-                      <div className="font-medium text-amber-700">Camp</div>
-                      <div className="font-medium text-amber-700">Aquesta (duplicada)</div>
-                      <div className="font-medium text-green-700">Original</div>
+                      <div className={`font-medium ${probablyNotDuplicate ? 'text-green-700' : 'text-amber-700'}`}>Camp</div>
+                      <div className={`font-medium ${probablyNotDuplicate ? 'text-green-700' : 'text-amber-700'}`}>Aquesta</div>
+                      <div className="font-medium text-gray-600">Suposada original</div>
 
                       <div className="text-muted-foreground">Número</div>
-                      <div className={editForm.invoiceNumber !== duplicateOriginal.invoiceNumber ? 'font-medium text-amber-800' : ''}>{editForm.invoiceNumber}</div>
-                      <div className="font-medium text-green-800">{duplicateOriginal.invoiceNumber}</div>
+                      <div className={numbersDiffer ? 'font-medium text-green-800' : ''}>{editForm.invoiceNumber}</div>
+                      <div className={numbersDiffer ? 'font-medium text-green-800' : ''}>{duplicateOriginal.invoiceNumber}</div>
 
                       <div className="text-muted-foreground">Proveïdor</div>
                       <div>{suppliersList.find(s => s.id === editForm.supplierId)?.name || '—'}</div>
@@ -1088,60 +1181,85 @@ export default function ReceivedInvoices() {
                       <div>{formatCurrency(duplicateOriginal.totalAmount)}</div>
 
                       <div className="text-muted-foreground">Data</div>
-                      <div>{editForm.issueDate || '—'}</div>
-                      <div>{duplicateOriginal.issueDate ? new Date(duplicateOriginal.issueDate).toISOString().slice(0, 10) : '—'}</div>
+                      <div className={datesDiffer ? 'font-medium text-green-800' : ''}>{editForm.issueDate || '—'}</div>
+                      <div className={datesDiffer ? 'font-medium text-green-800' : ''}>{origDate || '—'}</div>
 
                       <div className="text-muted-foreground">Estat</div>
                       <div>{editForm.currentStatus}</div>
                       <div>{duplicateOriginal.status}</div>
                     </div>
-                    <div className="flex gap-2 pt-1">
+                    <div className="flex gap-2 pt-1 flex-wrap">
+                      {/* Botó principal: Desmarcar com a duplicat */}
                       <button
                         type="button"
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-red-100 text-red-700 hover:bg-red-200 text-xs font-medium"
+                        className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium ${
+                          probablyNotDuplicate
+                            ? 'bg-green-600 text-white hover:bg-green-700'
+                            : 'bg-green-100 text-green-700 hover:bg-green-200'
+                        }`}
                         onClick={async () => {
-                          if (!confirm(`Eliminar AQUESTA factura (${editForm.invoiceNumber}) i quedar-se amb l'original (${duplicateOriginal.invoiceNumber})?`)) return;
                           try {
-                            await mutate('delete', `/invoices/received/${editForm.id}`);
-                            setShowEditModal(false);
-                            setEditForm(null);
+                            await mutate('post', `/invoices/received/${editForm.id}/unmark-duplicate`);
+                            setEditForm(prev => ({ ...prev, isDuplicate: false }));
                             setDuplicateOriginal(null);
                             refetch();
                           } catch (err) {
-                            alert(err.response?.data?.error || 'Error eliminant');
+                            alert(err.response?.data?.error || 'Error desmarcant duplicat');
                           }
                         }}
                       >
-                        <Trash2 size={12} /> Eliminar aquesta
+                        <CheckCircle size={12} /> No és duplicat
                       </button>
-                      <button
-                        type="button"
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-blue-100 text-blue-700 hover:bg-blue-200 text-xs font-medium"
-                        onClick={async () => {
-                          if (!confirm(`Fusionar: traspassar les dades d'aquesta factura a l'original (${duplicateOriginal.invoiceNumber}) i eliminar aquesta entrada?`)) return;
-                          try {
-                            await mutate('put', `/invoices/received/${editForm.id}`, {
-                              invoiceNumber: duplicateOriginal.invoiceNumber,
-                              totalAmount: parseFloat(editForm.totalAmount) || 0,
-                              subtotal: parseFloat(editForm.subtotal) || 0,
-                              taxRate: parseFloat(editForm.taxRate) || 21,
-                              taxAmount: parseFloat(editForm.taxAmount) || 0,
-                              issueDate: editForm.issueDate,
-                              supplierId: editForm.supplierId || null,
-                              description: editForm.description || null,
-                              mergeDuplicate: true,
-                            });
-                            setShowEditModal(false);
-                            setEditForm(null);
-                            setDuplicateOriginal(null);
-                            refetch();
-                          } catch (err) {
-                            alert(err.response?.data?.error || 'Error fusionant');
-                          }
-                        }}
-                      >
-                        <GitMerge size={12} /> Fusionar amb l'original
-                      </button>
+                      {!probablyNotDuplicate && (
+                        <>
+                          <button
+                            type="button"
+                            className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-red-100 text-red-700 hover:bg-red-200 text-xs font-medium"
+                            onClick={async () => {
+                              if (!confirm(`Eliminar AQUESTA factura (${editForm.invoiceNumber}) i quedar-se amb l'original (${duplicateOriginal.invoiceNumber})?`)) return;
+                              try {
+                                await mutate('delete', `/invoices/received/${editForm.id}`);
+                                setShowEditModal(false);
+                                setEditForm(null);
+                                setDuplicateOriginal(null);
+                                refetch();
+                              } catch (err) {
+                                alert(err.response?.data?.error || 'Error eliminant');
+                              }
+                            }}
+                          >
+                            <Trash2 size={12} /> Eliminar aquesta
+                          </button>
+                          <button
+                            type="button"
+                            className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-blue-100 text-blue-700 hover:bg-blue-200 text-xs font-medium"
+                            onClick={async () => {
+                              if (!confirm(`Fusionar: traspassar les dades d'aquesta factura a l'original (${duplicateOriginal.invoiceNumber}) i eliminar aquesta entrada?`)) return;
+                              try {
+                                await mutate('put', `/invoices/received/${editForm.id}`, {
+                                  invoiceNumber: duplicateOriginal.invoiceNumber,
+                                  totalAmount: parseFloat(editForm.totalAmount) || 0,
+                                  subtotal: parseFloat(editForm.subtotal) || 0,
+                                  taxRate: parseFloat(editForm.taxRate) || 21,
+                                  taxAmount: parseFloat(editForm.taxAmount) || 0,
+                                  issueDate: editForm.issueDate,
+                                  supplierId: editForm.supplierId || null,
+                                  description: editForm.description || null,
+                                  mergeDuplicate: true,
+                                });
+                                setShowEditModal(false);
+                                setEditForm(null);
+                                setDuplicateOriginal(null);
+                                refetch();
+                              } catch (err) {
+                                alert(err.response?.data?.error || 'Error fusionant');
+                              }
+                            }}
+                          >
+                            <GitMerge size={12} /> Fusionar amb l'original
+                          </button>
+                        </>
+                      )}
                       <button
                         type="button"
                         className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200 text-xs font-medium"
@@ -1149,12 +1267,10 @@ export default function ReceivedInvoices() {
                           setShowEditModal(false);
                           setEditForm(null);
                           setDuplicateOriginal(null);
-                          // Obrir l'original
                           const origInv = data?.data?.find(i => i.id === duplicateOriginal.id);
                           if (origInv) {
                             openEditModal(origInv);
                           } else {
-                            // Si no està a la llista actual, obrir-la directament
                             openEditModal({ ...duplicateOriginal, hasPdf: !!duplicateOriginal.filePath || !!duplicateOriginal.gdriveFileId });
                           }
                         }}
@@ -1165,7 +1281,8 @@ export default function ReceivedInvoices() {
                   </>
                 )}
               </div>
-            )}
+              );
+            })()}
 
             {/* Botons: previsualitzar PDF + re-escanejar */}
             <div className="flex items-center justify-between">
@@ -1209,7 +1326,7 @@ export default function ReceivedInvoices() {
                     {rescanResult.documentType?.type && rescanResult.documentType.type !== 'invoice' && rescanResult.documentType.type !== 'unknown' ? (
                       <><AlertTriangle size={13} /> Detectat: {rescanResult.documentType.label}</>
                     ) : (
-                      <><Check size={13} /> Dades actualitzades{rescanResult.ocrUsed ? ' (via OCR)' : ''}</>
+                      <><Check size={13} /> Dades actualitzades{rescanResult.aiExtracted ? ' (via Claude AI)' : rescanResult.ocrUsed ? ' (via OCR)' : ''}</>
                     )}
                   </span>
                 )}

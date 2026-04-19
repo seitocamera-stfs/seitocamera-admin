@@ -66,6 +66,8 @@ function generateProvisionalNumber(fileName) {
 // ===========================================
 
 let isRunning = false;
+let runStartedAt = null;
+const MAX_RUN_MINUTES = 15; // Safety timeout
 
 // Cache dels IDs de carpetes per no buscar-los cada cop
 let inboxFolderId = null;
@@ -98,8 +100,15 @@ async function getDuplicadesFolderId() {
  */
 async function syncGdriveFiles() {
   if (isRunning) {
-    logger.info('GDrive sync: Ja s\'està executant, s\'omet');
-    return { processed: 0, duplicates: 0, errors: 0 };
+    // Safety: si porta massa temps, probablement s'ha quedat penjat
+    const minutesRunning = runStartedAt ? (Date.now() - runStartedAt) / 60000 : 0;
+    if (minutesRunning > MAX_RUN_MINUTES) {
+      logger.warn(`GDrive sync: Forçant reset del lock (portava ${Math.round(minutesRunning)} min)`);
+      isRunning = false;
+    } else {
+      logger.info('GDrive sync: Ja s\'està executant, s\'omet');
+      return { processed: 0, duplicates: 0, errors: 0 };
+    }
   }
 
   // Comprovar que GDrive està configurat
@@ -108,6 +117,7 @@ async function syncGdriveFiles() {
   }
 
   isRunning = true;
+  runStartedAt = Date.now();
   const results = { processed: 0, duplicates: 0, errors: 0, details: [] };
 
   try {
@@ -237,8 +247,17 @@ async function syncGdriveFiles() {
         const totalAmount = pdfAnalysis.totalAmount ? parseFloat(pdfAnalysis.totalAmount) : null; // null si no detectat, MAI zero
         let taxRate = 21;
         let subtotal, taxAmount;
-        if (totalAmount && pdfAnalysis.baseAmount && pdfAnalysis.baseAmount < totalAmount) {
-          // Base imposable detectada del PDF
+        let irpfRate = pdfAnalysis.irpfRate || 0;
+        let irpfAmount = pdfAnalysis.irpfAmount || 0;
+        if (totalAmount && pdfAnalysis.aiExtracted && pdfAnalysis.baseAmount && pdfAnalysis.taxRate !== undefined) {
+          // Claude AI ha extret tot directament
+          subtotal = parseFloat(pdfAnalysis.baseAmount.toFixed(2));
+          taxRate = pdfAnalysis.taxRate;
+          taxAmount = pdfAnalysis.taxAmount != null
+            ? parseFloat(pdfAnalysis.taxAmount.toFixed(2))
+            : Math.round((subtotal * taxRate / 100) * 100) / 100;
+        } else if (totalAmount && pdfAnalysis.baseAmount && pdfAnalysis.baseAmount < totalAmount) {
+          // Base imposable detectada del PDF (regex)
           subtotal = parseFloat(pdfAnalysis.baseAmount.toFixed(2));
           taxAmount = Math.round((totalAmount - subtotal) * 100) / 100;
           if (subtotal > 0) taxRate = Math.round((taxAmount / subtotal) * 100);
@@ -298,7 +317,15 @@ async function syncGdriveFiles() {
 
         {
           // ===== NO DUPLICAT: primer crear a BD, després moure =====
-          const destFolderId = await gdrive.getDateBasedFolderId('factures-rebudes', issueDate);
+          // Si no és factura, moure a carpeta "no-factures" en comptes de les dates
+          let destFolderId;
+          if (isNotInvoice) {
+            const facturesRebudesId = await gdrive.getSubfolderId('factures-rebudes');
+            const noFacturesFolder = await gdrive.findOrCreateFolder('no-factures', facturesRebudesId);
+            destFolderId = noFacturesFolder.id;
+          } else {
+            destFolderId = await gdrive.getDateBasedFolderId('factures-rebudes', issueDate);
+          }
 
           const invoiceData = {
               invoiceNumber,
@@ -324,6 +351,8 @@ async function syncGdriveFiles() {
               subtotal: subtotal || 0,
               taxRate,
               taxAmount: taxAmount || 0,
+              irpfRate: irpfRate || 0,
+              irpfAmount: irpfAmount || 0,
               totalAmount: totalAmount ? Math.round(totalAmount * 100) / 100 : 0,
               currency: 'EUR',
               ocrRawData: sanitizeForDb({

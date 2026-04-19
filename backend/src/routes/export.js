@@ -22,7 +22,7 @@ router.get('/received-invoices/:format', authorize('ADMIN', 'EDITOR'), async (re
     const { search, status, source, supplierId, conciliated, dateFrom, dateTo, ids } = req.query;
 
     // Si s'han passat IDs concrets, prioritzar-los (selecció manual) i ignorar filtres
-    const where = {};
+    const where = { deletedAt: null };
     if (ids) {
       const idList = String(ids).split(',').map((s) => s.trim()).filter(Boolean);
       if (idList.length === 0) {

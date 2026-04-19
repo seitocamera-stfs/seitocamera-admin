@@ -517,7 +517,10 @@ function isExcludedSender(from) {
   return EXCLUDED_SENDERS.some(ex => fromLower.includes(ex));
 }
 
-function classifyEmail(analysis) {
+/**
+ * Classificació per regles (FALLBACK si Claude no disponible)
+ */
+function classifyEmailByRules(analysis) {
   if (!analysis) return 'NOT_INVOICE';
 
   // Excloure emails interns i de sistema
@@ -527,39 +530,144 @@ function classifyEmail(analysis) {
 
   // A: té PDF adjunt
   if (analysis.hasPdf && analysis.pdfAttachments.length > 0) {
-    // A la carpeta FACTURA REBUDA confiem sempre (l'usuari l'ha mogut allà)
     const isFolderFactura = analysis.folderPath?.toUpperCase().includes('FACTURA') || false;
     if (isFolderFactura) {
       return 'PDF_ATTACHED';
     }
-    // Fora de FACTURA REBUDA: exigir score ≥ 3 I que hi hagi keywords de factura
-    // Això evita importar CVs, llistats d'equip, pressupostos, gear lists, etc.
     if (analysis.scoring && analysis.scoring.score >= 3) {
-      // Verificar que el subject o body conté algun keyword de factura real
       const allText = `${analysis.emailMeta?.subject || ''} ${analysis.emailMeta?.summary || ''}`.toLowerCase();
       const invoiceKeywords = ['factura', 'invoice', 'fra.', 'fra ', 'receipt', 'rebut', 'adjuntamos factura', 'your receipt'];
       const hasInvoiceKeyword = invoiceKeywords.some(kw => allText.includes(kw));
-      // Plataforma coneguda també val (Anthropic, Holded, etc.)
       if (hasInvoiceKeyword || analysis.platform) {
         return 'PDF_ATTACHED';
       }
     }
-    // PDF amb score baix o sense keyword de factura → no és factura
     return 'NOT_INVOICE';
   }
 
-  // Scoring per determinar B o C
   if (!analysis.scoring || !analysis.scoring.isLikelyInvoice) {
     return 'NOT_INVOICE';
   }
 
-  // B: sense PDF però tenim plataforma coneguda o link de descàrrega
   if (analysis.platform || analysis.hasDownloadLink) {
     return 'LINK_DETECTED';
   }
 
-  // C: probable factura però sense link clar
   return 'MANUAL_REVIEW';
+}
+
+// ===========================================
+// Classificació per IA (Claude Haiku)
+// ===========================================
+
+const EMAIL_CLASSIFY_PROMPT = `Ets un assistent expert en classificació d'emails per a una empresa de producció audiovisual (Seito Camera).
+
+La teva tasca és determinar si un email conté o fa referència a una FACTURA (invoice) enviada per un proveïdor.
+
+CONTEXT IMPORTANT:
+- L'empresa rep factures de lloguer d'equip audiovisual, serveis tècnics, software, subministraments, etc.
+- NO són factures: newsletters, ofertes comercials, confirmacions de comanda, albarans, pressupostos, gear lists, CVs, llistats d'equip, notificacions de sistema, emails interns.
+- Una factura normalment conté: "factura", "invoice", "fra.", imports amb €/$, número de factura, NIF/CIF.
+- Plataformes SaaS (Adobe, Google, Amazon, etc.) sovint envien la factura com a PDF adjunt o amb link de descàrrega.
+
+Classifica l'email en UNA d'aquestes categories:
+- PDF_ATTACHED: L'email conté un PDF adjunt que és (o molt probablement és) una factura. Els PDFs que NO són factures (gear lists, pressupostos, CVs, contractes) NO compten.
+- LINK_DETECTED: No hi ha PDF adjunt, però l'email indica que hi ha una factura disponible per descarregar (link a plataforma, "download your invoice", etc.)
+- MANUAL_REVIEW: Podria ser una factura però no n'estàs segur — cal revisió manual.
+- NOT_INVOICE: Clarament NO és una factura (newsletter, promo, notificació, etc.)
+
+Retorna NOMÉS un JSON (sense explicacions):
+{
+  "classification": "PDF_ATTACHED | LINK_DETECTED | MANUAL_REVIEW | NOT_INVOICE",
+  "confidence": 0.95,
+  "reason": "breu explicació en català"
+}`;
+
+/**
+ * Classifica un email usant Claude Haiku.
+ * Retorna la classificació o null si falla (per caure al fallback de regles).
+ */
+async function classifyEmailWithAI(analysis) {
+  try {
+    const claude = require('./claudeExtractService');
+    if (!claude.isAvailable()) return null;
+
+    const aiCostTracker = require('./aiCostTracker');
+
+    // Construir el missatge amb les dades de l'email
+    const pdfNames = analysis.pdfAttachments?.map(a => a.fileName).join(', ') || 'cap';
+    const userMessage = [
+      `De: ${analysis.emailMeta?.from || 'desconegut'}`,
+      `Assumpte: ${analysis.emailMeta?.subject || 'sense assumpte'}`,
+      `Data: ${analysis.emailMeta?.date ? analysis.emailMeta.date.toISOString().split('T')[0] : '?'}`,
+      `Carpeta: ${analysis.folderPath || 'inbox'}`,
+      `PDFs adjunts: ${pdfNames}`,
+      `Resum: ${(analysis.emailMeta?.summary || '').substring(0, 1000)}`,
+    ].join('\n');
+
+    const apiResult = await claude.callClaude(EMAIL_CLASSIFY_PROMPT, userMessage, { maxTokens: 256 });
+
+    if (!apiResult || !apiResult.text) return null;
+
+    // Tracking de costos
+    aiCostTracker.trackUsage({
+      service: 'email_classification',
+      model: apiResult.model,
+      inputTokens: apiResult.usage.input_tokens,
+      outputTokens: apiResult.usage.output_tokens,
+      entityType: 'email',
+      entityId: analysis.messageId,
+      metadata: {
+        from: analysis.emailMeta?.from,
+        subject: analysis.emailMeta?.subject,
+      },
+    }).catch(() => {});
+
+    // Parsejar resposta
+    const jsonStr = apiResult.text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    const parsed = JSON.parse(jsonStr);
+
+    const validClassifications = ['PDF_ATTACHED', 'LINK_DETECTED', 'MANUAL_REVIEW', 'NOT_INVOICE'];
+    if (!validClassifications.includes(parsed.classification)) {
+      logger.warn(`Claude email classify: classificació invàlida: ${parsed.classification}`);
+      return null;
+    }
+
+    // Validació extra: no pot ser PDF_ATTACHED si no hi ha PDFs
+    if (parsed.classification === 'PDF_ATTACHED' && !analysis.hasPdf) {
+      parsed.classification = 'LINK_DETECTED';
+      parsed.reason = (parsed.reason || '') + ' (corregit: no hi ha PDF adjunt)';
+    }
+
+    logger.info(`Claude email classify: ${parsed.classification} (${parsed.confidence}) — ${parsed.reason} [${analysis.emailMeta?.from}]`);
+
+    return parsed.classification;
+  } catch (err) {
+    logger.warn(`Claude email classify error: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Classifica un email: primer intenta amb IA, fallback a regles.
+ */
+async function classifyEmail(analysis) {
+  if (!analysis) return 'NOT_INVOICE';
+
+  // Excloure emails interns i de sistema (ni cal preguntar a la IA)
+  if (isExcludedSender(analysis.emailMeta?.from)) {
+    return 'NOT_INVOICE';
+  }
+
+  // Intentar classificació per IA
+  const aiClassification = await classifyEmailWithAI(analysis);
+  if (aiClassification) {
+    return aiClassification;
+  }
+
+  // Fallback a regles si la IA no està disponible o falla
+  logger.debug('Email classify: fallback a regles (IA no disponible)');
+  return classifyEmailByRules(analysis);
 }
 
 /**
@@ -626,7 +734,7 @@ async function analyzeInvoiceEmail(folderId, messageId, { isFolderFactura = fals
     classification: null, // es calcula a continuació
   };
 
-  analysis.classification = classifyEmail(analysis);
+  analysis.classification = await classifyEmail(analysis);
 
   return analysis;
 }

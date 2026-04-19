@@ -15,6 +15,7 @@ import Reminders from './pages/Reminders';
 import Users from './pages/Users';
 import AccountingAgent from './pages/AccountingAgent';
 import Equipment from './pages/Equipment';
+import AiCosts from './pages/AiCosts';
 import useAuthStore from './stores/authStore';
 
 function App() {
@@ -46,6 +47,7 @@ function App() {
         <Route path="users" element={<RoleGuard section="users"><Users /></RoleGuard>} />
         <Route path="agent" element={<AccountingAgent />} />
         <Route path="equipment" element={<Equipment />} />
+        <Route path="ai-costs" element={<AiCosts />} />
       </Route>
     </Routes>
   );

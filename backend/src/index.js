@@ -10,6 +10,16 @@ const { logger } = require('./config/logger');
 const { prisma } = require('./config/database');
 const { redis } = require('./config/redis');
 
+// ===========================================
+// Validació de variables d'entorn crítiques
+// ===========================================
+const REQUIRED_ENV = ['DATABASE_URL', 'JWT_SECRET', 'JWT_REFRESH_SECRET'];
+const missing = REQUIRED_ENV.filter((key) => !process.env[key]);
+if (missing.length > 0) {
+  console.error(`\n❌ VARIABLES D'ENTORN OBLIGATÒRIES NO CONFIGURADES:\n   ${missing.join(', ')}\n\n   Revisa el fitxer .env (veure .env.example)\n`);
+  process.exit(1);
+}
+
 const app = express();
 const PORT = process.env.PORT || 4000;
 
@@ -117,6 +127,7 @@ app.use('/api/zoho', require('./routes/zoho'));
 app.use('/api/export', require('./routes/export'));
 app.use('/api/agent', require('./routes/agent'));
 app.use('/api/equipment', require('./routes/equipment'));
+app.use('/api/ai-costs', require('./routes/aiCosts'));
 
 // ===========================================
 // Gestió d'errors

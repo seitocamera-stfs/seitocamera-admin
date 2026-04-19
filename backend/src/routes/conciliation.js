@@ -152,6 +152,9 @@ router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
           where: {
             totalAmount: { gte: absAmount - tolerance, lte: absAmount + tolerance },
             conciliations: { none: {} },
+            deletedAt: null,
+            isDuplicate: false,
+            status: { notIn: ['NOT_INVOICE'] },
           },
           include: { supplier: { select: { name: true } } },
         });

@@ -1329,10 +1329,15 @@ async function ocrPdf(filePathOrBuffer) {
 
 /**
  * Analitza un PDF i extreu tota la info disponible.
- * Primer prova amb pdf-parse (text natiu).
- * Si no troba text → executa OCR amb Tesseract.
+ *
+ * Flux:
+ *   1. Extreure text amb pdf-parse (o OCR si escanejat)
+ *   2. Enviar text a Claude API per extracció intel·ligent
+ *   3. Si Claude no disponible → fallback a regex
+ *   4. Combinar resultats: Claude té prioritat, regex omple buits
+ *
  * @param {string|Buffer} filePathOrBuffer - Camí al fitxer o buffer
- * @returns {Object} { text, invoiceNumber, nifCif, totalAmount, invoiceDate, hasText, ocrUsed }
+ * @returns {Object} { text, invoiceNumber, nifCif, totalAmount, invoiceDate, hasText, ocrUsed, aiExtracted }
  */
 async function analyzePdf(filePathOrBuffer) {
   let text = null;
@@ -1368,22 +1373,67 @@ async function analyzePdf(filePathOrBuffer) {
       supplierName: null,
       hasText: false,
       ocrUsed: false,
+      aiExtracted: false,
     };
   }
 
-  const documentType = detectDocumentType(text);
+  // 4) Intentar extracció amb Claude API (prioritat)
+  let aiResult = null;
+  let aiExtracted = false;
+  try {
+    const claudeExtract = require('./claudeExtractService');
+    if (claudeExtract.isAvailable()) {
+      aiResult = await claudeExtract.extractInvoiceData(text);
+      if (aiResult) {
+        aiExtracted = true;
+        logger.info('analyzePdf: Extracció amb Claude API completada');
+      }
+    }
+  } catch (err) {
+    logger.warn(`analyzePdf: Claude Extract no disponible: ${err.message}`);
+  }
 
-  return {
-    text,
-    documentType,
+  // 5) Fallback a regex per camps que Claude no ha pogut extreure
+  const regexResult = {
+    documentType: detectDocumentType(text),
     invoiceNumber: detectInvoiceNumber(text),
     nifCif: detectNifCif(text),
     totalAmount: detectTotalAmount(text),
     baseAmount: detectBaseAmount(text),
     invoiceDate: detectInvoiceDate(text),
     supplierName: detectSupplierName(text),
+  };
+
+  // 6) Combinar: Claude té prioritat, regex omple buits
+  if (aiResult) {
+    return {
+      text,
+      documentType: aiResult.documentType || regexResult.documentType,
+      invoiceNumber: aiResult.invoiceNumber || regexResult.invoiceNumber,
+      nifCif: aiResult.nifCif?.length > 0 ? aiResult.nifCif : regexResult.nifCif,
+      totalAmount: aiResult.totalAmount || regexResult.totalAmount,
+      baseAmount: aiResult.baseAmount || regexResult.baseAmount,
+      taxRate: aiResult.taxRate,
+      taxAmount: aiResult.taxAmount,
+      irpfRate: aiResult.irpfRate || 0,
+      irpfAmount: aiResult.irpfAmount || 0,
+      invoiceDate: aiResult.invoiceDate || regexResult.invoiceDate,
+      supplierName: aiResult.supplierName || regexResult.supplierName,
+      description: aiResult.description || null,
+      confidence: aiResult.confidence || 0.5,
+      hasText: true,
+      ocrUsed,
+      aiExtracted: true,
+    };
+  }
+
+  // 7) Només regex (Claude no disponible o ha fallat)
+  return {
+    text,
+    ...regexResult,
     hasText: true,
     ocrUsed,
+    aiExtracted: false,
   };
 }
 

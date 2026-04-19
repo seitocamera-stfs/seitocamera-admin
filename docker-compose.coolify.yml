@@ -1,0 +1,132 @@
+version: '3.8'
+
+# ===========================================
+# SeitoCamera Admin — Producció (Coolify/Traefik)
+# ===========================================
+# Desplegat via Coolify. Traefik gestiona SSL i routing.
+# ===========================================
+
+services:
+  # ===========================================
+  # PostgreSQL — Només xarxa interna
+  # ===========================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: seitocamera-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backups:/backups
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===========================================
+  # Redis — AMB password, només xarxa interna
+  # ===========================================
+  redis:
+    image: redis:7-alpine
+    container_name: seitocamera-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD} --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===========================================
+  # Backend (Node.js + Express + Prisma)
+  # ===========================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: seitocamera-backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+    volumes:
+      - uploads_data:/app/uploads
+
+  # ===========================================
+  # Frontend (React + Vite → Nginx static)
+  # ===========================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: /api
+    container_name: seitocamera-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - internal
+
+  # ===========================================
+  # Nginx (reverse proxy intern — Traefik gestiona SSL)
+  # ===========================================
+  nginx:
+    image: nginx:alpine
+    container_name: seitocamera-nginx
+    restart: unless-stopped
+    volumes:
+      - ./nginx/nginx.coolify.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - internal
+      - coolify
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.seitocamera.rule=Host(`admin.seito.camera`)"
+      - "traefik.http.routers.seitocamera.entrypoints=https"
+      - "traefik.http.routers.seitocamera.tls=true"
+      - "traefik.http.routers.seitocamera.tls.certresolver=letsencrypt"
+      - "traefik.http.services.seitocamera.loadbalancer.server.port=80"
+      # Redirect HTTP → HTTPS
+      - "traefik.http.routers.seitocamera-http.rule=Host(`admin.seito.camera`)"
+      - "traefik.http.routers.seitocamera-http.entrypoints=http"
+      - "traefik.http.routers.seitocamera-http.middlewares=redirect-to-https"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+
+networks:
+  internal:
+    driver: bridge
+  coolify:
+    external: true
+    name: coolify
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:

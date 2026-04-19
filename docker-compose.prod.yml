@@ -1,0 +1,138 @@
+version: '3.8'
+
+# ===========================================
+# SeitoCamera Admin — Producció
+# ===========================================
+# Ús: docker compose -f docker-compose.prod.yml up -d --build
+#
+# IMPORTANT: Crear .env a l'arrel amb TOTES les variables
+# necessàries abans d'arrencar (veure .env.production.example)
+# ===========================================
+
+services:
+  # ===========================================
+  # PostgreSQL — SENSE ports exposats (només xarxa interna)
+  # ===========================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: seitocamera-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backups:/backups
+    # NO exposar ports! Només accessible des de la xarxa interna Docker
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===========================================
+  # Redis — AMB password, SENSE ports exposats
+  # ===========================================
+  redis:
+    image: redis:7-alpine
+    container_name: seitocamera-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD} --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===========================================
+  # Backend (Node.js + Express + Prisma)
+  # ===========================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: seitocamera-backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+    volumes:
+      - uploads_data:/app/uploads
+
+  # ===========================================
+  # Frontend (React + Vite → Nginx static)
+  # ===========================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: /api
+    container_name: seitocamera-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - internal
+
+  # ===========================================
+  # Nginx (reverse proxy + SSL)
+  # ===========================================
+  nginx:
+    image: nginx:alpine
+    container_name: seitocamera-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - internal
+
+  # ===========================================
+  # Certbot (renovació automàtica SSL)
+  # ===========================================
+  certbot:
+    image: certbot/certbot
+    container_name: seitocamera-certbot
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:

@@ -31,7 +31,7 @@ function generateTokens(userId, role) {
   const jti = crypto.randomUUID();
   const refreshToken = jwt.sign(
     { userId, type: 'refresh', jti },
-    process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET,
+    process.env.JWT_REFRESH_SECRET,
     {
       expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || REFRESH_TOKEN_EXPIRY,
       issuer: 'seitocamera-admin',
@@ -202,7 +202,7 @@ async function refreshToken(token) {
   try {
     const decoded = jwt.verify(
       token,
-      process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET,
+      process.env.JWT_REFRESH_SECRET,
       { issuer: 'seitocamera-admin' }
     );
 

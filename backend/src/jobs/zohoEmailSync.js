@@ -20,6 +20,8 @@ const os = require('os');
 // ===========================================
 
 let isRunning = false;
+let runStartedAt = null;
+const MAX_RUN_MINUTES = 10; // Safety timeout
 
 /**
  * Busca un proveïdor a la BD pel remitent del correu.
@@ -260,8 +262,14 @@ async function handleManualReview(email, supplier, adminId) {
 
 async function syncZohoEmails() {
   if (isRunning) {
-    logger.info('Zoho sync: Ja s\'està executant, s\'omet');
-    return;
+    const minutesRunning = runStartedAt ? (Date.now() - runStartedAt) / 60000 : 0;
+    if (minutesRunning > MAX_RUN_MINUTES) {
+      logger.warn(`Zoho sync: Forçant reset del lock (portava ${Math.round(minutesRunning)} min)`);
+      isRunning = false;
+    } else {
+      logger.info('Zoho sync: Ja s\'està executant, s\'omet');
+      return;
+    }
   }
 
   // Acceptar ZOHO_ACCOUNT_IDS (multi-compte) o ZOHO_ACCOUNT_ID (single)
@@ -271,6 +279,7 @@ async function syncZohoEmails() {
   }
 
   isRunning = true;
+  runStartedAt = Date.now();
 
   try {
     const lastSync = await redis.get('zoho:lastSync');

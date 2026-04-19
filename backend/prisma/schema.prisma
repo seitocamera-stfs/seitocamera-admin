@@ -535,3 +535,26 @@ model Equipment {
   @@index([status])
   @@map("equipment")
 }
+
+// ===========================================
+// Registre d'ús d'IA (costos Claude API)
+// ===========================================
+
+model AiUsageLog {
+  id              String   @id @default(cuid())
+  timestamp       DateTime @default(now())
+  service         String   // 'email_classification', 'invoice_extraction', 'accounting_agent', 'equipment_extraction'
+  model           String   // 'claude-haiku-4-5-20251001', etc.
+  inputTokens     Int      @default(0)
+  outputTokens    Int      @default(0)
+  costUsd         Float    @default(0) // cost estimat en USD
+  entityType      String?  // 'email', 'invoice', 'equipment'
+  entityId        String?  // ID del correu, factura, etc.
+  success         Boolean  @default(true)
+  metadata        Json?    // dades extra (subject, fileName, etc.)
+
+  @@index([timestamp])
+  @@index([service])
+  @@index([timestamp, service])
+  @@map("ai_usage_logs")
+}

@@ -12,6 +12,7 @@ import {
   UserCog,
   Bot,
   Camera,
+  BrainCircuit,
 } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
 import { canAccessSection } from '../../lib/permissions';
@@ -28,6 +29,7 @@ const navItems = [
   { to: '/users', icon: UserCog, label: 'Usuaris', section: 'users' },
   { to: '/equipment', icon: Camera, label: 'Inventari equips', section: null },
   { to: '/agent', icon: Bot, label: 'Agent comptable', section: null },
+  { to: '/ai-costs', icon: BrainCircuit, label: 'Costos IA', section: null, adminOnly: true },
 ];
 
 export default function Sidebar() {
@@ -40,9 +42,10 @@ export default function Sidebar() {
     navigate('/login');
   };
 
-  const visibleItems = navItems.filter((item) =>
-    !item.section || canAccessSection(user, item.section)
-  );
+  const visibleItems = navItems.filter((item) => {
+    if (item.adminOnly && user?.role !== 'ADMIN') return false;
+    return !item.section || canAccessSection(user, item.section);
+  });
 
   return (
     <aside className="w-64 border-r bg-card flex flex-col">

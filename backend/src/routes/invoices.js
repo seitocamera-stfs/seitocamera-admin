@@ -576,6 +576,243 @@ router.post('/received/:id/relocate', authorize('ADMIN', 'EDITOR'), async (req, 
  * POST /api/invoices/received/:id/rescan — Re-analitza el PDF d'una factura existent
  * Retorna les dades extretes SENSE guardar, perquè l'usuari les revisi al formulari.
  */
+// =============================================
+// BULK RESCAN — Re-escanejar múltiples factures i aplicar canvis
+// =============================================
+router.post('/received/bulk-rescan', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'Cal enviar un array d\'IDs' });
+    }
+    if (ids.length > 200) {
+      return res.status(400).json({ error: 'Màxim 200 factures per bulk rescan' });
+    }
+
+    const invoices = await prisma.receivedInvoice.findMany({
+      where: { id: { in: ids }, deletedAt: null },
+      select: {
+        id: true,
+        invoiceNumber: true,
+        filePath: true,
+        gdriveFileId: true,
+        originalFileName: true,
+        supplierId: true,
+        totalAmount: true,
+        subtotal: true,
+        taxRate: true,
+        issueDate: true,
+        status: true,
+        isDuplicate: true,
+      },
+    });
+
+    const results = { processed: 0, updated: 0, skipped: 0, errors: 0, details: [] };
+
+    for (const invoice of invoices) {
+      try {
+        // Obtenir PDF
+        let pdfBuffer = null;
+        if (invoice.filePath && fs.existsSync(invoice.filePath)) {
+          pdfBuffer = fs.readFileSync(invoice.filePath);
+        } else if (invoice.gdriveFileId) {
+          try {
+            const drive = gdrive.getDriveClient();
+            const fileRes = await drive.files.get(
+              { fileId: invoice.gdriveFileId, alt: 'media', supportsAllDrives: true },
+              { responseType: 'arraybuffer' }
+            );
+            pdfBuffer = Buffer.from(fileRes.data);
+          } catch (err) {
+            logger.warn(`Bulk rescan: Error descarregant PDF ${invoice.id}: ${err.message}`);
+          }
+        }
+
+        if (!pdfBuffer) {
+          results.skipped++;
+          results.details.push({ id: invoice.id, num: invoice.invoiceNumber, status: 'skipped', reason: 'Sense PDF' });
+          continue;
+        }
+
+        // Analitzar
+        const analysis = await pdfExtract.analyzePdf(pdfBuffer);
+        results.processed++;
+
+        if (!analysis.hasText) {
+          results.skipped++;
+          results.details.push({ id: invoice.id, num: invoice.invoiceNumber, status: 'skipped', reason: 'Sense text' });
+          continue;
+        }
+
+        // Buscar proveïdor
+        let matchedSupplier = null;
+        if (analysis.nifCif?.length > 0) {
+          matchedSupplier = await pdfExtract.findSupplierByNif(analysis.nifCif);
+        }
+        if (!matchedSupplier && analysis.supplierName) {
+          matchedSupplier = await pdfExtract.findSupplierByName(analysis.supplierName);
+        }
+        if (!matchedSupplier && invoice.originalFileName) {
+          matchedSupplier = await pdfExtract.findSupplierByFileName(invoice.originalFileName);
+        }
+
+        // AUTO-CREAR proveïdor si tenim NIF i nom però no existeix
+        if (!matchedSupplier && analysis.nifCif?.length > 0 && analysis.supplierName) {
+          const nif = analysis.nifCif[0];
+          try {
+            const existingByNif = await prisma.supplier.findFirst({ where: { nif: { equals: nif, mode: 'insensitive' } } });
+            if (existingByNif) {
+              matchedSupplier = existingByNif;
+            } else {
+              matchedSupplier = await prisma.supplier.create({
+                data: { name: analysis.supplierName, nif },
+              });
+              logger.info(`Bulk rescan: auto-creat proveïdor "${analysis.supplierName}" (NIF: ${nif})`);
+              changes.push(`proveïdor creat: ${analysis.supplierName}`);
+            }
+          } catch (createErr) {
+            if (createErr.code === 'P2002') {
+              matchedSupplier = await prisma.supplier.findFirst({ where: { nif } });
+            }
+          }
+        }
+
+        // Construir actualitzacions (només si millora)
+        const updateData = {};
+        const changes = [];
+
+        // Número de factura: actualitzar si era provisional
+        if (analysis.invoiceNumber && /^(PROV-|GDRIVE-|ZOHO-)/.test(invoice.invoiceNumber)) {
+          updateData.invoiceNumber = analysis.invoiceNumber;
+          changes.push(`nº: ${invoice.invoiceNumber} → ${analysis.invoiceNumber}`);
+        }
+
+        // Import: actualitzar si era 0 o no tenia
+        if (analysis.totalAmount && analysis.totalAmount > 0 && (!invoice.totalAmount || parseFloat(invoice.totalAmount) === 0)) {
+          updateData.totalAmount = Math.round(analysis.totalAmount * 100) / 100;
+          if (analysis.aiExtracted && analysis.baseAmount && analysis.taxRate !== undefined) {
+            updateData.subtotal = parseFloat(analysis.baseAmount.toFixed(2));
+            updateData.taxRate = analysis.taxRate;
+            updateData.taxAmount = analysis.taxAmount != null ? parseFloat(analysis.taxAmount.toFixed(2)) : parseFloat((updateData.subtotal * analysis.taxRate / 100).toFixed(2));
+            if (analysis.irpfRate) updateData.irpfRate = analysis.irpfRate;
+            if (analysis.irpfAmount) updateData.irpfAmount = parseFloat(analysis.irpfAmount.toFixed(2));
+          } else if (analysis.baseAmount && analysis.baseAmount < analysis.totalAmount) {
+            updateData.subtotal = parseFloat(analysis.baseAmount.toFixed(2));
+            updateData.taxAmount = Math.round((updateData.totalAmount - updateData.subtotal) * 100) / 100;
+            if (updateData.subtotal > 0) updateData.taxRate = Math.round((updateData.taxAmount / updateData.subtotal) * 100);
+          } else {
+            updateData.subtotal = Math.round((updateData.totalAmount / 1.21) * 100) / 100;
+            updateData.taxAmount = Math.round((updateData.totalAmount - updateData.subtotal) * 100) / 100;
+            updateData.taxRate = 21;
+          }
+          changes.push(`import: 0 → ${updateData.totalAmount}€`);
+        }
+
+        // Data: actualitzar si no en tenia o era la data de pujada
+        if (analysis.invoiceDate && !invoice.issueDate) {
+          updateData.issueDate = analysis.invoiceDate;
+          changes.push(`data: → ${analysis.invoiceDate.toISOString().slice(0, 10)}`);
+        }
+
+        // Proveïdor: assignar si no en tenia
+        if (matchedSupplier?.id && !invoice.supplierId) {
+          updateData.supplierId = matchedSupplier.id;
+          changes.push(`proveïdor: → ${matchedSupplier.name}`);
+        }
+
+        // Estat: si era AMOUNT_PENDING i ara tenim import, canviar a PENDING
+        if (invoice.status === 'AMOUNT_PENDING' && updateData.totalAmount) {
+          updateData.status = 'PENDING';
+          changes.push('estat: AMOUNT_PENDING → PENDING');
+        }
+        if (invoice.status === 'PDF_PENDING' && analysis.invoiceNumber) {
+          updateData.status = 'PENDING';
+          changes.push('estat: PDF_PENDING → PENDING');
+        }
+
+        // Duplicat: comprovar amb el número extret
+        if (analysis.invoiceNumber) {
+          const duplicate = await pdfExtract.checkDuplicateByContent(
+            analysis.invoiceNumber,
+            matchedSupplier?.id || invoice.supplierId || null,
+            analysis.totalAmount
+          );
+          if (duplicate && duplicate.id !== invoice.id) {
+            updateData.isDuplicate = true;
+            updateData.duplicateOfId = duplicate.id;
+            changes.push(`duplicat de ${duplicate.invoiceNumber}`);
+          } else if (invoice.isDuplicate) {
+            updateData.isDuplicate = false;
+            updateData.duplicateOfId = null;
+            changes.push('desmarcat duplicat');
+          }
+        }
+
+        // Protecció: comprovar unique constraint (invoiceNumber + supplierId) abans d'actualitzar
+        if (updateData.invoiceNumber || updateData.supplierId) {
+          const finalNumber = updateData.invoiceNumber || invoice.invoiceNumber;
+          const finalSupplier = updateData.supplierId || invoice.supplierId;
+          if (finalNumber && finalSupplier) {
+            const conflict = await prisma.receivedInvoice.findFirst({
+              where: {
+                invoiceNumber: { equals: finalNumber, mode: 'insensitive' },
+                supplierId: finalSupplier,
+                id: { not: invoice.id },
+                deletedAt: null,
+              },
+              select: { id: true, invoiceNumber: true },
+            });
+            if (conflict) {
+              // Ja existeix una factura amb el mateix número + proveïdor → marcar com duplicat
+              updateData.isDuplicate = true;
+              updateData.duplicateOfId = conflict.id;
+              // No canviar invoiceNumber ni supplierId per evitar el constraint
+              delete updateData.invoiceNumber;
+              delete updateData.supplierId;
+              changes.push(`duplicat de ${conflict.invoiceNumber} (constraint)`);
+              logger.warn(`Bulk rescan: ${invoice.invoiceNumber} → constraint amb ${conflict.invoiceNumber}, marcat duplicat`);
+            }
+          }
+        }
+
+        if (Object.keys(updateData).length > 0) {
+          await prisma.receivedInvoice.update({
+            where: { id: invoice.id },
+            data: updateData,
+          });
+          results.updated++;
+          results.details.push({
+            id: invoice.id,
+            num: updateData.invoiceNumber || invoice.invoiceNumber,
+            status: 'updated',
+            changes,
+            aiExtracted: analysis.aiExtracted || false,
+          });
+        } else {
+          results.details.push({
+            id: invoice.id,
+            num: invoice.invoiceNumber,
+            status: 'unchanged',
+            aiExtracted: analysis.aiExtracted || false,
+          });
+        }
+      } catch (invErr) {
+        results.errors++;
+        results.details.push({ id: invoice.id, num: invoice.invoiceNumber, status: 'error', reason: invErr.message });
+        logger.error(`Bulk rescan error (${invoice.id}): ${invErr.message}`);
+      }
+    }
+
+    logger.info(`Bulk rescan completat: ${results.processed} processats, ${results.updated} actualitzats, ${results.skipped} saltats, ${results.errors} errors`);
+    res.json(results);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// =============================================
+// RESCAN individual
+// =============================================
 router.post('/received/:id/rescan', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
   try {
     const invoice = await prisma.receivedInvoice.findUnique({
@@ -644,12 +881,46 @@ router.post('/received/:id/rescan', authorize('ADMIN', 'EDITOR'), async (req, re
       matchedSupplier = await pdfExtract.findSupplierByTemplateNif(analysis.nifCif);
     }
 
+    // AUTO-CREAR proveïdor si tenim NIF i nom però no existeix
+    if (!matchedSupplier && analysis.nifCif?.length > 0 && analysis.supplierName) {
+      const nif = analysis.nifCif[0];
+      try {
+        // Comprovar que el NIF no existeix ja (sense proveïdor associat)
+        const existingByNif = await prisma.supplier.findFirst({ where: { nif: { equals: nif, mode: 'insensitive' } } });
+        if (existingByNif) {
+          matchedSupplier = existingByNif;
+        } else {
+          matchedSupplier = await prisma.supplier.create({
+            data: { name: analysis.supplierName, nif },
+          });
+          logger.info(`Rescan: auto-creat proveïdor "${analysis.supplierName}" (NIF: ${nif})`);
+        }
+      } catch (createErr) {
+        // Si falla per NIF duplicat (unique constraint), buscar el que existeix
+        if (createErr.code === 'P2002') {
+          matchedSupplier = await prisma.supplier.findFirst({ where: { nif } });
+        } else {
+          logger.warn(`Rescan: error creant proveïdor: ${createErr.message}`);
+        }
+      }
+    }
+
     // Calcular subtotal i IVA a partir del total detectat
     let suggestedSubtotal = null;
     let suggestedTaxRate = 21;
     let suggestedTaxAmount = null;
+    let suggestedIrpfRate = analysis.irpfRate || 0;
+    let suggestedIrpfAmount = analysis.irpfAmount || 0;
     if (analysis.totalAmount) {
-      if (analysis.baseAmount && analysis.baseAmount < analysis.totalAmount) {
+      if (analysis.aiExtracted && analysis.baseAmount && analysis.taxRate !== undefined) {
+        // Claude ha extret tot: usar directament
+        suggestedSubtotal = parseFloat(analysis.baseAmount.toFixed(2));
+        suggestedTaxRate = analysis.taxRate;
+        suggestedTaxAmount = analysis.taxAmount != null
+          ? parseFloat(analysis.taxAmount.toFixed(2))
+          : parseFloat((suggestedSubtotal * suggestedTaxRate / 100).toFixed(2));
+        logger.info(`Rescan (AI): subtotal=${suggestedSubtotal}, IVA=${suggestedTaxRate}%, IRPF=${suggestedIrpfRate}%`);
+      } else if (analysis.baseAmount && analysis.baseAmount < analysis.totalAmount) {
         // Tenim base imposable detectada del PDF — usar-la directament
         suggestedSubtotal = parseFloat(analysis.baseAmount.toFixed(2));
         suggestedTaxAmount = parseFloat((analysis.totalAmount - suggestedSubtotal).toFixed(2));
@@ -680,6 +951,7 @@ router.post('/received/:id/rescan', authorize('ADMIN', 'EDITOR'), async (req, re
     res.json({
       hasText: analysis.hasText,
       ocrUsed: analysis.ocrUsed,
+      aiExtracted: analysis.aiExtracted || false,
       documentType: analysis.documentType,
       baseAmount: analysis.baseAmount,
       // Dades extretes
@@ -688,7 +960,10 @@ router.post('/received/:id/rescan', authorize('ADMIN', 'EDITOR'), async (req, re
       subtotal: suggestedSubtotal,
       taxRate: suggestedTaxRate,
       taxAmount: suggestedTaxAmount,
+      irpfRate: suggestedIrpfRate,
+      irpfAmount: suggestedIrpfAmount,
       invoiceDate: analysis.invoiceDate,
+      description: analysis.description || null,
       // Proveïdor detectat
       nifCif: analysis.nifCif,
       supplierName: analysis.supplierName,
@@ -914,6 +1189,11 @@ router.post('/received/:id/attach-pdf', authorize('ADMIN', 'EDITOR'), upload.sin
         // No bloquejar, però retornar avís
         updateData.isDuplicate = true;
         updateData.duplicateOfId = duplicate.id;
+      } else if (invoice.isDuplicate) {
+        // Si estava marcada com duplicat però amb el número real ja no ho és, desmarcar
+        updateData.isDuplicate = false;
+        updateData.duplicateOfId = null;
+        logger.info(`Auto-desmarcat duplicat: ${invoice.id} (nº real: ${pdfAnalysis.invoiceNumber})`);
       }
 
       // Actualitzar número de factura si encara té el provisional
@@ -1043,6 +1323,22 @@ router.put('/received/:id', authorize('ADMIN', 'EDITOR'), async (req, res, next)
       if (data[key] === undefined) delete data[key];
     }
 
+    // Protecció: si la migració IRPF no s'ha executat, no enviar camps desconeguts
+    try {
+      // Intentar accedir al model per veure si els camps existeixen
+      const testFields = await prisma.receivedInvoice.findFirst({
+        where: { id: invoiceId },
+        select: { irpfRate: true },
+      });
+    } catch (fieldErr) {
+      // Si falla, els camps IRPF no existeixen encara → eliminar-los
+      if (fieldErr.message?.includes('irpfRate') || fieldErr.code === 'P2009') {
+        delete data.irpfRate;
+        delete data.irpfAmount;
+        logger.warn('PUT received: camps IRPF no disponibles (cal executar migració)');
+      }
+    }
+
     // Comprovar si el nº factura + proveïdor xoca amb una ALTRA factura
     if (data.invoiceNumber || data.supplierId !== undefined) {
       const current = await prisma.receivedInvoice.findUnique({
@@ -1090,7 +1386,15 @@ router.put('/received/:id', authorize('ADMIN', 'EDITOR'), async (req, res, next)
               });
             }
 
-            // Soft-delete la factura duplicada
+            // Soft-delete la factura duplicada + esborrar del Drive
+            if (currentFull?.gdriveFileId) {
+              try {
+                await gdrive.deleteFile(currentFull.gdriveFileId);
+                logger.info(`Merge: fitxer DUP esborrat de Drive: ${currentFull.gdriveFileId}`);
+              } catch (driveErr) {
+                logger.warn(`Merge: no s'ha pogut esborrar de Drive ${currentFull.gdriveFileId}: ${driveErr.message}`);
+              }
+            }
             await prisma.receivedInvoice.update({
               where: { id: invoiceId },
               data: { deletedAt: new Date(), description: `Fusionada amb factura ${conflict.invoiceNumber} (${conflict.id})` },
@@ -1154,9 +1458,27 @@ router.put('/received/:id', authorize('ADMIN', 'EDITOR'), async (req, res, next)
 
 router.patch('/received/:id/status', authorize('ADMIN', 'EDITOR'), validate(statusUpdateSchema), async (req, res, next) => {
   try {
+    const newStatus = req.body.status;
+
+    // Si es marca com NOT_INVOICE, esborrar del Drive
+    if (newStatus === 'NOT_INVOICE') {
+      const existing = await prisma.receivedInvoice.findUnique({
+        where: { id: req.params.id },
+        select: { gdriveFileId: true, invoiceNumber: true },
+      });
+      if (existing?.gdriveFileId) {
+        try {
+          await gdrive.deleteFile(existing.gdriveFileId);
+          logger.info(`Fitxer esborrat de Drive (marcat com no-factura): ${existing.gdriveFileId} (${existing.invoiceNumber || req.params.id})`);
+        } catch (driveErr) {
+          logger.warn(`No s'ha pogut esborrar de Drive ${existing.gdriveFileId}: ${driveErr.message}`);
+        }
+      }
+    }
+
     const invoice = await prisma.receivedInvoice.update({
       where: { id: req.params.id },
-      data: { status: req.body.status },
+      data: { status: newStatus },
     });
     res.json(invoice);
   } catch (error) {
@@ -1174,17 +1496,32 @@ router.delete('/received/:id', requireLevel('receivedInvoices', 'admin'), async 
     const invoice = await prisma.receivedInvoice.findUnique({ where: { id: req.params.id } });
     if (!invoice) return res.status(404).json({ error: 'Factura no trobada' });
 
+    // Esborrar fitxer de Google Drive si existeix
+    const deleteFromDrive = async () => {
+      if (invoice.gdriveFileId) {
+        try {
+          await gdrive.deleteFile(invoice.gdriveFileId);
+          logger.info(`Fitxer esborrat de Google Drive: ${invoice.gdriveFileId} (factura ${invoice.invoiceNumber || invoice.id})`);
+        } catch (driveErr) {
+          // No bloquejar l'eliminació si Drive falla (pot ser que ja no existeixi)
+          logger.warn(`No s'ha pogut esborrar de Drive ${invoice.gdriveFileId}: ${driveErr.message}`);
+        }
+      }
+    };
+
     if (invoice.deletedAt) {
-      // Ja a la paperera → eliminació definitiva
+      // Ja a la paperera → eliminació definitiva + esborrar de Drive
+      await deleteFromDrive();
       await prisma.receivedInvoice.delete({ where: { id: req.params.id } });
-      res.json({ message: 'Factura eliminada definitivament' });
+      res.json({ message: 'Factura eliminada definitivament i esborrada de Google Drive' });
     } else {
-      // Soft delete → moure a paperera
+      // Soft delete → moure a paperera + esborrar de Drive
+      await deleteFromDrive();
       await prisma.receivedInvoice.update({
         where: { id: req.params.id },
         data: { deletedAt: new Date() },
       });
-      res.json({ message: 'Factura moguda a la paperera' });
+      res.json({ message: 'Factura moguda a la paperera i esborrada de Google Drive' });
     }
   } catch (error) {
     if (error.code === 'P2025') return res.status(404).json({ error: 'Factura no trobada' });
@@ -1204,6 +1541,33 @@ router.post('/received/:id/restore', requireLevel('receivedInvoices', 'admin'), 
     res.json({ message: 'Factura restaurada' });
   } catch (error) {
     if (error.code === 'P2025') return res.status(404).json({ error: 'Factura no trobada' });
+    next(error);
+  }
+});
+
+// =============================================
+// POST /received/:id/unmark-duplicate — Desmarcar com a duplicat (fals positiu)
+// =============================================
+router.post('/received/:id/unmark-duplicate', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const invoice = await prisma.receivedInvoice.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, isDuplicate: true, invoiceNumber: true },
+    });
+    if (!invoice) return res.status(404).json({ error: 'Factura no trobada' });
+    if (!invoice.isDuplicate) return res.json({ message: 'Factura ja no estava marcada com a duplicat' });
+
+    await prisma.receivedInvoice.update({
+      where: { id: req.params.id },
+      data: {
+        isDuplicate: false,
+        duplicateOfId: null,
+      },
+    });
+
+    logger.info(`Factura ${invoice.invoiceNumber} (${req.params.id}) desmarcada com a duplicat per ${req.user.email}`);
+    res.json({ message: 'Factura desmarcada com a duplicat' });
+  } catch (error) {
     next(error);
   }
 });
