@@ -74,12 +74,13 @@ router.get('/', async (req, res, next) => {
 // ===========================================
 router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
   try {
-    // 1. Marcar transferències internes com a conciliades automàticament (no necessiten factura)
+    // 1. Marcar transferències INTERNES com a conciliades automàticament (no necessiten factura)
+    // IMPORTANT: operationType='transfer' NO vol dir interna — inclou pagaments a proveïdors!
+    // Només descartem les que van entre comptes propis (SEITO CAMERA) o diuen "Internal transfer"
     const internalTransfers = await prisma.bankMovement.findMany({
       where: {
         isConciliated: false,
         OR: [
-          { operationType: 'transfer' },
           { description: { contains: 'Internal transfer', mode: 'insensitive' } },
           { counterparty: { contains: 'SEITO CAMERA', mode: 'insensitive' } },
         ],
@@ -98,11 +99,10 @@ router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
       logger.info(`Auto-conciliació: ${dismissedTransfers} transferències internes descartades`);
     }
 
-    // 2. Buscar moviments no conciliats restants
+    // 2. Buscar moviments no conciliats restants (incloent transfers a proveïdors)
     const unconciliated = await prisma.bankMovement.findMany({
       where: {
         isConciliated: false,
-        operationType: { notIn: ['transfer'] },
         NOT: [
           { description: { contains: 'Internal transfer', mode: 'insensitive' } },
           { counterparty: { contains: 'SEITO CAMERA', mode: 'insensitive' } },
@@ -112,11 +112,10 @@ router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
     });
 
     // 2b. Buscar moviments "orfes": isConciliated=true però SENSE registre Conciliation vinculat a factura
-    // Això passa quan un moviment es va marcar com conciliat però la factura va arribar després
+    // Això passa quan un moviment es va marcar com conciliat (ex: transfer a proveïdor) però no s'hi va vincular factura
     const orphanedMovements = await prisma.bankMovement.findMany({
       where: {
         isConciliated: true,
-        operationType: { notIn: ['transfer'] },
         conciliations: { none: {} },
         NOT: [
           { description: { contains: 'Internal transfer', mode: 'insensitive' } },
