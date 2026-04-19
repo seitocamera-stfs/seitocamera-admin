@@ -158,6 +158,18 @@ async function syncGdriveFiles() {
         const alreadyProcessed = await redis.get(`gdrive:processed:${file.id}`);
         if (alreadyProcessed) continue;
 
+        // Comprovar si el gdriveFileId ja existeix a la BD (evita reprocessar fitxers)
+        const existingByFileId = await prisma.receivedInvoice.findFirst({
+          where: { gdriveFileId: file.id },
+          select: { id: true, invoiceNumber: true },
+        });
+        if (existingByFileId) {
+          logger.info(`GDrive sync: Fitxer ${file.name} ja processat (factura ${existingByFileId.invoiceNumber}), saltant`);
+          await redis.set(`gdrive:processed:${file.id}`, '1', 'EX', 86400 * 30);
+          results.skipped++;
+          continue;
+        }
+
         // Descarregar PDF temporalment per analitzar
         let pdfAnalysis = { hasText: false, invoiceNumber: null, nifCif: [], totalAmount: null, invoiceDate: null, templateUsed: false, matchedSupplierFromTemplate: null };
         let tmpPath = null;
@@ -240,63 +252,30 @@ async function syncGdriveFiles() {
         const needsAmount = !pdfAnalysis.totalAmount; // import 0€ no és acceptable
 
         if (isDuplicate) {
-          // ===== DUPLICAT: primer crear a BD, després moure =====
+          // ===== DUPLICAT: NO crear entrada nova, moure fitxer a duplicades i saltar =====
           const dupFolderId = await getDuplicadesFolderId();
 
-          // Crear registre de duplicat a la BD PRIMER (si falla, el fitxer queda a inbox)
-          // Afegir sufix per evitar violació del unique constraint [invoiceNumber, supplierId]
-          const dupSuffix = `-DUP-${Date.now().toString(36)}`;
-          const invoice = await prisma.receivedInvoice.create({
-            data: {
-              invoiceNumber: invoiceNumber + dupSuffix,
-              source: 'GDRIVE_SYNC',
-              status: 'PENDING',
-              gdriveFileId: file.id,
-              originalFileName: file.name,
-              supplierId: matchedSupplier?.id || null,
-              isDuplicate: true,
-              duplicateOfId: duplicateOf.id,
-              description: `⚠️ DUPLICAT detectat: ${file.name} (nº ${pdfAnalysis.invoiceNumber}). Original: factura ${duplicateOf.id}. PDF mogut a carpeta duplicades.`,
-              issueDate,
-              subtotal: subtotal || 0,
-              taxRate,
-              taxAmount: taxAmount || 0,
-              totalAmount: totalAmount ? Math.round(totalAmount * 100) / 100 : 0,
-              currency: 'EUR',
-              ocrRawData: sanitizeForDb({
-                text: pdfAnalysis.text?.substring(0, 5000) || null,
-                invoiceNumber: pdfAnalysis.invoiceNumber || null,
-                nifCif: pdfAnalysis.nifCif || [],
-                totalAmount: pdfAnalysis.totalAmount || null,
-                invoiceDate: pdfAnalysis.invoiceDate || null,
-                supplierName: pdfAnalysis.supplierName || null,
-                hasText: pdfAnalysis.hasText || false,
-                ocrUsed: pdfAnalysis.ocrUsed || false,
-              }),
-              ocrConfidence: pdfAnalysis.invoiceNumber && pdfAnalysis.totalAmount ? 0.8 : pdfAnalysis.invoiceNumber || pdfAnalysis.totalAmount ? 0.4 : 0.1,
-            },
-          });
-
-          // Moure a carpeta duplicades DESPRÉS de crear a BD
+          // Moure a carpeta duplicades
           await gdrive.moveFile(file.id, dupFolderId, inboxId);
+          logger.warn(`GDrive sync: Duplicat ${file.name} (nº ${pdfAnalysis.invoiceNumber}) mogut a duplicades. Original: ${duplicateOf.id}`);
 
-          // Recordatori urgent (dins try/catch per no trencar el flux)
+          // Recordatori informatiu (dins try/catch per no trencar el flux)
           try {
             if (admin) {
               await prisma.reminder.create({
                 data: {
-                  title: `DUPLICAT: ${pdfAnalysis.invoiceNumber} (${file.name})`,
+                  title: `DUPLICAT ignorat: ${pdfAnalysis.invoiceNumber} (${file.name})`,
                   description: `S'ha detectat una factura duplicada a la carpeta inbox de Google Drive.\n\n` +
                     `Fitxer: ${file.name}\n` +
                     `Número factura: ${pdfAnalysis.invoiceNumber}\n` +
                     `Proveïdor: ${matchedSupplier?.name || duplicateOf.supplier?.name || 'Desconegut'}\n` +
                     `Import: ${totalAmount}€\n\n` +
                     `Ja existeix la factura ${duplicateOf.invoiceNumber} (${duplicateOf.status}) per ${duplicateOf.totalAmount}€.\n\n` +
-                    `El PDF s'ha mogut a la carpeta "duplicades". Cal decidir si eliminar-lo o si és una factura diferent.`,
+                    `El PDF s'ha mogut a la carpeta "duplicades". No s'ha creat cap entrada nova.`,
                   dueAt: new Date(Date.now() + 1 * 24 * 3600 * 1000),
-                  priority: 'HIGH',
+                  priority: 'MEDIUM',
                   entityType: 'received_invoice',
-                  entityId: invoice.id,
+                  entityId: duplicateOf.id,
                   authorId: admin.id,
                 },
               });
@@ -305,6 +284,7 @@ async function syncGdriveFiles() {
             logger.warn(`GDrive sync: Error creant recordatori duplicat per ${file.name}: ${remErr.message}`);
           }
 
+          await redis.set(`gdrive:processed:${file.id}`, '1', 'EX', 86400 * 30);
           results.duplicates++;
           results.details.push({
             file: file.name,
@@ -313,7 +293,10 @@ async function syncGdriveFiles() {
             duplicateOf: duplicateOf.id,
             movedTo: 'duplicades',
           });
-        } else {
+          continue; // Saltar — no crear entrada a BD
+        }
+
+        {
           // ===== NO DUPLICAT: primer crear a BD, després moure =====
           const destFolderId = await gdrive.getDateBasedFolderId('factures-rebudes', issueDate);
 
@@ -362,22 +345,13 @@ async function syncGdriveFiles() {
           } catch (createErr) {
             // P2002: Unique constraint (invoiceNumber + supplierId) — ja existeix
             if (createErr.code === 'P2002') {
-              logger.warn(`GDrive sync: constraint duplicat per ${file.name} (${invoiceNumber}), marcant com a duplicat`);
+              logger.warn(`GDrive sync: constraint duplicat per ${file.name} (${invoiceNumber}), movent a duplicades sense crear entrada`);
               const dupFolderId = await getDuplicadesFolderId();
-              // Crear amb sufix per evitar el constraint
-              const dupSuffix = `-DUP-${Date.now().toString(36)}`;
-              invoice = await prisma.receivedInvoice.create({
-                data: {
-                  ...invoiceData,
-                  invoiceNumber: invoiceNumber + dupSuffix,
-                  isDuplicate: true,
-                  description: `⚠️ DUPLICAT (constraint): ${invoiceNumber} ja existeix per aquest proveïdor. Fitxer: ${file.name}`,
-                },
-              });
               await gdrive.moveFile(file.id, dupFolderId, inboxId);
+              await redis.set(`gdrive:processed:${file.id}`, '1', 'EX', 86400 * 30);
               results.duplicates++;
               results.details.push({ file: file.name, status: 'duplicate_constraint', invoiceNumber });
-              continue; // Saltar la resta del processament normal
+              continue;
             }
             throw createErr; // Re-throw si no és P2002
           }
