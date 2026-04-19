@@ -75,7 +75,7 @@ const statusUpdateSchema = z.object({
  */
 router.get('/received', async (req, res, next) => {
   try {
-    const { search, status, source, supplierId, conciliated, paid, dateFrom, dateTo, deleted, page = 1, limit = 25 } = req.query;
+    const { search, status, source, supplierId, conciliated, paid, dateFrom, dateTo, deleted, alerts, page = 1, limit = 25 } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const where = {};
@@ -117,18 +117,41 @@ router.get('/received', async (req, res, next) => {
       where.conciliations = { none: { status: { in: ['CONFIRMED', 'MANUAL_MATCHED'] } } };
     }
 
+    // Filtre per alertes — factures que necessiten revisió
+    if (alerts === 'true') {
+      where.OR = [
+        { totalAmount: { lte: 0 } },                                      // Import 0€ o negatiu
+        { invoiceNumber: { startsWith: 'PROV-' } },                       // Número provisional
+        { invoiceNumber: { startsWith: 'GDRIVE-' } },                     // Número provisional
+        { invoiceNumber: { startsWith: 'ZOHO-' } },                       // Número provisional
+        { invoiceNumber: { contains: '-DUP-' } },                         // Duplicat no resolt
+        { supplierId: null },                                              // Sense proveïdor
+        { status: 'PDF_PENDING' },                                        // Pendent de revisió PDF
+        { status: 'AMOUNT_PENDING' },                                     // Pendent de revisió import
+        { isDuplicate: true },                                             // Marcada com duplicat
+      ];
+    }
+
     if (search) {
       const searchConditions = [
         { invoiceNumber: { contains: search, mode: 'insensitive' } },
         { description: { contains: search, mode: 'insensitive' } },
         { supplier: { name: { contains: search, mode: 'insensitive' } } },
       ];
-      // Si el terme de cerca és un número, buscar també per import
       const searchNum = parseFloat(search.replace(',', '.'));
       if (!isNaN(searchNum) && searchNum > 0) {
         searchConditions.push({ totalAmount: { gte: searchNum - 0.02, lte: searchNum + 0.02 } });
       }
-      where.OR = searchConditions;
+      // Si ja tenim un OR (d'alerts), combinar amb AND per no sobreescriure
+      if (where.OR) {
+        where.AND = [
+          { OR: where.OR },
+          { OR: searchConditions },
+        ];
+        delete where.OR;
+      } else {
+        where.OR = searchConditions;
+      }
     }
 
     const [invoices, total] = await Promise.all([
@@ -170,11 +193,22 @@ router.get('/received', async (req, res, next) => {
       // Pagament: pagada si té QUALSEVOL conciliació (CONFIRMED, MANUAL_MATCHED o AUTO_MATCHED), O status PAID
       const isPaid = inv.status === 'PAID' || !!matchedConciliation || !!autoMatched;
 
+      // Alertes: motius pels quals la factura necessita revisió
+      const alertReasons = [];
+      if (parseFloat(inv.totalAmount) <= 0) alertReasons.push('Import 0€');
+      if (/^(PROV-|GDRIVE-|ZOHO-)/.test(inv.invoiceNumber)) alertReasons.push('Nº provisional');
+      if (inv.invoiceNumber.includes('-DUP-')) alertReasons.push('Duplicat');
+      if (!inv.supplierId) alertReasons.push('Sense proveïdor');
+      if (inv.status === 'PDF_PENDING') alertReasons.push('PDF pendent');
+      if (inv.status === 'AMOUNT_PENDING') alertReasons.push('Import pendent');
+      if (inv.isDuplicate) alertReasons.push('Marcat duplicat');
+
       return {
         ...inv,
         conciliation,
         isPaid,
         hasPdf: !!inv.filePath || !!inv.gdriveFileId,
+        alerts: alertReasons,
       };
     });
 

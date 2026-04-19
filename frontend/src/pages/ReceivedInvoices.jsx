@@ -140,6 +140,7 @@ export default function ReceivedInvoices() {
   const [editForm, setEditForm] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [showTrash, setShowTrash] = useState(false);
+  const [showAlerts, setShowAlerts] = useState(false);
   const [showNewSupplier, setShowNewSupplier] = useState(false);
   const [newSupplierForm, setNewSupplierForm] = useState({ name: '', nif: '', email: '' });
   const [newSupplierLoading, setNewSupplierLoading] = useState(false);
@@ -155,6 +156,7 @@ export default function ReceivedInvoices() {
     source: sourceFilter || undefined,
     paid: paidFilter || undefined,
     deleted: showTrash ? 'true' : undefined,
+    alerts: showAlerts ? 'true' : undefined,
     page,
     limit: 25,
   };
@@ -636,9 +638,9 @@ export default function ReceivedInvoices() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-2xl font-bold">{showTrash ? '🗑️ Paperera' : 'Factures rebudes'}</h2>
+          <h2 className="text-2xl font-bold">{showTrash ? '🗑️ Paperera' : showAlerts ? '⚠️ Alertes' : 'Factures rebudes'}</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            {data?.pagination?.total || 0} {showTrash ? 'factures a la paperera' : 'factures en total'}
+            {data?.pagination?.total || 0} {showTrash ? 'factures a la paperera' : showAlerts ? 'factures amb alertes' : 'factures en total'}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -648,7 +650,10 @@ export default function ReceivedInvoices() {
             filenameBase="factures-rebudes"
             selectedIds={selectedIds}
           />
-          <button onClick={() => { setShowTrash(!showTrash); setPage(1); }} className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium border ${showTrash ? 'bg-destructive text-destructive-foreground' : 'hover:bg-muted'}`}>
+          <button onClick={() => { setShowAlerts(!showAlerts); setShowTrash(false); setPage(1); }} className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium border ${showAlerts ? 'bg-amber-500 text-white' : 'hover:bg-muted'}`}>
+            <AlertTriangle size={16} /> {showAlerts ? 'Tornar a factures' : 'Alertes'}
+          </button>
+          <button onClick={() => { setShowTrash(!showTrash); setShowAlerts(false); setPage(1); }} className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium border ${showTrash ? 'bg-destructive text-destructive-foreground' : 'hover:bg-muted'}`}>
             <Trash2 size={16} /> {showTrash ? 'Tornar a factures' : 'Paperera'}
           </button>
           {!showTrash && (
@@ -770,8 +775,15 @@ export default function ReceivedInvoices() {
                           <AlertTriangle size={14} className="text-amber-500" title="Possible duplicat" />
                         )}
                       </div>
+                      {inv.alerts?.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-0.5">
+                          {inv.alerts.map((a, i) => (
+                            <span key={i} className="inline-block px-1.5 py-0 rounded text-[10px] bg-amber-100 text-amber-700">{a}</span>
+                          ))}
+                        </div>
+                      )}
                     </td>
-                    <td className="p-3">{inv.supplier?.name}</td>
+                    <td className="p-3">{inv.supplier?.name || (<span className="text-xs text-red-400 italic">Sense proveïdor</span>)}</td>
                     <td className="p-3 text-muted-foreground">{formatDate(inv.issueDate)}</td>
                     <td className="p-3 text-right font-medium">{formatCurrency(inv.totalAmount)}</td>
                     <td className="p-3 text-center"><StatusBadge status={inv.status} /></td>
