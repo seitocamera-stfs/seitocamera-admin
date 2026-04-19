@@ -39,6 +39,8 @@ const receivedInvoiceSchema = z.object({
   subtotal: z.number().or(z.string().transform(Number)),
   taxRate: z.number().or(z.string().transform(Number)).default(21),
   taxAmount: z.number().or(z.string().transform(Number)),
+  irpfRate: z.number().or(z.string().transform(Number)).default(0),
+  irpfAmount: z.number().or(z.string().transform(Number)).default(0),
   totalAmount: z.number().or(z.string().transform(Number)),
   currency: z.string().default('EUR'),
   status: z.enum(['PENDING', 'REVIEWED', 'APPROVED', 'REJECTED', 'PAID', 'PARTIALLY_PAID']).optional(),
@@ -1032,6 +1034,8 @@ router.put('/received/:id', authorize('ADMIN', 'EDITOR'), async (req, res, next)
     if (body.subtotal !== undefined) data.subtotal = parseFloat(body.subtotal) || 0;
     if (body.taxRate !== undefined) data.taxRate = parseFloat(body.taxRate) || 0;
     if (body.taxAmount !== undefined) data.taxAmount = parseFloat(body.taxAmount) || 0;
+    if (body.irpfRate !== undefined) data.irpfRate = parseFloat(body.irpfRate) || 0;
+    if (body.irpfAmount !== undefined) data.irpfAmount = parseFloat(body.irpfAmount) || 0;
     if (body.totalAmount !== undefined) data.totalAmount = parseFloat(body.totalAmount) || 0;
 
     // Netejar camps amb valor undefined (no enviar-los a Prisma)

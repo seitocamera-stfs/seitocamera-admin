@@ -379,6 +379,8 @@ export default function ReceivedInvoices() {
       subtotal: inv.subtotal || '',
       taxRate: inv.taxRate || '21',
       taxAmount: inv.taxAmount || '',
+      irpfRate: inv.irpfRate || '0',
+      irpfAmount: inv.irpfAmount || '0',
       totalAmount: inv.totalAmount || '',
       description: inv.description || '',
       isDuplicate: inv.isDuplicate || false,
@@ -467,6 +469,8 @@ export default function ReceivedInvoices() {
         subtotal: parseFloat(data.subtotal) || 0,
         taxRate: parseFloat(data.taxRate) || 21,
         taxAmount: parseFloat(data.taxAmount) || 0,
+        irpfRate: parseFloat(data.irpfRate) || 0,
+        irpfAmount: parseFloat(data.irpfAmount) || 0,
         totalAmount: parseFloat(data.totalAmount) || 0,
         supplierId: data.supplierId || null,
         issueDate: data.issueDate,
@@ -533,11 +537,13 @@ export default function ReceivedInvoices() {
 
   const handleEditCalc = (field, value) => {
     const updated = { ...editForm, [field]: value };
-    if (field === 'subtotal' || field === 'taxRate') {
+    if (['subtotal', 'taxRate', 'irpfRate'].includes(field)) {
       const s = parseFloat(field === 'subtotal' ? value : updated.subtotal) || 0;
       const r = parseFloat(field === 'taxRate' ? value : updated.taxRate) || 0;
+      const irpf = parseFloat(field === 'irpfRate' ? value : updated.irpfRate) || 0;
       updated.taxAmount = (s * r / 100).toFixed(2);
-      updated.totalAmount = (s + s * r / 100).toFixed(2);
+      updated.irpfAmount = (s * irpf / 100).toFixed(2);
+      updated.totalAmount = (s + parseFloat(updated.taxAmount) - parseFloat(updated.irpfAmount)).toFixed(2);
     }
     setEditForm(updated);
   };
@@ -1405,6 +1411,14 @@ export default function ReceivedInvoices() {
               <div>
                 <label className="block text-sm font-medium mb-1">IVA</label>
                 <input type="number" step="0.01" value={editForm.taxAmount} onChange={(e) => setEditForm({ ...editForm, taxAmount: e.target.value })} className="w-full rounded-md border bg-background px-3 py-2 text-sm bg-muted/30" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">% IRPF</label>
+                <input type="number" step="0.01" value={editForm.irpfRate} onChange={(e) => handleEditCalc('irpfRate', e.target.value)} className="w-full rounded-md border bg-background px-3 py-2 text-sm" placeholder="0" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">IRPF</label>
+                <input type="number" step="0.01" value={editForm.irpfAmount} onChange={(e) => setEditForm({ ...editForm, irpfAmount: e.target.value })} className="w-full rounded-md border bg-background px-3 py-2 text-sm bg-muted/30" />
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1">Total *</label>
