@@ -163,16 +163,16 @@ function detectInvoiceNumber(text) {
     if (m && !isGenericWord(m[1])) return cleanInvoiceNumber(m[1]);
 
     // --- CASTELLÀ ---
-    // "Número de factura: XXX" / "Num. factura: XXX"
-    m = line.match(/n[úu]mero\s*(?:de\s+)?factura\s*[:\s]\s*([A-Z0-9][\w\-\/\.]{2,})/i);
+    // "Número de factura: XXX" / "Número de la factura: XXX" / "Num. factura: XXX"
+    m = line.match(/n[úu]mero\s*(?:de\s+(?:la\s+)?)?factura\s*[:\s]\s*([A-Z0-9][\w\-\/\.]{2,})/i);
     if (m && !isGenericWord(m[1]) && !isDateLike(m[1])) return cleanInvoiceNumber(m[1]);
 
-    // "Nro. Factura: XXX" / "Nro Factura XXX"
-    m = line.match(/nro\.?\s*(?:de\s+)?factura\s*[:\s]\s*([A-Z0-9][\w\-\/\.]{2,})/i);
+    // "Nro. Factura: XXX" / "Nro de la Factura XXX"
+    m = line.match(/nro\.?\s*(?:de\s+(?:la\s+)?)?factura\s*[:\s]\s*([A-Z0-9][\w\-\/\.]{2,})/i);
     if (m && !isGenericWord(m[1]) && !isDateLike(m[1])) return cleanInvoiceNumber(m[1]);
 
-    // "Ref. Factura: XXX" / "Referencia factura: XXX"
-    m = line.match(/ref(?:erencia)?\.?\s*(?:de\s+)?factura\s*[:\s]\s*([A-Z0-9][\w\-\/\.]{2,})/i);
+    // "Ref. Factura: XXX" / "Referencia de la factura: XXX"
+    m = line.match(/ref(?:erencia)?\.?\s*(?:de\s+(?:la\s+)?)?factura\s*[:\s]\s*([A-Z0-9][\w\-\/\.]{2,})/i);
     if (m && !isGenericWord(m[1]) && !isDateLike(m[1])) return cleanInvoiceNumber(m[1]);
 
     // --- ANGLÈS ---
@@ -180,7 +180,8 @@ function detectInvoiceNumber(text) {
     m = line.match(/invoice\s*number\s*([A-Z][A-Z0-9\-]{4,})/i);
     if (m) return cleanInvoiceNumber(m[1]);
 
-    // "Invoice number: XXX" / "Invoice no: XXX" / "Invoice #XXX" / "Invoice ID: XXX"
+    // "Invoice Number: XXXXXXXXX" / "Invoice number : XXX" / "Invoice No.: XXX"
+    // "Invoice no: XXX" / "Invoice #XXX" / "Invoice ID: XXX"
     m = line.match(/invoice\s*(?:number|no\.?|n[ºo°]\.?|#|id)\s*[:\s]\s*([A-Z0-9][\w\-\/\.]+)/i);
     if (m && !isGenericWord(m[1])) return cleanInvoiceNumber(m[1]);
 
@@ -223,11 +224,97 @@ function detectInvoiceNumber(text) {
   }
 
   // ===========================================
+  // ESTRATÈGIA 1b: Bloc d'etiquetes + bloc de valors (PDFs amb layout de columnes)
+  // Detecta patrons com FedEx on les etiquetes estan agrupades consecutivament
+  // i els valors estan en un bloc separat que segueix:
+  //   Customer Number:
+  //   Invoice Number:      ← etiquetes
+  //   Invoice Date:
+  //   ...
+  //   206864441
+  //   213750680            ← valors (mateix ordre)
+  //   05/03/2026
+  // IMPORTANT: Aquesta estratègia va ABANS de l'Estratègia 2 perquè sinó
+  // l'Estratègia 2 agafaria el "Customer Number" com a invoice number.
+  // ===========================================
+  {
+    const labelPatterns = [
+      { regex: /^invoice\s*(?:number|no\.?|#|n[ºo°]\.?)\s*:?\s*$/i, type: 'invoice_number' },
+      { regex: /^n[ºúo°u]m(?:ero)?\.?\s*(?:de\s+)?factura\s*:?\s*$/i, type: 'invoice_number' },
+      { regex: /^factura\s*(?:n[ºúo°]\.?|number)\s*:?\s*$/i, type: 'invoice_number' },
+      { regex: /^customer\s*(?:number|no\.?|#)\s*:?\s*$/i, type: 'customer_number' },
+      { regex: /^(?:account|acct\.?)\s*(?:number|no\.?|#)\s*:?\s*$/i, type: 'account_number' },
+      { regex: /^invoice\s*(?:date|data)\s*:?\s*$/i, type: 'date' },
+      { regex: /^invoice\s*(?:amount|import)\s*:?\s*$/i, type: 'amount' },
+      { regex: /^amount\s*(?:due|paid)\s*:?\s*$/i, type: 'amount' },
+      { regex: /^(?:ship|shipping)\s*date\s*:?\s*$/i, type: 'date' },
+      { regex: /^(?:shipment|tracking)\s*(?:number|no\.?|#)?\s*:?\s*$/i, type: 'shipment' },
+    ];
+
+    for (let i = 0; i < lines.length - 2; i++) {
+      const firstLabel = labelPatterns.find(p => p.regex.test(lines[i]));
+      if (!firstLabel) continue;
+
+      // Comptar etiquetes consecutives (permetent gaps d'etiquetes no reconegudes)
+      const labelBlock = [{ line: lines[i], type: firstLabel.type, index: i }];
+      let gapCount = 0;
+      for (let j = i + 1; j < Math.min(lines.length, i + 15); j++) {
+        const label = labelPatterns.find(p => p.regex.test(lines[j]));
+        if (label) {
+          labelBlock.push({ line: lines[j], type: label.type, index: j });
+          gapCount = 0;
+        } else if (lines[j].trim().length > 0) {
+          gapCount++;
+          if (/^[A-Za-z\s.]+:?\s*$/.test(lines[j]) && gapCount <= 3) continue;
+          if (labelBlock.length >= 2 && gapCount > 3) break;
+        }
+      }
+
+      // Necessitem almenys 2 etiquetes, una de les quals sigui 'invoice_number'
+      const invoiceLabel = labelBlock.find(l => l.type === 'invoice_number');
+      if (!invoiceLabel || labelBlock.length < 2) continue;
+
+      const lastLabelIndex = labelBlock[labelBlock.length - 1].index;
+      const invoiceLabelPosition = labelBlock.indexOf(invoiceLabel);
+
+      // Buscar valors numèrics/alfanumèrics després de totes les etiquetes
+      const values = [];
+      for (let j = lastLabelIndex + 1; j < Math.min(lines.length, lastLabelIndex + 20); j++) {
+        const val = lines[j].trim();
+        if (!val) continue;
+        if (labelPatterns.some(p => p.regex.test(val))) continue;
+        if (/^[A-Za-z\s.]+:?\s*$/.test(val)) continue;
+        if (/^[A-Za-z\s]+$/.test(val)) continue;
+        if (/\*{3,}/.test(val)) continue;
+        if (/\d/.test(val)) {
+          values.push(val);
+        }
+        if (values.length >= labelBlock.length) break;
+      }
+
+      if (values.length > invoiceLabelPosition) {
+        const invoiceValue = values[invoiceLabelPosition].trim();
+        if (/^[A-Z0-9][\w\-\/\.]{2,}$/i.test(invoiceValue) && !isDateLike(invoiceValue) && !isGenericWord(invoiceValue)) {
+          logger.debug(`detectInvoiceNumber: Bloc etiqueta-valor → "${invoiceValue}" (posició ${invoiceLabelPosition})`);
+          return cleanInvoiceNumber(invoiceValue);
+        }
+        if (/^\d{5,}$/.test(invoiceValue)) {
+          logger.debug(`detectInvoiceNumber: Bloc etiqueta-valor (numèric) → "${invoiceValue}"`);
+          return invoiceValue;
+        }
+      }
+    }
+  }
+
+  // ===========================================
   // ESTRATÈGIA 2: Patrons multi-línia — etiqueta + valor a línia següent
   // ===========================================
   for (let i = 0; i < lines.length; i++) {
     // Etiquetes que indiquen número de factura en qualsevol idioma
-    const isInvoiceLabel = /^(?:n[ºúo°u]m\.?\s*(?:de\s+)?factura|invoice\s*(?:number|no\.?|#)|factura\s*n[ºúo°]|receipt\s*(?:number|no\.?|#)|bill\s*(?:number|no\.?)|n[úu]mero\s*(?:de\s+)?factura|ref\.?\s*factura)$/i;
+    // Accepta `:` i espais opcionals al final (ex: "Invoice Number:", "Nº Factura :")
+    // Accepta "de la" opcional (ex: "Número de la factura:")
+    // Accepta "FACTURA" sola (capçalera de taula)
+    const isInvoiceLabel = /^(?:n[ºúo°]\.?\s*(?:de\s+(?:la\s+)?)?factura|n[ºúo°u]m\.?\s*(?:de\s+(?:la\s+)?)?factura|invoice\s*(?:number|no\.?|#)|factura\s*n[ºúo°]\.?|receipt\s*(?:number|no\.?|#)|bill\s*(?:number|no\.?)|n[úu]mero\s*(?:de\s+(?:la\s+)?)?factura|ref\.?\s*(?:de\s+(?:la\s+)?)?factura)\s*:?\s*$/i;
 
     if (isInvoiceLabel.test(lines[i])) {
       // Buscar valor a les línies properes
@@ -239,6 +326,43 @@ function detectInvoiceNumber(text) {
         }
         // Acceptar número llarg (5+ dígits)
         if (/^\d{5,}$/.test(val)) return val;
+      }
+    }
+
+    // Capçalera de taula: línia que conté "FACTURA" com a columna
+    // Ex: "FECHA  CLIENTE Nº  FACTURA  PÁGINA"
+    // El valor numèric alineat sota "FACTURA" està a la línia de valors
+    if (/\bFACTURA\b/i.test(lines[i]) && /\b(?:fecha|data|date|client|pàgina|página|page)\b/i.test(lines[i])) {
+      const headerLine = lines[i];
+      const facturaPos = headerLine.search(/\bFACTURA\b/i);
+      if (facturaPos >= 0) {
+        // Buscar la línia de valors (la següent que contingui números/text)
+        for (let j = i + 1; j < Math.min(lines.length, i + 4); j++) {
+          const valLine = lines[j];
+          if (valLine.length < 3) continue;
+          // Extreure tots els "tokens" (paraules/números) amb la seva posició dins la línia
+          const tokenRegex = /\S+/g;
+          let tm;
+          const valTokens = [];
+          while ((tm = tokenRegex.exec(valLine)) !== null) {
+            valTokens.push({ text: tm[0], pos: tm.index });
+          }
+          // Trobar el token més proper a la posició de "FACTURA" a la capçalera
+          let bestToken = null;
+          let bestDist = Infinity;
+          for (const vt of valTokens) {
+            const dist = Math.abs(vt.pos - facturaPos);
+            if (dist < bestDist && /^[A-Z0-9][\w\-\/\.]*$/i.test(vt.text)) {
+              bestDist = dist;
+              bestToken = vt.text;
+            }
+          }
+          if (bestToken && bestToken.length >= 1 && !isDateLike(bestToken) && !isGenericWord(bestToken)) {
+            // Per números molt curts (1-2 dígits), només acceptar si la posició coincideix gairebé exacte
+            if (bestToken.length <= 2 && bestDist > 5) continue;
+            return bestToken;
+          }
+        }
       }
     }
 
@@ -258,6 +382,51 @@ function detectInvoiceNumber(text) {
         if (/^referencia$/i.test(lines[j]) && j + 1 < lines.length) {
           const refMatch = lines[j + 1].match(/^(\d+\s*\/\s*[\d.]+)/);
           if (refMatch) return refMatch[1].replace(/\s+/g, '');
+        }
+      }
+    }
+  }
+
+  // ===========================================
+  // ESTRATÈGIA 2b: Proximitat — paraula "factura"/"invoice" + número proper
+  // Si veiem la paraula clau i a prop hi ha una seqüència alfanumèrica,
+  // és molt probablement el número de factura.
+  // ===========================================
+  {
+    // Paraules clau que indiquen "número de factura" (en qualsevol idioma)
+    const invoiceKeywords = /\b(?:factura|invoice|receipt|bill|fra\.?)\b/gi;
+    // Paraules que acompanyen la keyword i que NO són el número
+    const skipWords = /^(?:fecha|data|date|n[ºúo°]|num|número|number|no|id|de|la|del|le|el|al|per|por|for|the|client[ea]?|pàgina|página|page|total|iva|vat|tax|import[e]?|base|pendent[e]?|pagad[ao]|paid|unpaid|adjunt|attached|rebud[ao]|emesa|issued|received)$/i;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      invoiceKeywords.lastIndex = 0;
+      const kwMatch = invoiceKeywords.exec(line);
+      if (!kwMatch) continue;
+
+      // Buscar tokens alfanumèrics a la MATEIXA línia, DESPRÉS de la keyword
+      const afterKeyword = line.slice(kwMatch.index + kwMatch[0].length);
+      const tokensAfter = afterKeyword.match(/[A-Z0-9][\w\-\/\.]*[A-Z0-9]/gi) || [];
+      for (const token of tokensAfter) {
+        if (!isDateLike(token) && !isGenericWord(token) && !isNifLike(token) && !skipWords.test(token)) {
+          const cleaned = cleanInvoiceNumber(token);
+          if (cleaned) return cleaned;
+        }
+      }
+
+      // Si no hi ha res vàlid a la mateixa línia, buscar a la línia SEGÜENT
+      // (comú en taules: "FACTURA" a capçalera, "569" a la fila de sota)
+      if (i + 1 < lines.length) {
+        const nextTokens = lines[i + 1].match(/[A-Z0-9][\w\-\/\.]*[A-Z0-9]|\d+/g) || [];
+        for (const token of nextTokens) {
+          if (token.length >= 1 && !isDateLike(token) && !isGenericWord(token) && !isNifLike(token) && !skipWords.test(token)) {
+            // Preferir tokens que semblen números de factura (no pàgines, no anys solts)
+            if (/^\d{1,2}$/.test(token)) continue; // Skip "1", "01" (probablement pàgina o quantitat)
+            const cleaned = cleanInvoiceNumber(token);
+            if (cleaned) return cleaned;
+            // Si cleanInvoiceNumber el rebutja per curt, acceptar si >= 3 chars
+            if (token.length >= 3) return token;
+          }
         }
       }
     }
@@ -525,22 +694,208 @@ function detectSupplierName(text) {
 }
 
 // ===========================================
+// Detecció del tipus de document
+// ===========================================
+
+/**
+ * Detecta el tipus de document analitzant les primeres línies / capçalera del text.
+ * Retorna un objecte { type, confidence, label }.
+ *
+ * Tipus possibles:
+ *   'invoice'     — Factura (el que volem)
+ *   'receipt'     — Rebut de pagament / comprovant
+ *   'delivery'    — Albarà / nota de lliurament
+ *   'quote'       — Pressupost / oferta
+ *   'credit_note' — Nota de crèdit / abonament
+ *   'statement'   — Extracte / resum
+ *   'order'       — Comanda / ordre de compra
+ *   'contract'    — Contracte
+ *   'unknown'     — No identificat (es tracta com a factura per defecte)
+ */
+function detectDocumentType(text) {
+  if (!text) return { type: 'unknown', confidence: 0, label: 'Desconegut' };
+
+  // Analitzar les primeres 2000 chars (capçalera del document)
+  const header = text.substring(0, 2000).toLowerCase();
+
+  // Ordre d'importància: buscar primer els NO-factura, perquè "factura" pot aparèixer dins d'un rebut
+  const patterns = [
+    // Rebuts / comprovants de pagament
+    {
+      type: 'receipt',
+      label: 'Rebut de pagament',
+      patterns: [
+        /\brecibo\s+de\s+pago/i,
+        /\brecibo\b.*\bpago\b/i,
+        /\brebut\s+de\s+pagament/i,
+        /\bpayment\s+receipt\b/i,
+        /\bcomprovant\s+de\s+pagament/i,
+        /\bcomprobante\s+de\s+pago/i,
+        /\breceipt\b(?!.*\binvoice\b)/i,  // "receipt" sense "invoice" al costat
+        /\bimporte\s+recibido\b/i,
+        /\bimport\s+rebut\b/i,
+      ],
+    },
+    // Notes de crèdit / abonament
+    {
+      type: 'credit_note',
+      label: 'Nota de crèdit',
+      patterns: [
+        /\bnota\s+de\s+cr[eè]dit/i,
+        /\bnota\s+de\s+abono/i,
+        /\bcredit\s+note\b/i,
+        /\babonament\b/i,
+        /\brectificativa\b/i,
+        /\bfactura\s+rectificativa/i,
+      ],
+    },
+    // Albarans
+    {
+      type: 'delivery',
+      label: 'Albarà',
+      patterns: [
+        /\balbar[aà][n]?\b/i,
+        /\bnota\s+(?:de\s+)?(?:lliurament|entrega|envío)\b/i,
+        /\bdelivery\s+note\b/i,
+        /\bpacking\s+(?:slip|list)\b/i,
+        /\bguia\s+de\s+(?:remissió|remisi[oó]n)\b/i,
+      ],
+    },
+    // Pressupostos / ofertes
+    {
+      type: 'quote',
+      label: 'Pressupost',
+      patterns: [
+        /\bpressupost\b/i,
+        /\bpresupuesto\b/i,
+        /\bquotation\b/i,
+        /\bquote\b/i,
+        /\boferta\b/i,
+        /\bproforma\b/i,
+        /\bestimation\b/i,
+        /\bestimate\b/i,
+      ],
+    },
+    // Extractes / resums de compte
+    {
+      type: 'statement',
+      label: 'Extracte',
+      patterns: [
+        /\bextracte?\b.*\bcompte?\b/i,
+        /\bextracto\b.*\bcuenta\b/i,
+        /\baccount\s+statement\b/i,
+        /\bbank\s+statement\b/i,
+        /\bresum\s+de\s+compte\b/i,
+        /\bresumen\s+de\s+cuenta\b/i,
+      ],
+    },
+    // Comandes
+    {
+      type: 'order',
+      label: 'Comanda',
+      patterns: [
+        /\bordre\s+de\s+compra\b/i,
+        /\borden\s+de\s+compra\b/i,
+        /\bpurchase\s+order\b/i,
+        /\bcomanda\b/i,
+        /\bpedido\b/i,
+      ],
+    },
+    // Contractes
+    {
+      type: 'contract',
+      label: 'Contracte',
+      patterns: [
+        /\bcontracte?\b/i,
+        /\bcontract\b/i,
+        /\bacord\b/i,
+        /\bacuerdo\b/i,
+        /\bconveni\b/i,
+      ],
+    },
+  ];
+
+  // Buscar coincidències a la capçalera
+  for (const group of patterns) {
+    for (const regex of group.patterns) {
+      if (regex.test(header)) {
+        // Verificar que NO hi ha "factura" com a títol principal (que sobreescriuria)
+        // Un rebut pot mencionar "Número de factura" dins la taula, però el títol és "RECIBO"
+        const hasInvoiceTitle = /\b(?:factura|invoice)\b/i.test(header.substring(0, 500));
+        const isFirstMention = header.search(regex) < header.search(/\b(?:factura|invoice)\b/i);
+
+        if (!hasInvoiceTitle || isFirstMention) {
+          logger.debug(`detectDocumentType: ${group.type} (${group.label}) — pattern: ${regex}`);
+          return { type: group.type, confidence: 0.9, label: group.label };
+        }
+      }
+    }
+  }
+
+  // Si trobem "factura" o "invoice" explícitament
+  if (/\b(?:factura|invoice|fra\.)\b/i.test(header)) {
+    return { type: 'invoice', confidence: 0.9, label: 'Factura' };
+  }
+
+  // Per defecte: desconegut (es tractarà com a factura)
+  return { type: 'unknown', confidence: 0.3, label: 'Desconegut' };
+}
+
+// ===========================================
 // Detecció d'imports
 // ===========================================
 
-const TOTAL_PATTERNS = [
-  // "Total1.230,57" o "Total 1.230,57" (amb o sense espai, amb o sense dos punts)
-  /total\s*[:\s]?\s*([\d.,]+)\s*€?/i,
-  // "Total: 1.234,56 €" / "Total factura: 1234.56€"
-  /total\s*(?:factura|fra\.?)?\s*[:\s]\s*([\d.,]+)\s*€?/i,
-  // "TOTAL: €1,234.56"
-  /total\s*[:\s]\s*€?\s*([\d.,]+)/i,
+// Patrons que DEFINITIVAMENT són el total final (amb IVA inclòs)
+const DEFINITIVE_TOTAL_PATTERNS = [
+  // "Total de la factura: 9,01 €" / "Total factura: 9,01"
+  /total\s*(?:de\s*(?:la\s*)?)?factura\s*[:\s]\s*€?\s*([\d.,]+)/i,
+  // "Total a pagar: 9,01 €" / "Total a cobrar"
+  /total\s*a\s*(?:pagar|cobrar)\s*[:\s]?\s*€?\s*([\d.,]+)/i,
+  // "TOTAL IVA inclòs: 1.234,56" / "Total amb IVA"
+  /total\s*(?:iva\s*incl[oòuú]s|amb\s*iva|iva\s*incl\.?|inc(?:luding)?\s*(?:vat|tax))\s*[:\s]?\s*€?\s*([\d.,]+)/i,
   // "Importe total: 1.234,56" / "Import total:"
   /import[e]?\s*total\s*[:\s]\s*€?\s*([\d.,]+)/i,
-  // "Total a pagar / cobrar / general"
-  /total\s*(?:a pagar|a cobrar|general)\s*[:\s]\s*€?\s*([\d.,]+)/i,
-  // "TOTAL IVA inclòs: 1.234,56"
-  /total\s*(?:iva\s*incl[oòuú]s|amb\s*iva|iva\s*incl\.?)\s*[:\s]?\s*€?\s*([\d.,]+)/i,
+  // "IMPORTE LIQUIDO XX,XX" / "Import líquid"
+  /import[e]?\s*l[ií]quid[oa]?\s*[:\s]?\s*€?\s*([\d.,]+)/i,
+  // "Amount due: XX.XX" / "Amount paid"
+  /amount\s*(?:due|paid)\s*[:\s]?\s*€?\s*([\d.,]+)/i,
+  // "€XX.XX due" / "€XX.XX paid"
+  /€\s*([\d.,]+)\s*(?:due|paid)/i,
+  // "25,41TOTAL €" (KINOLUX format: número abans de TOTAL)
+  /([\d.,]+)\s*TOTAL\s*€/i,
+  // "TOTAL A PAGAR XX,XX €"  (duplicat de dalt però per seguretat amb format diferent)
+  /total\s*a\s*pagar\s*([\d.,]+)\s*€?/i,
+  // "Total general: XX,XX"
+  /total\s*general\s*[:\s]\s*€?\s*([\d.,]+)/i,
+];
+
+// Patrons que indiquen BASE IMPOSABLE (sense IVA) — els hem d'excloure del total
+const BASE_EXCLUSION_PATTERNS = [
+  /iva\s*exclu[ií]d[oa]/i,         // "IVA excluido" / "IVA exclòs"
+  /sin\s*iva/i,                     // "sin IVA"
+  /sense\s*iva/i,                   // "sense IVA"
+  /antes?\s*(?:de\s*)?iva/i,        // "antes de IVA"
+  /hors?\s*tax[ea]?s?/i,            // "hors taxe" (francès)
+  /excl(?:uding|\.?)?\s*(?:vat|tax|iva)/i,  // "excl. VAT", "excluding tax"
+  /before\s*(?:vat|tax)/i,          // "before VAT"
+  /without\s*(?:vat|tax)/i,         // "without VAT"
+  /nett?o/i,                        // "neto" / "netto" (import net = base)
+  /base\s*imp/i,                    // "base imposable" / "base imponible"
+  /\btaxable\b/i,                   // "taxable amount"
+  /\bsubtotal\b/i,                  // "subtotal"
+  /iva\s*\d+\s*%/i,                 // "IVA 21%" (parcial d'IVA, no total)
+];
+
+// Patrons genèrics de "Total" (menys fiables, poden ser base)
+const GENERIC_TOTAL_PATTERNS = [
+  // "Total: 1.234,56 €"
+  /total\s*[:\s]\s*€?\s*([\d.,]+)/i,
+  // "Total1.230,57" o "Total 1.230,57"
+  /total\s*([\d.,]+)\s*€?/i,
+  // "TOTAL: €1,234.56"
+  /total\s*[:\s]\s*€\s*([\d.,]+)/i,
+  // "Total € XX" / "Total EUR XX"
+  /(?:total\s*€|total\s*eur)\s*([\d.,]+)/i,
 ];
 
 /**
@@ -577,94 +932,167 @@ function parseEuropeanNumber(numStr) {
 }
 
 /**
+ * Comprova si una línia conté indicadors de base imposable (sense IVA).
+ * @param {string} line
+ * @returns {boolean}
+ */
+function isBaseLine(line) {
+  return BASE_EXCLUSION_PATTERNS.some((p) => p.test(line));
+}
+
+/**
  * Detecta l'import total dins del text.
- * Busca TOTS els "Total" i agafa el més gran (que sol ser el total amb IVA).
- * Exclou línies que contenen "Base imp" o "IVA XX%".
+ * Prioritza patrons definitius (total factura, total a pagar, etc.)
+ * sobre patrons genèrics (total + número).
+ * Exclou línies que contenen indicadors de base imposable.
  * @param {string} text
  * @returns {number|null}
  */
 function detectTotalAmount(text) {
   if (!text) return null;
 
-  const amounts = [];
-
-  // Estratègia 1: buscar per patrons específics
   const normalized = text.replace(/\s+/g, ' ');
-  for (const pattern of TOTAL_PATTERNS) {
-    const match = normalized.match(pattern);
-    if (match && match[1]) {
-      const num = parseEuropeanNumber(match[1]);
-      if (!isNaN(num) && num > 0) amounts.push(num);
-    }
-  }
-
-  // Estratègia 2: buscar TOTES les línies amb "Total" + número (per línia, no normalitzat)
   const lines = text.split('\n');
-  for (const line of lines) {
-    // Saltar línies de base imposable o IVA parcial
-    if (/base\s*imp/i.test(line)) continue;
-    if (/total\s*iva\s*\d+%/i.test(line)) continue;
-    if (/total\s*\(base/i.test(line)) continue;
-    if (/subtotal/i.test(line)) continue;
 
-    const totalMatch = line.match(/total\s*[:\s]?\s*€?\s*([\d.,]+)/i);
-    if (totalMatch && totalMatch[1]) {
-      const num = parseEuropeanNumber(totalMatch[1]);
-      if (!isNaN(num) && num > 0) amounts.push(num);
-    }
-  }
+  // ----- PRIORITAT 1: Patrons definitius (total amb IVA segur) -----
+  const definitiveAmounts = [];
 
-  // Estratègia 3: "€XX.XX due" o "€XX.XX paid" (format Stripe/Anthropic)
-  const euroPatterns = [
-    /€\s*([\d.,]+)\s*(?:due|paid|a pagar)/i,
-    /(?:amount\s*due|amount\s*paid|total\s*a\s*pagar)\s*€?\s*([\d.,]+)/i,
-    /(?:total\s*€|total\s*eur)\s*([\d.,]+)/i,
-    // "25,41TOTAL €" (KINOLUX format: número abans de TOTAL)
-    /([\d.,]+)\s*TOTAL\s*€/i,
-    // "TOTAL A PAGAR XX,XX €"
-    /total\s*a\s*pagar\s*([\d.,]+)\s*€?/i,
-    // "IMPORTE LIQUIDO XX,XX"
-    /import[e]?\s*l[ií]quid[oa]?\s*([\d.,]+)/i,
-  ];
-
-  for (const pattern of euroPatterns) {
+  // 1a. Patrons definitius sobre text normalitzat
+  for (const pattern of DEFINITIVE_TOTAL_PATTERNS) {
     const match = normalized.match(pattern);
     if (match && match[1]) {
       const num = parseEuropeanNumber(match[1]);
-      if (!isNaN(num) && num > 0) amounts.push(num);
-    }
-  }
-
-  // Estratègia 4 (últim recurs): buscar el número amb € més gran del text complet
-  // Per PDFs amb formats no estàndard (Stripe, plataformes SaaS, etc.)
-  if (amounts.length === 0) {
-    const allAmounts = [];
-    // Buscar tots els patrons "XX,XX €" o "€XX.XX" o "XX.XX EUR" al text sencer
-    const globalPatterns = [
-      /([\d.,]+)\s*€/g,
-      /€\s*([\d.,]+)/g,
-      /([\d.,]+)\s*EUR\b/gi,
-      /USD\s*([\d.,]+)/gi,
-      /\$\s*([\d.,]+)/g,
-    ];
-    for (const gp of globalPatterns) {
-      let m;
-      while ((m = gp.exec(normalized)) !== null) {
-        const num = parseEuropeanNumber(m[1]);
-        if (!isNaN(num) && num > 0.5) allAmounts.push(num);
+      if (!isNaN(num) && num > 0) {
+        logger.debug(`detectTotalAmount: definitiu (normalitzat) → ${num} [${pattern}]`);
+        definitiveAmounts.push(num);
       }
     }
-    if (allAmounts.length > 0) {
-      // Agafar el més gran (probablement el total)
-      amounts.push(Math.max(...allAmounts));
-      logger.debug(`detectTotalAmount: últim recurs → ${Math.max(...allAmounts)} (de ${allAmounts.length} imports trobats)`);
+  }
+
+  // 1b. Patrons definitius per línia (per no barrejar amb altres línies)
+  for (const line of lines) {
+    if (isBaseLine(line)) continue; // Saltar línies de base
+
+    for (const pattern of DEFINITIVE_TOTAL_PATTERNS) {
+      const match = line.match(pattern);
+      if (match && match[1]) {
+        const num = parseEuropeanNumber(match[1]);
+        if (!isNaN(num) && num > 0) {
+          definitiveAmounts.push(num);
+        }
+      }
     }
   }
 
-  if (amounts.length === 0) return null;
+  // Si tenim imports definitius, retornar el més gran
+  if (definitiveAmounts.length > 0) {
+    const result = Math.max(...definitiveAmounts);
+    logger.debug(`detectTotalAmount: retornant definitiu → ${result}`);
+    return result;
+  }
 
-  // Retornar el valor més gran (normalment el total amb IVA)
-  return Math.max(...amounts);
+  // ----- PRIORITAT 2: Patrons genèrics "Total" (filtrant base imposable) -----
+  const genericAmounts = [];
+
+  for (const line of lines) {
+    // Saltar línies que indiquen base imposable
+    if (isBaseLine(line)) continue;
+    // Saltar "total (base..."
+    if (/total\s*\(base/i.test(line)) continue;
+
+    for (const pattern of GENERIC_TOTAL_PATTERNS) {
+      const match = line.match(pattern);
+      if (match && match[1]) {
+        const num = parseEuropeanNumber(match[1]);
+        if (!isNaN(num) && num > 0) {
+          logger.debug(`detectTotalAmount: genèric → ${num} [línia: "${line.trim().substring(0, 60)}"]`);
+          genericAmounts.push(num);
+        }
+      }
+    }
+  }
+
+  if (genericAmounts.length > 0) {
+    const result = Math.max(...genericAmounts);
+    logger.debug(`detectTotalAmount: retornant genèric (màxim) → ${result}`);
+    return result;
+  }
+
+  // ----- PRIORITAT 3 (últim recurs): buscar el número amb € més gran del text complet -----
+  const allAmounts = [];
+  const globalPatterns = [
+    /([\d.,]+)\s*€/g,
+    /€\s*([\d.,]+)/g,
+    /([\d.,]+)\s*EUR\b/gi,
+    /USD\s*([\d.,]+)/gi,
+    /\$\s*([\d.,]+)/g,
+  ];
+  for (const gp of globalPatterns) {
+    let m;
+    while ((m = gp.exec(normalized)) !== null) {
+      const num = parseEuropeanNumber(m[1]);
+      if (!isNaN(num) && num > 0.5) allAmounts.push(num);
+    }
+  }
+  if (allAmounts.length > 0) {
+    const result = Math.max(...allAmounts);
+    logger.debug(`detectTotalAmount: últim recurs → ${result} (de ${allAmounts.length} imports trobats)`);
+    return result;
+  }
+
+  return null;
+}
+
+/**
+ * Detecta la base imposable (import sense IVA) dins del text.
+ * Busca línies amb "Base imposable", "Subtotal", "Precio total (IVA excluido)", etc.
+ * @param {string} text
+ * @returns {number|null}
+ */
+function detectBaseAmount(text) {
+  if (!text) return null;
+
+  const lines = text.split('\n');
+  const amounts = [];
+
+  const basePatterns = [
+    // "Base imposable: 7,45 €" / "Base imponible: 7,45"
+    /base\s*(?:imposable|imponible)\s*[:\s]\s*€?\s*([\d.,]+)/i,
+    // "Subtotal: 7,45"
+    /subtotal\s*[:\s]\s*€?\s*([\d.,]+)/i,
+    // "Precio total (IVA excluido): 7,45"
+    /(?:precio\s*)?total\s*\(?\s*(?:iva\s*exclu[ií]d[oa]|sin\s*iva|sense\s*iva)\s*\)?\s*[:\s]?\s*€?\s*([\d.,]+)/i,
+    // "Net amount: 7.45" / "Import net: 7,45"
+    /(?:net|nett?o|import[e]?\s*net)\s*(?:amount)?\s*[:\s]\s*€?\s*([\d.,]+)/i,
+    // "Total (base): 7,45"
+    /total\s*\(\s*base\s*\)\s*[:\s]?\s*€?\s*([\d.,]+)/i,
+    // "Taxable amount: 7.45"
+    /taxable\s*(?:amount)?\s*[:\s]\s*€?\s*([\d.,]+)/i,
+    // "Total antes de IVA: 7,45"
+    /total\s*antes?\s*(?:de\s*)?iva\s*[:\s]?\s*€?\s*([\d.,]+)/i,
+    // "Excl. VAT: 7.45" / "Excluding VAT"
+    /excl(?:uding|\.?)?\s*(?:vat|tax|iva)\s*[:\s]?\s*€?\s*([\d.,]+)/i,
+    // "Hors taxe: 7,45" (francès)
+    /hors?\s*tax[ea]?s?\s*[:\s]?\s*€?\s*([\d.,]+)/i,
+  ];
+
+  for (const line of lines) {
+    for (const pattern of basePatterns) {
+      const match = line.match(pattern);
+      if (match && match[1]) {
+        const num = parseEuropeanNumber(match[1]);
+        if (!isNaN(num) && num > 0) {
+          amounts.push(num);
+        }
+      }
+    }
+  }
+
+  // Retornar el més gran (per si hi ha múltiples bases, com base 21% + base 10%)
+  if (amounts.length > 0) {
+    return Math.max(...amounts);
+  }
+  return null;
 }
 
 // ===========================================
@@ -769,15 +1197,16 @@ function detectInvoiceDate(text) {
     }
   }
 
-  // 3) Fallback: primera data DD/MM/YYYY que trobem prop de "factura" o a l'inici del document
-  // Busquem totes les dates numèriques al text
+  // 3) Fallback: primera data DD/MM/YYYY o DD/MM/YY que trobem prop de "factura" o a l'inici del document
+  // Busquem totes les dates numèriques al text (accepta anys de 2 o 4 dígits)
   const allDates = [];
-  const genericDateRegex = /(\d{1,2})[\/\-.] ?(\d{1,2})[\/\-.] ?(\d{4})/g;
+  const genericDateRegex = /(\d{1,2})[\/\-.] ?(\d{1,2})[\/\-.] ?(\d{2,4})/g;
   let m;
   while ((m = genericDateRegex.exec(normalized)) !== null) {
     const day = parseInt(m[1]);
     const month = parseInt(m[2]);
-    const year = parseInt(m[3]);
+    let year = parseInt(m[3]);
+    if (year < 100) year += 2000; // 26 → 2026
     if (day > 0 && day <= 31 && month > 0 && month <= 12 && year >= 2000 && year <= 2100) {
       allDates.push({ date: new Date(Date.UTC(year, month - 1, day, 12, 0, 0)), index: m.index });
     }
@@ -930,9 +1359,11 @@ async function analyzePdf(filePathOrBuffer) {
   if (!text || text.trim().length < 10) {
     return {
       text: null,
+      documentType: { type: 'unknown', confidence: 0, label: 'Desconegut' },
       invoiceNumber: null,
       nifCif: [],
       totalAmount: null,
+      baseAmount: null,
       invoiceDate: null,
       supplierName: null,
       hasText: false,
@@ -940,11 +1371,15 @@ async function analyzePdf(filePathOrBuffer) {
     };
   }
 
+  const documentType = detectDocumentType(text);
+
   return {
     text,
+    documentType,
     invoiceNumber: detectInvoiceNumber(text),
     nifCif: detectNifCif(text),
     totalAmount: detectTotalAmount(text),
+    baseAmount: detectBaseAmount(text),
     invoiceDate: detectInvoiceDate(text),
     supplierName: detectSupplierName(text),
     hasText: true,
@@ -1364,7 +1799,9 @@ module.exports = {
   ocrPdf,
   detectInvoiceNumber,
   detectNifCif,
+  detectDocumentType,
   detectTotalAmount,
+  detectBaseAmount,
   detectInvoiceDate,
   detectSupplierName,
   analyzePdf,

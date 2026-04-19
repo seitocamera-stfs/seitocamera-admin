@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import {
   Plus, Search, Trash2, Check, X as XIcon,
-  FileText, Upload, Eye, Link2, AlertTriangle,
-  ChevronRight, Paperclip, Pencil,
+  FileText, Upload, Eye, Link2, AlertTriangle, Ban,
+  ChevronRight, Paperclip, Pencil, RefreshCw,
 } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import { StatusBadge } from '../components/shared/StatusBadge';
@@ -11,6 +11,18 @@ import { formatCurrency, formatDate } from '../lib/utils';
 import api from '../lib/api';
 import ExportButtons from '../components/shared/ExportButtons';
 import SortableHeader from '../components/shared/SortableHeader';
+
+// Ruta GDrive calculada a partir de la data de factura
+function getGdrivePath(inv) {
+  if (!inv.gdriveFileId) return null;
+  if (!inv.issueDate) return 'inbox/';
+  const d = new Date(inv.issueDate);
+  const year = d.getFullYear();
+  const month = d.getMonth() + 1;
+  const quarter = Math.ceil(month / 3);
+  const mm = month.toString().padStart(2, '0');
+  return `${year}/T${quarter}/${mm}/`;
+}
 
 // Etiquetes de la font d'entrada
 const SOURCE_LABELS = {
@@ -351,9 +363,15 @@ export default function ReceivedInvoices() {
   };
 
   const openEditModal = (inv) => {
+    setRescanResult(null);
+    setRelocateResult(null);
+    setEditPdfUrl(null);
+    setShowEditPdf(false);
     setEditForm({
       id: inv.id,
       currentStatus: inv.status,
+      hasPdf: !!inv.filePath || !!inv.gdriveFileId || inv.hasPdf,
+      gdriveFileId: inv.gdriveFileId || null,
       invoiceNumber: inv.invoiceNumber || '',
       supplierId: inv.supplierId || '',
       issueDate: inv.issueDate ? new Date(inv.issueDate).toISOString().slice(0, 10) : '',
@@ -410,15 +428,15 @@ export default function ReceivedInvoices() {
     }
   };
 
-  const handleEditSave = async (e) => {
-    e.preventDefault();
+  const handleEditSave = async (e, forceOverwrite = false) => {
+    e?.preventDefault();
     try {
       const { id, currentStatus, ...data } = editForm;
       // Validació bàsica
       if (!data.invoiceNumber?.trim()) return alert('El número de factura és obligatori');
       if (!data.issueDate) return alert('La data d\'emissió és obligatòria');
 
-      await mutate('put', `/invoices/received/${id}`, {
+      const payload = {
         invoiceNumber: data.invoiceNumber.trim(),
         description: data.description || null,
         subtotal: parseFloat(data.subtotal) || 0,
@@ -428,17 +446,28 @@ export default function ReceivedInvoices() {
         supplierId: data.supplierId || null,
         issueDate: data.issueDate,
         dueDate: data.dueDate || null,
-      });
+      };
+      if (forceOverwrite) payload.forceOverwrite = true;
 
-      // Si era PDF_PENDING, al guardar l'edició passa a PENDING (ja revisada)
-      if (currentStatus === 'PDF_PENDING') {
+      await mutate('put', `/invoices/received/${id}`, payload);
+
+      // Si era PDF_PENDING o AMOUNT_PENDING, al guardar l'edició passa a PENDING (ja revisada)
+      if (currentStatus === 'PDF_PENDING' || currentStatus === 'AMOUNT_PENDING') {
         await mutate('patch', `/invoices/received/${id}/status`, { status: 'PENDING' });
       }
       setShowEditModal(false);
       setEditForm(null);
       refetch();
     } catch (err) {
-      const msg = err.response?.data?.error || err.message || 'Error guardant';
+      const errData = err.response?.data;
+      // Si és duplicat, preguntar si vol sobreescriure
+      if (errData?.code === 'DUPLICATE_INVOICE') {
+        if (confirm(`${errData.error}\n\nVols guardar igualment?`)) {
+          handleEditSave(null, true);
+        }
+        return;
+      }
+      const msg = errData?.error || err.message || 'Error guardant';
       alert(msg);
     }
   };
@@ -454,6 +483,84 @@ export default function ReceivedInvoices() {
     setEditForm(updated);
   };
 
+  // Re-escanejar PDF: rellegir i extreure totes les dades
+  const [rescanning, setRescanning] = useState(false);
+  const [rescanResult, setRescanResult] = useState(null);
+
+  // Previsualització PDF dins el modal d'edició
+  const [showEditPdf, setShowEditPdf] = useState(false);
+  const [editPdfUrl, setEditPdfUrl] = useState(null);
+  const [editPdfLoading, setEditPdfLoading] = useState(false);
+
+  const handleToggleEditPdf = async () => {
+    if (showEditPdf) {
+      // Tancar
+      setShowEditPdf(false);
+      if (editPdfUrl) { window.URL.revokeObjectURL(editPdfUrl); setEditPdfUrl(null); }
+      return;
+    }
+    // Obrir i carregar
+    setShowEditPdf(true);
+    if (editPdfUrl) return; // ja carregat
+    setEditPdfLoading(true);
+    try {
+      const response = await api.get(`/invoices/received/${editForm.id}/pdf`, { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      setEditPdfUrl(window.URL.createObjectURL(blob));
+    } catch {
+      setEditPdfUrl(null);
+    } finally {
+      setEditPdfLoading(false);
+    }
+  };
+
+  const handleRescan = async () => {
+    if (!editForm?.id) return;
+    setRescanning(true);
+    setRescanResult(null);
+    try {
+      const { data: scan } = await api.post(`/invoices/received/${editForm.id}/rescan`);
+      setRescanResult(scan);
+
+      // Omplir el formulari amb les dades detectades (només si s'han trobat)
+      const updates = {};
+      if (scan.invoiceNumber) updates.invoiceNumber = scan.invoiceNumber;
+      if (scan.invoiceDate) updates.issueDate = new Date(scan.invoiceDate).toISOString().slice(0, 10);
+      if (scan.totalAmount) updates.totalAmount = String(scan.totalAmount);
+      if (scan.subtotal) updates.subtotal = String(scan.subtotal);
+      if (scan.taxRate) updates.taxRate = String(scan.taxRate);
+      if (scan.taxAmount) updates.taxAmount = String(scan.taxAmount);
+      if (scan.matchedSupplier?.id) updates.supplierId = scan.matchedSupplier.id;
+
+      setEditForm((prev) => ({ ...prev, ...updates }));
+    } catch (err) {
+      const msg = err.response?.data?.error || err.message || 'Error re-escanejant';
+      setRescanResult({ error: msg });
+    } finally {
+      setRescanning(false);
+    }
+  };
+
+  const [relocating, setRelocating] = useState(false);
+  const [relocateResult, setRelocateResult] = useState(null);
+
+  const handleRelocate = async () => {
+    if (!editForm?.id || !editForm?.hasPdf) return;
+    if (!editForm.issueDate) { alert('Cal una data per reubicar'); return; }
+    setRelocating(true);
+    setRelocateResult(null);
+    try {
+      const { data } = await api.post(`/invoices/received/${editForm.id}/relocate`, {
+        issueDate: editForm.issueDate,
+      });
+      setRelocateResult(data);
+    } catch (err) {
+      setRelocateResult({ error: err.response?.data?.error || err.message });
+    } finally {
+      setRelocating(false);
+    }
+  };
+
   const handleStatusChange = async (id, status) => {
     await mutate('patch', `/invoices/received/${id}/status`, { status });
     refetch();
@@ -463,6 +570,21 @@ export default function ReceivedInvoices() {
     if (!confirm('Moure a la paperera? (Es pot restaurar durant 30 dies)')) return;
     await mutate('delete', `/invoices/received/${id}`);
     refetch();
+  };
+
+  // Eliminar múltiples factures seleccionades (moure a paperera)
+  const handleBulkDelete = async () => {
+    if (!confirm(`Moure ${selectedIds.length} factures a la paperera?`)) return;
+    try {
+      for (const id of selectedIds) {
+        await mutate('delete', `/invoices/received/${id}`);
+      }
+      setSelectedIds([]);
+      refetch();
+    } catch (err) {
+      alert(err.message || 'Error eliminant factures');
+      refetch();
+    }
   };
 
   const handleRestore = async (id) => {
@@ -521,6 +643,7 @@ export default function ReceivedInvoices() {
           <option value="APPROVED">Aprovada</option>
           <option value="PAID">Pagada</option>
           <option value="REJECTED">Rebutjada</option>
+          <option value="NOT_INVOICE">No és factura</option>
         </select>
         <select value={sourceFilter} onChange={(e) => { setSourceFilter(e.target.value); setPage(1); clearSelection(); }} className="rounded-md border bg-background px-3 py-2 text-sm">
           <option value="">Totes les fonts</option>
@@ -543,12 +666,22 @@ export default function ReceivedInvoices() {
           <span className="text-sm text-teal-800">
             <strong>{selectedIds.length}</strong> factures seleccionades
           </span>
-          <button
-            onClick={clearSelection}
-            className="text-xs text-teal-700 hover:text-teal-900 underline"
-          >
-            Netejar selecció
-          </button>
+          <div className="flex items-center gap-3">
+            {!showTrash && (
+              <button
+                onClick={handleBulkDelete}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-destructive text-destructive-foreground text-xs font-medium hover:opacity-90"
+              >
+                <Trash2 size={13} /> Moure a la paperera
+              </button>
+            )}
+            <button
+              onClick={clearSelection}
+              className="text-xs text-teal-700 hover:text-teal-900 underline"
+            >
+              Netejar selecció
+            </button>
+          </div>
         </div>
       )}
 
@@ -572,6 +705,7 @@ export default function ReceivedInvoices() {
               <SortableHeader label="Import" field="totalAmount" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <SortableHeader label="Estat" field="status" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <SortableHeader label="Font" field="source" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+              <th className="p-3 font-medium text-xs text-muted-foreground uppercase">Ubicació GDrive</th>
               <th className="text-center p-3 font-medium text-xs text-muted-foreground uppercase">Comptabilitat</th>
               <th className="text-center p-3 font-medium text-xs text-muted-foreground uppercase">Pagament</th>
               <th className="text-center p-3 font-medium text-xs text-muted-foreground uppercase">PDF</th>
@@ -580,9 +714,9 @@ export default function ReceivedInvoices() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={11} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
+              <tr><td colSpan={12} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
             ) : data?.data?.length === 0 ? (
-              <tr><td colSpan={11} className="p-8 text-center text-muted-foreground">Cap factura trobada</td></tr>
+              <tr><td colSpan={12} className="p-8 text-center text-muted-foreground">Cap factura trobada</td></tr>
             ) : (
               sortedData.map((inv) => {
                 const src = SOURCE_LABELS[inv.source] || SOURCE_LABELS.MANUAL;
@@ -616,6 +750,24 @@ export default function ReceivedInvoices() {
                       <span className={`inline-block px-2 py-0.5 rounded-full text-xs ${src.color}`}>
                         {src.label}
                       </span>
+                    </td>
+                    <td className="p-3">
+                      {inv.gdriveFileId ? (
+                        <a
+                          href={`https://drive.google.com/file/d/${inv.gdriveFileId}/view`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-blue-600 hover:underline flex items-center gap-1"
+                          title={inv.originalFileName || 'Obrir a GDrive'}
+                        >
+                          <Link2 size={12} />
+                          {getGdrivePath(inv)}
+                        </a>
+                      ) : inv.filePath ? (
+                        <span className="text-xs text-muted-foreground" title={inv.filePath}>📁 Local</span>
+                      ) : (
+                        <span className="text-xs text-red-500">⚠ Sense PDF</span>
+                      )}
                     </td>
                     <td className="p-3 text-center">
                       {inv.pgcAccount ? (
@@ -661,6 +813,12 @@ export default function ReceivedInvoices() {
                         {/* REJECTED: es pot reobrir */}
                         {inv.status === 'REJECTED' && (
                           <button onClick={() => handleStatusChange(inv.id, 'PENDING')} className="p-1.5 rounded hover:bg-yellow-50 text-yellow-600" title="Reobrir">↩</button>
+                        )}
+                        {inv.status !== 'NOT_INVOICE' && !showTrash && (
+                          <button onClick={() => handleStatusChange(inv.id, 'NOT_INVOICE')} className="p-1.5 rounded hover:bg-gray-100 text-gray-500" title="Marcar com 'no és factura'"><Ban size={14} /></button>
+                        )}
+                        {inv.status === 'NOT_INVOICE' && !showTrash && (
+                          <button onClick={() => handleStatusChange(inv.id, 'PENDING')} className="p-1.5 rounded hover:bg-yellow-50 text-yellow-600" title="Tornar a marcar com a factura">↩</button>
                         )}
                         {showTrash ? (
                           <>
@@ -828,6 +986,128 @@ export default function ReceivedInvoices() {
       <Modal isOpen={showEditModal} onClose={() => { setShowEditModal(false); setEditForm(null); }} title="Editar factura rebuda" size="lg">
         {editForm && (
           <form onSubmit={handleEditSave} className="space-y-3">
+            {/* Botons: previsualitzar PDF + re-escanejar */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {editForm.hasPdf && (
+                  <button
+                    type="button"
+                    onClick={handleToggleEditPdf}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-md border text-sm font-medium transition-colors ${showEditPdf ? 'bg-blue-50 border-blue-300 text-blue-700' : 'hover:bg-muted'}`}
+                  >
+                    <Eye size={15} />
+                    {showEditPdf ? 'Amagar PDF' : 'Veure PDF'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleRescan}
+                  disabled={rescanning || !editForm.hasPdf}
+                  className="flex items-center gap-2 px-3 py-2 rounded-md border text-sm font-medium hover:bg-muted disabled:opacity-50 transition-colors"
+                  title={!editForm.hasPdf ? 'Aquesta factura no té PDF' : ''}
+                >
+                  <RefreshCw size={15} className={rescanning ? 'animate-spin' : ''} />
+                  {rescanning ? 'Escanejant...' : 'Re-escanejar'}
+                </button>
+                {editForm.hasPdf && editForm.gdriveFileId && (
+                  <button
+                    type="button"
+                    onClick={handleRelocate}
+                    disabled={relocating}
+                    className="flex items-center gap-2 px-3 py-2 rounded-md border text-sm font-medium hover:bg-amber-50 hover:border-amber-300 disabled:opacity-50 transition-colors"
+                    title="Mou el PDF a la carpeta GDrive correcta segons la data"
+                  >
+                    📂
+                    {relocating ? 'Movent...' : 'Reubicar GDrive'}
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {rescanResult && !rescanResult.error && (
+                  <span className={`text-xs flex items-center gap-1 ${rescanResult.documentType?.type && rescanResult.documentType.type !== 'invoice' && rescanResult.documentType.type !== 'unknown' ? 'text-amber-600' : 'text-green-600'}`}>
+                    {rescanResult.documentType?.type && rescanResult.documentType.type !== 'invoice' && rescanResult.documentType.type !== 'unknown' ? (
+                      <><AlertTriangle size={13} /> Detectat: {rescanResult.documentType.label}</>
+                    ) : (
+                      <><Check size={13} /> Dades actualitzades{rescanResult.ocrUsed ? ' (via OCR)' : ''}</>
+                    )}
+                  </span>
+                )}
+                {relocateResult && !relocateResult.error && (
+                  <span className="text-xs text-green-600 flex items-center gap-1">
+                    <Check size={13} />
+                    Mogut a {relocateResult.newPath}
+                  </span>
+                )}
+                {relocateResult?.error && (
+                  <span className="text-xs text-red-600">{relocateResult.error}</span>
+                )}
+              </div>
+            </div>
+
+            {/* Previsualització PDF inline */}
+            {showEditPdf && (
+              <div className="rounded-md border overflow-hidden bg-muted/20">
+                {editPdfLoading ? (
+                  <div className="flex items-center justify-center h-48 text-muted-foreground text-sm">
+                    <FileText size={20} className="mr-2 animate-pulse" /> Carregant PDF...
+                  </div>
+                ) : editPdfUrl ? (
+                  <iframe src={editPdfUrl} className="w-full h-[45vh] rounded" title="Preview PDF" />
+                ) : (
+                  <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">
+                    No s'ha pogut carregar el PDF
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Resultat del rescan */}
+            {rescanResult?.error && (
+              <div className="flex items-center gap-2 p-2.5 rounded-md bg-red-50 border border-red-200 text-red-700 text-sm">
+                <AlertTriangle size={16} />
+                <span>{rescanResult.error}</span>
+              </div>
+            )}
+            {rescanResult && !rescanResult.error && (
+              <div className="p-2.5 rounded-md bg-blue-50 border border-blue-200 text-sm space-y-1">
+                <p className="font-medium text-blue-800 mb-1">Dades detectades al PDF:</p>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-blue-700 text-xs">
+                  <span>Número: <strong>{rescanResult.invoiceNumber || '—'}</strong></span>
+                  <span>Import: <strong>{rescanResult.totalAmount ? formatCurrency(rescanResult.totalAmount) : '—'}</strong></span>
+                  <span>Data: <strong>{rescanResult.invoiceDate ? formatDate(rescanResult.invoiceDate) : '—'}</strong></span>
+                  <span>Proveïdor: <strong>{rescanResult.matchedSupplier?.name || rescanResult.supplierName || '—'}</strong></span>
+                  {rescanResult.nifCif?.length > 0 && (
+                    <span className="col-span-2">NIF detectats: <strong>{rescanResult.nifCif.join(', ')}</strong></span>
+                  )}
+                  {rescanResult.isDuplicate && (
+                    <span className="col-span-2 text-amber-700">
+                      <AlertTriangle size={12} className="inline mr-1" />
+                      Possible duplicat de {rescanResult.duplicateInvoice?.invoiceNumber}
+                    </span>
+                  )}
+                  {rescanResult.documentType && (
+                    <span className={`col-span-2 font-medium ${rescanResult.documentType.type !== 'invoice' && rescanResult.documentType.type !== 'unknown' ? 'text-red-600' : 'text-green-700'}`}>
+                      Tipus document: <strong>{rescanResult.documentType.label}</strong>
+                      {rescanResult.documentType.confidence > 0 && ` (confiança: ${Math.round(rescanResult.documentType.confidence * 100)}%)`}
+                      {rescanResult.documentType.type !== 'invoice' && rescanResult.documentType.type !== 'unknown' && (
+                        <> — <AlertTriangle size={12} className="inline mx-0.5" />No és una factura!</>
+                      )}
+                    </span>
+                  )}
+                  {rescanResult.baseAmount > 0 && (
+                    <span>Base imposable: <strong>{formatCurrency(rescanResult.baseAmount)}</strong></span>
+                  )}
+                </div>
+                {/* Debug: línies del PDF amb paraules clau */}
+                {rescanResult.debugLines?.length > 0 && (
+                  <details className="mt-1.5">
+                    <summary className="text-xs text-blue-500 cursor-pointer">Línies rellevants del PDF ({rescanResult.debugLines.length})</summary>
+                    <pre className="mt-1 text-[10px] leading-tight text-blue-600 bg-blue-100/50 rounded p-1.5 max-h-32 overflow-auto whitespace-pre-wrap">{rescanResult.debugLines.join('\n')}</pre>
+                  </details>
+                )}
+              </div>
+            )}
+
             {editForm.currentStatus === 'PDF_PENDING' && (
               <div className="flex items-center gap-2 p-2.5 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-sm">
                 <AlertTriangle size={16} />

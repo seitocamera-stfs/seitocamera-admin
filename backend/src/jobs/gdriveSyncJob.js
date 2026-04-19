@@ -180,6 +180,14 @@ async function syncGdriveFiles() {
           if (tmpPath) setTimeout(() => { try { fs.unlinkSync(tmpPath); } catch {} }, 5000);
         }
 
+        // Comprovar si el document NO és una factura (rebut, albarà, pressupost, etc.)
+        const docType = pdfAnalysis.documentType || { type: 'unknown' };
+        const isNotInvoice = docType.type !== 'invoice' && docType.type !== 'unknown' && docType.type !== 'credit_note';
+
+        if (isNotInvoice) {
+          logger.info(`GDrive sync: ${file.name} NO és factura → ${docType.label} (${docType.type})`);
+        }
+
         // Trobar proveïdor: prioritat plantilla > NIF > nom > crear
         let matchedSupplier = pdfAnalysis.matchedSupplierFromTemplate || null;
 
@@ -215,9 +223,17 @@ async function syncGdriveFiles() {
         // Número provisional: nom del fitxer net (sense extensió) si no s'ha detectat
         const invoiceNumber = pdfAnalysis.invoiceNumber || generateProvisionalNumber(file.name);
         const totalAmount = pdfAnalysis.totalAmount ? parseFloat(pdfAnalysis.totalAmount) : null; // null si no detectat, MAI zero
-        const taxRate = 21;
-        const subtotal = totalAmount ? Math.round((totalAmount / (1 + taxRate / 100)) * 100) / 100 : null;
-        const taxAmount = (totalAmount && subtotal) ? Math.round((totalAmount - subtotal) * 100) / 100 : null;
+        let taxRate = 21;
+        let subtotal, taxAmount;
+        if (totalAmount && pdfAnalysis.baseAmount && pdfAnalysis.baseAmount < totalAmount) {
+          // Base imposable detectada del PDF
+          subtotal = parseFloat(pdfAnalysis.baseAmount.toFixed(2));
+          taxAmount = Math.round((totalAmount - subtotal) * 100) / 100;
+          if (subtotal > 0) taxRate = Math.round((taxAmount / subtotal) * 100);
+        } else {
+          subtotal = totalAmount ? Math.round((totalAmount / (1 + taxRate / 100)) * 100) / 100 : null;
+          taxAmount = (totalAmount && subtotal) ? Math.round((totalAmount - subtotal) * 100) / 100 : null;
+        }
         const dateFromPdf = !!pdfAnalysis.invoiceDate;
         const issueDate = pdfAnalysis.invoiceDate || (file.createdTime ? new Date(file.createdTime) : new Date());
         const needsReview = !pdfAnalysis.invoiceNumber || !pdfAnalysis.totalAmount || !dateFromPdf;
@@ -301,25 +317,26 @@ async function syncGdriveFiles() {
           // ===== NO DUPLICAT: primer crear a BD, després moure =====
           const destFolderId = await gdrive.getDateBasedFolderId('factures-rebudes', issueDate);
 
-          const invoice = await prisma.receivedInvoice.create({
-            data: {
+          const invoiceData = {
               invoiceNumber,
               source: 'GDRIVE_SYNC',
-              status: needsAmount ? 'AMOUNT_PENDING' : needsReview ? 'PDF_PENDING' : 'PENDING',
+              status: isNotInvoice ? 'NOT_INVOICE' : needsAmount ? 'AMOUNT_PENDING' : needsReview ? 'PDF_PENDING' : 'PENDING',
               gdriveFileId: file.id,
               originalFileName: file.name,
               supplierId: matchedSupplier?.id || null,
               isDuplicate: false,
-              description: needsAmount
-                ? `🔴 IMPORT PENDENT: no s'ha pogut detectar l'import. Cal revisar manualment. Fitxer: ${file.name}`
-                : needsReview
-                  ? `⚠️ Cal revisar: ${[
-                      !pdfAnalysis.invoiceNumber ? 'número de factura provisional' : '',
-                      !dateFromPdf ? 'data no detectada (usant data de pujada)' : '',
-                    ].filter(Boolean).join(', ')}. Fitxer: ${file.name}`
-                  : pdfAnalysis.hasText
-                    ? `PDF processat: ${file.name} (nº ${pdfAnalysis.invoiceNumber})`
-                    : `PDF processat: ${file.name} (sense text, pot ser escanejat)`,
+              description: isNotInvoice
+                ? `📄 ${docType.label}: no és una factura. Fitxer: ${file.name}`
+                : needsAmount
+                  ? `🔴 IMPORT PENDENT: no s'ha pogut detectar l'import. Cal revisar manualment. Fitxer: ${file.name}`
+                  : needsReview
+                    ? `⚠️ Cal revisar: ${[
+                        !pdfAnalysis.invoiceNumber ? 'número de factura provisional' : '',
+                        !dateFromPdf ? 'data no detectada (usant data de pujada)' : '',
+                      ].filter(Boolean).join(', ')}. Fitxer: ${file.name}`
+                    : pdfAnalysis.hasText
+                      ? `PDF processat: ${file.name} (nº ${pdfAnalysis.invoiceNumber})`
+                      : `PDF processat: ${file.name} (sense text, pot ser escanejat)`,
               issueDate,
               subtotal: subtotal || 0,
               taxRate,
@@ -337,8 +354,33 @@ async function syncGdriveFiles() {
                 ocrUsed: pdfAnalysis.ocrUsed || false,
               }),
               ocrConfidence: pdfAnalysis.invoiceNumber && pdfAnalysis.totalAmount ? 0.8 : pdfAnalysis.invoiceNumber || pdfAnalysis.totalAmount ? 0.4 : 0.1,
-            },
-          });
+          };
+
+          let invoice;
+          try {
+            invoice = await prisma.receivedInvoice.create({ data: invoiceData });
+          } catch (createErr) {
+            // P2002: Unique constraint (invoiceNumber + supplierId) — ja existeix
+            if (createErr.code === 'P2002') {
+              logger.warn(`GDrive sync: constraint duplicat per ${file.name} (${invoiceNumber}), marcant com a duplicat`);
+              const dupFolderId = await getDuplicadesFolderId();
+              // Crear amb sufix per evitar el constraint
+              const dupSuffix = `-DUP-${Date.now().toString(36)}`;
+              invoice = await prisma.receivedInvoice.create({
+                data: {
+                  ...invoiceData,
+                  invoiceNumber: invoiceNumber + dupSuffix,
+                  isDuplicate: true,
+                  description: `⚠️ DUPLICAT (constraint): ${invoiceNumber} ja existeix per aquest proveïdor. Fitxer: ${file.name}`,
+                },
+              });
+              await gdrive.moveFile(file.id, dupFolderId, inboxId);
+              results.duplicates++;
+              results.details.push({ file: file.name, status: 'duplicate_constraint', invoiceNumber });
+              continue; // Saltar la resta del processament normal
+            }
+            throw createErr; // Re-throw si no és P2002
+          }
 
           // Moure a carpeta organitzada DESPRÉS de crear a BD
           await gdrive.moveFile(file.id, destFolderId, inboxId);

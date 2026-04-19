@@ -153,6 +153,7 @@ enum InvoiceStatus {
   REJECTED
   PAID
   PARTIALLY_PAID
+  NOT_INVOICE       // Document que no és una factura real
 }
 
 enum InvoiceSource {

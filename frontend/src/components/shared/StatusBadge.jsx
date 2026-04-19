@@ -6,6 +6,7 @@ const statusConfig = {
   REJECTED: { label: 'Rebutjada', className: 'bg-red-100 text-red-800' },
   PAID: { label: 'Pagada', className: 'bg-emerald-100 text-emerald-800' },
   PARTIALLY_PAID: { label: 'Parc. pagada', className: 'bg-orange-100 text-orange-800' },
+  NOT_INVOICE: { label: 'No és factura', className: 'bg-gray-200 text-gray-600' },
   AUTO_MATCHED: { label: 'Auto-conciliada', className: 'bg-purple-100 text-purple-800' },
   MANUAL_MATCHED: { label: 'Manual', className: 'bg-indigo-100 text-indigo-800' },
   CONFIRMED: { label: 'Confirmada', className: 'bg-green-100 text-green-800' },

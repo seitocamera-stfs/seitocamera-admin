@@ -10,6 +10,13 @@ router.use(authenticate);
 router.use(requireSection('dashboard'));
 
 // ===========================================
+// Constants
+// ===========================================
+
+// Límit raonable per excloure imports clarament erronis (mal extrets del PDF)
+const MAX_REASONABLE_AMOUNT = 1_000_000; // 1M€
+
+// ===========================================
 // Helpers
 // ===========================================
 
@@ -40,9 +47,16 @@ router.get('/stats', async (req, res, next) => {
   try {
     const { from, to } = parseDateRange(req);
 
-    // ----- 1. Evolució mensual de facturació -----
+    // ----- 1. Evolució mensual de facturació (+ any anterior per comparar) -----
     // Agrupat per mes (YYYY-MM) des de received/issued invoices
-    const [monthlyReceivedRaw, monthlyIssuedRaw] = await Promise.all([
+    // Excloem: esborrades (deletedAt), duplicats, import 0, AMOUNT_PENDING
+    // També carreguem el mateix rang desplaçat -1 any per comparativa
+    const prevFrom = new Date(from);
+    prevFrom.setFullYear(prevFrom.getFullYear() - 1);
+    const prevTo = new Date(to);
+    prevTo.setFullYear(prevTo.getFullYear() - 1);
+
+    const [monthlyReceivedRaw, monthlyIssuedRaw, prevReceivedRaw, prevIssuedRaw] = await Promise.all([
       prisma.$queryRaw`
         SELECT
           TO_CHAR(DATE_TRUNC('month', "issueDate"), 'YYYY-MM') AS month,
@@ -50,6 +64,11 @@ router.get('/stats', async (req, res, next) => {
           COUNT(*)::int AS count
         FROM "received_invoices"
         WHERE "issueDate" >= ${from} AND "issueDate" <= ${to}
+          AND "deletedAt" IS NULL
+          AND "isDuplicate" = false
+          AND "totalAmount" > 0
+          AND "totalAmount" < ${MAX_REASONABLE_AMOUNT}
+          AND "status" NOT IN ('AMOUNT_PENDING', 'NOT_INVOICE')
         GROUP BY DATE_TRUNC('month', "issueDate")
         ORDER BY DATE_TRUNC('month', "issueDate") ASC
       `,
@@ -63,20 +82,77 @@ router.get('/stats', async (req, res, next) => {
         GROUP BY DATE_TRUNC('month', "issueDate")
         ORDER BY DATE_TRUNC('month', "issueDate") ASC
       `,
+      // Any anterior — rebudes
+      prisma.$queryRaw`
+        SELECT
+          TO_CHAR(DATE_TRUNC('month', "issueDate"), 'YYYY-MM') AS month,
+          SUM("totalAmount")::float AS total,
+          COUNT(*)::int AS count
+        FROM "received_invoices"
+        WHERE "issueDate" >= ${prevFrom} AND "issueDate" <= ${prevTo}
+          AND "deletedAt" IS NULL
+          AND "isDuplicate" = false
+          AND "totalAmount" > 0
+          AND "totalAmount" < ${MAX_REASONABLE_AMOUNT}
+          AND "status" NOT IN ('AMOUNT_PENDING', 'NOT_INVOICE')
+        GROUP BY DATE_TRUNC('month', "issueDate")
+        ORDER BY DATE_TRUNC('month', "issueDate") ASC
+      `,
+      // Any anterior — emeses
+      prisma.$queryRaw`
+        SELECT
+          TO_CHAR(DATE_TRUNC('month', "issueDate"), 'YYYY-MM') AS month,
+          SUM("totalAmount")::float AS total,
+          COUNT(*)::int AS count
+        FROM "issued_invoices"
+        WHERE "issueDate" >= ${prevFrom} AND "issueDate" <= ${prevTo}
+        GROUP BY DATE_TRUNC('month', "issueDate")
+        ORDER BY DATE_TRUNC('month', "issueDate") ASC
+      `,
     ]);
 
-    // Fusionar els dos arrays per mes
+    // Indexar any anterior per mes (MM) per poder-lo mapejar al mes actual
+    const prevReceivedByMM = new Map();
+    for (const r of prevReceivedRaw) {
+      const mm = r.month.slice(5); // "YYYY-MM" → "MM"
+      prevReceivedByMM.set(mm, r.total || 0);
+    }
+    const prevIssuedByMM = new Map();
+    for (const r of prevIssuedRaw) {
+      const mm = r.month.slice(5);
+      prevIssuedByMM.set(mm, r.total || 0);
+    }
+
+    // Fusionar els arrays per mes (actual + any anterior)
     const monthsMap = new Map();
     for (const r of monthlyReceivedRaw) {
-      monthsMap.set(r.month, { month: r.month, received: r.total || 0, issued: 0, receivedCount: r.count, issuedCount: 0 });
+      const mm = r.month.slice(5);
+      monthsMap.set(r.month, {
+        month: r.month,
+        received: r.total || 0,
+        issued: 0,
+        receivedCount: r.count,
+        issuedCount: 0,
+        prevReceived: prevReceivedByMM.get(mm) || 0,
+        prevIssued: prevIssuedByMM.get(mm) || 0,
+      });
     }
     for (const r of monthlyIssuedRaw) {
+      const mm = r.month.slice(5);
       const existing = monthsMap.get(r.month);
       if (existing) {
         existing.issued = r.total || 0;
         existing.issuedCount = r.count;
       } else {
-        monthsMap.set(r.month, { month: r.month, received: 0, issued: r.total || 0, receivedCount: 0, issuedCount: r.count });
+        monthsMap.set(r.month, {
+          month: r.month,
+          received: 0,
+          issued: r.total || 0,
+          receivedCount: 0,
+          issuedCount: r.count,
+          prevReceived: prevReceivedByMM.get(mm) || 0,
+          prevIssued: prevIssuedByMM.get(mm) || 0,
+        });
       }
     }
     const monthlyBilling = Array.from(monthsMap.values()).sort((a, b) => a.month.localeCompare(b.month));
@@ -140,6 +216,10 @@ router.get('/stats', async (req, res, next) => {
       where: {
         issueDate: { gte: from, lte: to },
         supplierId: { not: null },
+        deletedAt: null,
+        isDuplicate: false,
+        totalAmount: { gt: 0, lt: MAX_REASONABLE_AMOUNT },
+        status: { notIn: ['AMOUNT_PENDING', 'NOT_INVOICE'] },
       },
       _sum: { totalAmount: true },
       _count: { _all: true },
@@ -167,7 +247,11 @@ router.get('/stats', async (req, res, next) => {
     const [receivedStatusAgg, issuedStatusAgg] = await Promise.all([
       prisma.receivedInvoice.groupBy({
         by: ['status'],
-        where: { issueDate: { gte: from, lte: to } },
+        where: {
+          issueDate: { gte: from, lte: to },
+          deletedAt: null,
+          isDuplicate: false,
+        },
         _sum: { totalAmount: true },
         _count: { _all: true },
       }),
@@ -195,7 +279,13 @@ router.get('/stats', async (req, res, next) => {
     // ----- 6. Totals generals (per cards de resum) -----
     const [totalReceived, totalIssued, unconciliatedCount] = await Promise.all([
       prisma.receivedInvoice.aggregate({
-        where: { issueDate: { gte: from, lte: to } },
+        where: {
+          issueDate: { gte: from, lte: to },
+          deletedAt: null,
+          isDuplicate: false,
+          totalAmount: { gt: 0, lt: MAX_REASONABLE_AMOUNT },
+          status: { notIn: ['AMOUNT_PENDING', 'NOT_INVOICE'] },
+        },
         _sum: { totalAmount: true },
         _count: { _all: true },
       }),

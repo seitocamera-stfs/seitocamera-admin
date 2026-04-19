@@ -33,6 +33,7 @@ const STATUS_LABELS = {
   REJECTED: 'Rebutjada',
   PAID: 'Pagada',
   PARTIALLY_PAID: 'Pagament parcial',
+  NOT_INVOICE: 'No és factura',
 };
 const STATUS_COLORS = {
   PENDING: '#f59e0b',
@@ -42,6 +43,7 @@ const STATUS_COLORS = {
   REJECTED: '#dc2626',
   PAID: '#16a34a',
   PARTIALLY_PAID: '#84cc16',
+  NOT_INVOICE: '#9ca3af',
 };
 
 // Paleta de colors per línies/barres
@@ -127,6 +129,8 @@ export default function Dashboard() {
       month: formatMonth(m.month),
       Emeses: m.issued,
       Rebudes: m.received,
+      'Emeses any ant.': m.prevIssued || 0,
+      'Rebudes any ant.': m.prevReceived || 0,
     }));
   }, [stats?.monthlyBilling]);
 
@@ -314,16 +318,18 @@ export default function Dashboard() {
                   No hi ha dades pel rang seleccionat
                 </div>
               ) : (
-                <ResponsiveContainer width="100%" height={280}>
-                  <LineChart data={monthlyChartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                <ResponsiveContainer width="100%" height={320}>
+                  <BarChart data={monthlyChartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                    <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+                    <XAxis dataKey="month" tick={{ fontSize: 11 }} />
                     <YAxis tick={{ fontSize: 12 }} tickFormatter={formatYAxis} />
                     <Tooltip content={<CurrencyTooltip />} />
-                    <Legend wrapperStyle={{ fontSize: 13 }} />
-                    <Line type="monotone" dataKey="Emeses" stroke="#0d9488" strokeWidth={2} dot={{ r: 3 }} />
-                    <Line type="monotone" dataKey="Rebudes" stroke="#3b82f6" strokeWidth={2} dot={{ r: 3 }} />
-                  </LineChart>
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    <Bar dataKey="Emeses" fill="#0d9488" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="Rebudes" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="Emeses any ant." fill="#d1d5db" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="Rebudes any ant." fill="#e5e7eb" radius={[4, 4, 0, 0]} />
+                  </BarChart>
                 </ResponsiveContainer>
               )}
             </div>
