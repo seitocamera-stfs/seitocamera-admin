@@ -157,19 +157,18 @@ router.get('/received', async (req, res, next) => {
       const manualMatched = inv.conciliations.find((c) => c.status === 'MANUAL_MATCHED');
       const autoMatched = inv.conciliations.find((c) => c.status === 'AUTO_MATCHED');
 
-      // Conciliació: CONFIRMED i MANUAL_MATCHED són equivalents (pagada)
-      // AUTO_MATCHED amb alta confiança (>=0.8) també es considera pagada
+      // Conciliació: qualsevol match (CONFIRMED, MANUAL_MATCHED, AUTO_MATCHED) és "pagada"
       const matchedConciliation = confirmed || manualMatched;
-      const highConfidenceAuto = autoMatched && (autoMatched.confidence || 0) >= 0.8;
+      const anyConciliation = matchedConciliation || autoMatched;
 
       const conciliation = matchedConciliation
         ? { status: 'CONFIRMED', bankMovement: matchedConciliation.bankMovement, matchType: matchedConciliation.status }
         : autoMatched
-          ? { status: highConfidenceAuto ? 'AUTO_CONFIRMED' : 'PENDING_CONFIRM', bankMovement: autoMatched.bankMovement, confidence: autoMatched.confidence }
+          ? { status: 'AUTO_MATCHED', bankMovement: autoMatched.bankMovement, confidence: autoMatched.confidence }
           : { status: 'NOT_MATCHED' };
 
-      // Pagament: pagada si té conciliació confirmada, auto-match d'alta confiança, O status PAID
-      const isPaid = inv.status === 'PAID' || !!matchedConciliation || !!highConfidenceAuto;
+      // Pagament: pagada si té QUALSEVOL conciliació (CONFIRMED, MANUAL_MATCHED o AUTO_MATCHED), O status PAID
+      const isPaid = inv.status === 'PAID' || !!matchedConciliation || !!autoMatched;
 
       return {
         ...inv,

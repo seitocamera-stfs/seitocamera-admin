@@ -111,11 +111,33 @@ router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
       orderBy: { date: 'desc' },
     });
 
+    // 2b. Buscar moviments "orfes": isConciliated=true però SENSE registre Conciliation vinculat a factura
+    // Això passa quan un moviment es va marcar com conciliat però la factura va arribar després
+    const orphanedMovements = await prisma.bankMovement.findMany({
+      where: {
+        isConciliated: true,
+        operationType: { notIn: ['transfer'] },
+        conciliations: { none: {} },
+        NOT: [
+          { description: { contains: 'Internal transfer', mode: 'insensitive' } },
+          { counterparty: { contains: 'SEITO CAMERA', mode: 'insensitive' } },
+        ],
+      },
+      orderBy: { date: 'desc' },
+    });
+
+    if (orphanedMovements.length > 0) {
+      logger.info(`Auto-conciliació: ${orphanedMovements.length} moviments orfes trobats (isConciliated=true sense Conciliation)`);
+    }
+
+    // Combinar els dos conjunts per processar-los tots
+    const allToProcess = [...unconciliated, ...orphanedMovements];
+
     let matched = 0;
     let autoConfirmed = 0;
     const details = [];
 
-    for (const movement of unconciliated) {
+    for (const movement of allToProcess) {
       const absAmount = Math.abs(parseFloat(movement.amount));
       const tolerance = 0.02; // 2 cèntims de tolerància
       const counterparty = (movement.counterparty || '').toLowerCase();
@@ -264,15 +286,16 @@ router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
       }
     }
 
-    logger.info(`Auto-conciliació: ${matched} de ${unconciliated.length} moviments conciliats`);
+    logger.info(`Auto-conciliació: ${matched} de ${allToProcess.length} moviments conciliats (${orphanedMovements.length} orfes recuperats)`);
 
     res.json({
       message: `Conciliació automàtica completada`,
-      processed: unconciliated.length,
+      processed: allToProcess.length,
       matched,
       autoConfirmed,
       pendingReview: matched - autoConfirmed,
-      unmatched: unconciliated.length - matched,
+      unmatched: allToProcess.length - matched,
+      orphanedRecovered: orphanedMovements.length,
       dismissedTransfers,
       details: details.slice(0, 50),
     });
