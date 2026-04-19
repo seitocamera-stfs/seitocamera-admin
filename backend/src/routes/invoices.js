@@ -1024,12 +1024,56 @@ router.put('/received/:id', authorize('ADMIN', 'EDITOR'), async (req, res, next)
           select: { id: true, invoiceNumber: true, totalAmount: true },
         });
 
-        if (conflict && !body.forceOverwrite) {
-          return res.status(409).json({
-            code: 'DUPLICATE_INVOICE',
-            error: `Ja existeix la factura ${conflict.invoiceNumber} (${conflict.totalAmount}€) amb aquest proveïdor`,
-            conflictId: conflict.id,
-          });
+        if (conflict) {
+          if (body.mergeDuplicate) {
+            // FUSIONAR: eliminar la factura actual (la DUP) i mantenir l'original
+            // Si la DUP té millors dades, actualitzar l'original primer
+            const currentFull = await prisma.receivedInvoice.findUnique({
+              where: { id: invoiceId },
+              select: { gdriveFileId: true, totalAmount: true, issueDate: true, description: true },
+            });
+
+            // Actualitzar l'original amb les dades editades (si l'usuari ha canviat algo)
+            const mergeData = {};
+            if (data.totalAmount && data.totalAmount > 0 && (!conflict.totalAmount || parseFloat(conflict.totalAmount) === 0)) {
+              mergeData.totalAmount = data.totalAmount;
+            }
+            if (data.subtotal) mergeData.subtotal = data.subtotal;
+            if (data.taxRate !== undefined) mergeData.taxRate = data.taxRate;
+            if (data.taxAmount) mergeData.taxAmount = data.taxAmount;
+            if (data.issueDate) mergeData.issueDate = data.issueDate;
+            if (data.description) mergeData.description = data.description;
+
+            if (Object.keys(mergeData).length > 0) {
+              await prisma.receivedInvoice.update({
+                where: { id: conflict.id },
+                data: mergeData,
+              });
+            }
+
+            // Soft-delete la factura duplicada
+            await prisma.receivedInvoice.update({
+              where: { id: invoiceId },
+              data: { deletedAt: new Date(), description: `Fusionada amb factura ${conflict.invoiceNumber} (${conflict.id})` },
+            });
+
+            logger.info(`Merge: factura DUP ${invoiceId} fusionada amb original ${conflict.id} (${conflict.invoiceNumber})`);
+
+            return res.json({
+              merged: true,
+              deletedId: invoiceId,
+              keptId: conflict.id,
+              message: `Factura duplicada eliminada. S'ha mantingut la factura original ${conflict.invoiceNumber}.`,
+            });
+          }
+
+          if (!body.forceOverwrite) {
+            return res.status(409).json({
+              code: 'DUPLICATE_INVOICE',
+              error: `Ja existeix la factura ${conflict.invoiceNumber} (${conflict.totalAmount}€) amb aquest proveïdor`,
+              conflictId: conflict.id,
+            });
+          }
         }
       }
     }

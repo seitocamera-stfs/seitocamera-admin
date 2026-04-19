@@ -370,6 +370,7 @@ export default function ReceivedInvoices() {
     setEditForm({
       id: inv.id,
       currentStatus: inv.status,
+      currentInvoiceNumber: inv.invoiceNumber || '', // número original per detectar DUP
       hasPdf: !!inv.filePath || !!inv.gdriveFileId || inv.hasPdf,
       gdriveFileId: inv.gdriveFileId || null,
       invoiceNumber: inv.invoiceNumber || '',
@@ -462,8 +463,42 @@ export default function ReceivedInvoices() {
       const errData = err.response?.data;
       // Si és duplicat, preguntar si vol sobreescriure
       if (errData?.code === 'DUPLICATE_INVOICE') {
-        if (confirm(`${errData.error}\n\nVols guardar igualment?`)) {
-          handleEditSave(null, true);
+        const isDup = editForm.invoiceNumber?.includes('-DUP-') ||
+          editForm.currentInvoiceNumber?.includes('-DUP-');
+        if (isDup) {
+          // La factura actual és un DUP — oferir fusionar (eliminar la DUP)
+          if (confirm(
+            `${errData.error}\n\n` +
+            `Aquesta factura és un duplicat. Vols FUSIONAR?\n` +
+            `→ S'eliminarà aquesta entrada duplicada\n` +
+            `→ Es mantindrà la factura original`
+          )) {
+            try {
+              const { id, currentStatus, ...data } = editForm;
+              const mergePayload = {
+                invoiceNumber: data.invoiceNumber.trim(),
+                totalAmount: parseFloat(data.totalAmount) || 0,
+                subtotal: parseFloat(data.subtotal) || 0,
+                taxRate: parseFloat(data.taxRate) || 21,
+                taxAmount: parseFloat(data.taxAmount) || 0,
+                issueDate: data.issueDate,
+                description: data.description || null,
+                supplierId: data.supplierId || null,
+                mergeDuplicate: true,
+              };
+              await mutate('put', `/invoices/received/${id}`, mergePayload);
+              setShowEditModal(false);
+              setEditForm(null);
+              refetch();
+            } catch (mergeErr) {
+              alert(mergeErr.response?.data?.error || 'Error fusionant');
+            }
+            return;
+          }
+        } else {
+          if (confirm(`${errData.error}\n\nVols guardar igualment?`)) {
+            handleEditSave(null, true);
+          }
         }
         return;
       }
