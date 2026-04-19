@@ -147,18 +147,36 @@ async function processInvoice(invoice) {
     const newNum = analysis.invoiceNumber;
     const oldNum = invoice.invoiceNumber;
     if (newNum !== oldNum) {
-      if (isBetterNumber(oldNum, newNum)) {
+      // Sempre actualitzar si l'antic és provisional
+      if (isProvisionalNumber(oldNum)) {
         stats.numberFixed++;
         report.numberChanges.push({
-          id: invoice.id,
-          old: oldNum,
-          new: newNum,
-          supplier: invoice.supplier?.name,
-          reason: 'provisional → real',
+          id: invoice.id, old: oldNum, new: newNum,
+          supplier: invoice.supplier?.name, reason: 'provisional → real',
         });
         changes.invoiceNumber = newNum;
-      } else if (oldNum !== newNum && VERBOSE) {
-        log(`  ℹ️  ${oldNum} → ${newNum} (no aplicat, no és millora clara)`);
+      }
+      // Si l'antic NO és provisional però el nou és diferent → informar sempre, aplicar si el nou sembla millor
+      else {
+        const oldIsShort = oldNum.replace(/[^a-zA-Z0-9]/g, '').length < 4;
+        const newIsValid = pdfExtract.validateInvoiceNumber?.(newNum) !== false;
+        const oldLooksWrong = /^(and|the|de|la|el|page|total|date|amount|credit)$/i.test(oldNum.trim());
+
+        if (oldIsShort || oldLooksWrong || (newIsValid && oldNum.includes('-DUP-'))) {
+          stats.numberFixed++;
+          report.numberChanges.push({
+            id: invoice.id, old: oldNum, new: newNum,
+            supplier: invoice.supplier?.name, reason: 'número sospitós → millorat',
+          });
+          changes.invoiceNumber = newNum;
+        } else {
+          // Informar de la discrepància perquè l'usuari decideixi
+          report.numberChanges.push({
+            id: invoice.id, old: oldNum, new: newNum,
+            supplier: invoice.supplier?.name, reason: 'DISCREPÀNCIA (no aplicat)',
+          });
+          log(`  ⚠️  ${oldNum} ≠ ${newNum} (${invoice.supplier?.name || '?'}) — discrepància detectada`);
+        }
       }
     }
   }
@@ -167,57 +185,123 @@ async function processInvoice(invoice) {
   if (analysis.totalAmount && analysis.totalAmount > 0) {
     const oldAmount = parseFloat(invoice.totalAmount);
     const newAmount = analysis.totalAmount;
-    // Actualitzar si: import era 0, o diferència significativa amb número provisional
-    if (oldAmount === 0 || (isProvisionalNumber(invoice.invoiceNumber) && Math.abs(oldAmount - newAmount) > 1)) {
+    const diff = Math.abs(oldAmount - newAmount);
+
+    // Actualitzar si:
+    //   - import era 0
+    //   - diferència > 1€ (l'extracció antiga probablement era incorrecta)
+    //   - número és provisional (tot pot ser erroni)
+    if (oldAmount === 0 || diff > 1) {
       stats.amountFixed++;
       report.amountChanges.push({
         id: invoice.id,
-        num: invoice.invoiceNumber,
+        num: changes.invoiceNumber || invoice.invoiceNumber,
         supplier: invoice.supplier?.name,
         old: oldAmount,
         new: newAmount,
+        diff: diff.toFixed(2),
       });
-      changes.totalAmount = newAmount;
 
-      // Recalcular subtotal/IVA
-      if (analysis.baseAmount && analysis.baseAmount < newAmount) {
-        changes.subtotal = parseFloat(analysis.baseAmount.toFixed(2));
-        changes.taxAmount = parseFloat((newAmount - changes.subtotal).toFixed(2));
-        if (changes.subtotal > 0) {
-          changes.taxRate = Math.round((changes.taxAmount / changes.subtotal) * 100);
-        }
+      if (oldAmount === 0 || isProvisionalNumber(invoice.invoiceNumber)) {
+        // Cas clar: aplicar directament
+        changes.totalAmount = newAmount;
+      } else if (diff > 100) {
+        // Diferència gran amb número real → informar però NO aplicar automàticament (pot ser rectificativa)
+        log(`  ⚠️  ${invoice.invoiceNumber} (${invoice.supplier?.name}) import: ${oldAmount}€ → ${newAmount}€ (diff: ${diff.toFixed(2)}€) — NO aplicat, diferència massa gran`);
       } else {
-        changes.subtotal = parseFloat((newAmount / 1.21).toFixed(2));
-        changes.taxAmount = parseFloat((newAmount - changes.subtotal).toFixed(2));
-        changes.taxRate = 21;
+        // Diferència petita-mitjana → aplicar (probablement error d'extracció)
+        changes.totalAmount = newAmount;
+      }
+
+      // Recalcular subtotal/IVA si actualitzem l'import
+      if (changes.totalAmount) {
+        if (analysis.baseAmount && analysis.baseAmount < changes.totalAmount) {
+          changes.subtotal = parseFloat(analysis.baseAmount.toFixed(2));
+          changes.taxAmount = parseFloat((changes.totalAmount - changes.subtotal).toFixed(2));
+          if (changes.subtotal > 0) {
+            changes.taxRate = Math.round((changes.taxAmount / changes.subtotal) * 100);
+          }
+        } else {
+          changes.subtotal = parseFloat((changes.totalAmount / 1.21).toFixed(2));
+          changes.taxAmount = parseFloat((changes.totalAmount - changes.subtotal).toFixed(2));
+          changes.taxRate = 21;
+        }
       }
     }
   }
 
   // --- 4. Proveïdor ---
-  if (!invoice.supplierId && analysis.nifCif?.length > 0) {
-    let matched = await pdfExtract.findSupplierByNif(analysis.nifCif);
-    if (!matched && analysis.supplierName) {
-      matched = await pdfExtract.findSupplierByName(analysis.supplierName);
-    }
-    if (!matched && invoice.originalFileName) {
-      matched = await pdfExtract.findSupplierByFileName(invoice.originalFileName);
-    }
-    if (matched) {
+  // Buscar proveïdor per NIF/nom — tant si no en té com si el que té no coincideix
+  let matchedSupplier = null;
+  if (analysis.nifCif?.length > 0) {
+    matchedSupplier = await pdfExtract.findSupplierByNif(analysis.nifCif);
+  }
+  if (!matchedSupplier && analysis.supplierName) {
+    matchedSupplier = await pdfExtract.findSupplierByName(analysis.supplierName);
+  }
+  if (!matchedSupplier && invoice.originalFileName) {
+    matchedSupplier = await pdfExtract.findSupplierByFileName(invoice.originalFileName);
+  }
+  if (!matchedSupplier && analysis.nifCif?.length > 0) {
+    matchedSupplier = await pdfExtract.findSupplierByTemplateNif(analysis.nifCif);
+  }
+
+  if (matchedSupplier) {
+    if (!invoice.supplierId) {
+      // No tenia proveïdor → assignar
       stats.supplierFixed++;
-      changes.supplierId = matched.id;
-      log(`  🏢 ${invoice.invoiceNumber} — proveïdor detectat: ${matched.name}`);
+      changes.supplierId = matchedSupplier.id;
+      log(`  🏢 ${invoice.invoiceNumber} — proveïdor assignat: ${matchedSupplier.name}`);
+    } else if (invoice.supplierId !== matchedSupplier.id) {
+      // Tenia un proveïdor diferent → informar
+      report.supplierMismatches = report.supplierMismatches || [];
+      report.supplierMismatches.push({
+        id: invoice.id,
+        num: invoice.invoiceNumber,
+        current: invoice.supplier?.name,
+        detected: matchedSupplier.name,
+      });
+      log(`  ⚠️  ${invoice.invoiceNumber} — proveïdor actual: ${invoice.supplier?.name}, detectat: ${matchedSupplier.name}`);
     }
   }
 
   // --- 5. Data ---
-  if (analysis.invoiceDate && invoice.issueDate) {
+  if (analysis.invoiceDate) {
     const oldDate = new Date(invoice.issueDate).toISOString().slice(0, 10);
     const newDate = new Date(analysis.invoiceDate).toISOString().slice(0, 10);
-    // Només corregir si la data actual és sospitosa (1 de gener, molt antiga, etc.)
-    if (oldDate !== newDate && (oldDate.endsWith('-01-01') || isProvisionalNumber(invoice.invoiceNumber))) {
-      stats.dateFixed++;
-      changes.issueDate = new Date(analysis.invoiceDate);
+
+    if (oldDate !== newDate) {
+      const oldYear = parseInt(oldDate.slice(0, 4));
+      const newYear = parseInt(newDate.slice(0, 4));
+      const isSuspicious = oldDate.endsWith('-01-01') || oldDate.endsWith('-01-02') ||
+        isProvisionalNumber(invoice.invoiceNumber) ||
+        Math.abs(oldYear - newYear) > 1; // Any molt diferent
+
+      if (isSuspicious) {
+        stats.dateFixed++;
+        changes.issueDate = new Date(analysis.invoiceDate);
+        report.dateChanges = report.dateChanges || [];
+        report.dateChanges.push({
+          id: invoice.id,
+          num: invoice.invoiceNumber,
+          supplier: invoice.supplier?.name,
+          old: oldDate,
+          new: newDate,
+          reason: 'data sospitosa corregida',
+        });
+      } else {
+        // Informar discrepància
+        report.dateChanges = report.dateChanges || [];
+        report.dateChanges.push({
+          id: invoice.id,
+          num: invoice.invoiceNumber,
+          supplier: invoice.supplier?.name,
+          old: oldDate,
+          new: newDate,
+          reason: 'DISCREPÀNCIA (no aplicat)',
+        });
+        log(`  ⚠️  ${invoice.invoiceNumber} data: ${oldDate} ≠ ${newDate} — discrepància`);
+      }
     }
   }
 
@@ -403,16 +487,50 @@ async function main() {
   }
 
   if (report.numberChanges.length > 0) {
-    console.log(`\n🔢 NÚMEROS CORREGITS:`);
-    for (const c of report.numberChanges) {
-      console.log(`  ${c.old} → ${c.new} (${c.supplier || '?'}) [${c.reason}]`);
+    const applied = report.numberChanges.filter(c => !c.reason.includes('DISCREPÀNCIA'));
+    const discrepancies = report.numberChanges.filter(c => c.reason.includes('DISCREPÀNCIA'));
+    if (applied.length > 0) {
+      console.log(`\n🔢 NÚMEROS CORREGITS (${applied.length}):`);
+      for (const c of applied) {
+        console.log(`  ${c.old} → ${c.new} (${c.supplier || '?'}) [${c.reason}]`);
+      }
+    }
+    if (discrepancies.length > 0) {
+      console.log(`\n⚠️  DISCREPÀNCIES NÚMERO (${discrepancies.length}) — revisar manualment:`);
+      for (const c of discrepancies) {
+        console.log(`  ${c.old} ≠ ${c.new} (${c.supplier || '?'})`);
+      }
     }
   }
 
   if (report.amountChanges.length > 0) {
-    console.log(`\n💰 IMPORTS CORREGITS:`);
+    console.log(`\n💰 IMPORTS CORREGITS (${report.amountChanges.length}):`);
     for (const c of report.amountChanges) {
-      console.log(`  ${c.num} (${c.supplier || '?'}) → ${c.old}€ → ${c.new}€`);
+      console.log(`  ${c.num} (${c.supplier || '?'}) → ${c.old}€ → ${c.new}€ (diff: ${c.diff}€)`);
+    }
+  }
+
+  if (report.supplierMismatches?.length > 0) {
+    console.log(`\n🏢 PROVEÏDORS NO COINCIDENTS (${report.supplierMismatches.length}) — revisar manualment:`);
+    for (const c of report.supplierMismatches) {
+      console.log(`  ${c.num} — actual: ${c.current}, detectat: ${c.detected}`);
+    }
+  }
+
+  if (report.dateChanges?.length > 0) {
+    const applied = report.dateChanges.filter(c => !c.reason.includes('DISCREPÀNCIA'));
+    const discrepancies = report.dateChanges.filter(c => c.reason.includes('DISCREPÀNCIA'));
+    if (applied.length > 0) {
+      console.log(`\n📅 DATES CORREGIDES (${applied.length}):`);
+      for (const c of applied) {
+        console.log(`  ${c.num} (${c.supplier || '?'}) → ${c.old} → ${c.new}`);
+      }
+    }
+    if (discrepancies.length > 0) {
+      console.log(`\n⚠️  DISCREPÀNCIES DATA (${discrepancies.length}) — revisar manualment:`);
+      for (const c of discrepancies) {
+        console.log(`  ${c.num} (${c.supplier || '?'}) → ${c.old} ≠ ${c.new}`);
+      }
     }
   }
 
