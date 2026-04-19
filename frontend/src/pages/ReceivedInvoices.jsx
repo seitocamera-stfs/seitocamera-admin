@@ -37,11 +37,12 @@ const SOURCE_LABELS = {
 function PaymentBadge({ isPaid, conciliation }) {
   if (isPaid) {
     const bankInfo = conciliation?.bankMovement;
+    const isAuto = conciliation?.status === 'AUTO_CONFIRMED';
     const title = bankInfo
-      ? `Pagat: ${bankInfo.description || ''} (${bankInfo.date ? new Date(bankInfo.date).toLocaleDateString('ca-ES') : ''})`
+      ? `${isAuto ? 'Pagament detectat' : 'Pagat'}: ${bankInfo.description || ''} (${bankInfo.date ? new Date(bankInfo.date).toLocaleDateString('ca-ES') : ''})`
       : 'Pagada';
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700" title={title}>
+      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs ${isAuto ? 'bg-emerald-50 text-emerald-600' : 'bg-green-100 text-green-700'}`} title={title}>
         <Check size={10} /> Pagada
       </span>
     );
