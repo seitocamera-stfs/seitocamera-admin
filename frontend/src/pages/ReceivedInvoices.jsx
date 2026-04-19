@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import {
   Plus, Search, Trash2, Check, X as XIcon,
   FileText, Upload, Eye, Link2, AlertTriangle, Ban,
-  ChevronRight, Paperclip, Pencil, RefreshCw,
+  ChevronRight, Paperclip, Pencil, RefreshCw, GitMerge,
 } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import { StatusBadge } from '../components/shared/StatusBadge';
@@ -1108,11 +1108,71 @@ export default function ReceivedInvoices() {
                   {rescanResult.nifCif?.length > 0 && (
                     <span className="col-span-2">NIF detectats: <strong>{rescanResult.nifCif.join(', ')}</strong></span>
                   )}
-                  {rescanResult.isDuplicate && (
-                    <span className="col-span-2 text-amber-700">
-                      <AlertTriangle size={12} className="inline mr-1" />
-                      Possible duplicat de {rescanResult.duplicateInvoice?.invoiceNumber}
-                    </span>
+                  {rescanResult.isDuplicate && rescanResult.duplicateInvoice && (
+                    <div className="col-span-2 mt-1 p-2 rounded-md bg-amber-50 border border-amber-300 text-amber-800 text-xs space-y-1.5">
+                      <div className="flex items-center gap-1 font-medium">
+                        <AlertTriangle size={13} />
+                        Possible duplicat de <strong>{rescanResult.duplicateInvoice.invoiceNumber}</strong>
+                        {rescanResult.duplicateInvoice.supplier?.name && (
+                          <span className="text-amber-600">({rescanResult.duplicateInvoice.supplier.name})</span>
+                        )}
+                        {rescanResult.duplicateInvoice.totalAmount > 0 && (
+                          <span>— {formatCurrency(rescanResult.duplicateInvoice.totalAmount)}</span>
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          className="px-2.5 py-1 rounded bg-red-100 text-red-700 hover:bg-red-200 text-xs font-medium"
+                          onClick={async () => {
+                            if (!confirm(`Esborrar aquesta factura (${editForm.invoiceNumber}) i quedar-se amb l'original (${rescanResult.duplicateInvoice.invoiceNumber})?`)) return;
+                            try {
+                              await mutate('delete', `/invoices/received/${editForm.id}`);
+                              setShowEditModal(false);
+                              setEditForm(null);
+                              refetch();
+                            } catch (err) {
+                              alert(err.response?.data?.error || 'Error esborrant');
+                            }
+                          }}
+                        >
+                          <Trash2 size={11} className="inline mr-1" />
+                          Esborrar aquesta
+                        </button>
+                        <button
+                          type="button"
+                          className="px-2.5 py-1 rounded bg-blue-100 text-blue-700 hover:bg-blue-200 text-xs font-medium"
+                          onClick={async () => {
+                            if (!confirm(
+                              `Fusionar: copiar les dades d'aquesta factura a l'original (${rescanResult.duplicateInvoice.invoiceNumber}) i eliminar aquesta entrada?`
+                            )) return;
+                            try {
+                              // Guardar amb mergeDuplicate per fusionar amb l'original
+                              const payload = {
+                                invoiceNumber: rescanResult.duplicateInvoice.invoiceNumber,
+                                totalAmount: parseFloat(editForm.totalAmount) || 0,
+                                subtotal: parseFloat(editForm.subtotal) || 0,
+                                taxRate: parseFloat(editForm.taxRate) || 21,
+                                taxAmount: parseFloat(editForm.taxAmount) || 0,
+                                issueDate: editForm.issueDate,
+                                description: editForm.description || null,
+                                supplierId: editForm.supplierId || null,
+                                mergeDuplicate: true,
+                              };
+                              await mutate('put', `/invoices/received/${editForm.id}`, payload);
+                              setShowEditModal(false);
+                              setEditForm(null);
+                              refetch();
+                            } catch (err) {
+                              alert(err.response?.data?.error || 'Error fusionant');
+                            }
+                          }}
+                        >
+                          <GitMerge size={11} className="inline mr-1" />
+                          Fusionar amb l'original
+                        </button>
+                      </div>
+                    </div>
                   )}
                   {rescanResult.documentType && (
                     <span className={`col-span-2 font-medium ${rescanResult.documentType.type !== 'invoice' && rescanResult.documentType.type !== 'unknown' ? 'text-red-600' : 'text-green-700'}`}>
