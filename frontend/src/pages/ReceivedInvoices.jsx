@@ -358,15 +358,18 @@ export default function ReceivedInvoices() {
     }
   };
 
-  const openEditModal = (inv) => {
+  const [duplicateOriginal, setDuplicateOriginal] = useState(null);
+
+  const openEditModal = async (inv) => {
     setRescanResult(null);
     setRelocateResult(null);
     setEditPdfUrl(null);
     setShowEditPdf(false);
+    setDuplicateOriginal(null);
     setEditForm({
       id: inv.id,
       currentStatus: inv.status,
-      currentInvoiceNumber: inv.invoiceNumber || '', // número original per detectar DUP
+      currentInvoiceNumber: inv.invoiceNumber || '',
       hasPdf: !!inv.filePath || !!inv.gdriveFileId || inv.hasPdf,
       gdriveFileId: inv.gdriveFileId || null,
       invoiceNumber: inv.invoiceNumber || '',
@@ -378,8 +381,33 @@ export default function ReceivedInvoices() {
       taxAmount: inv.taxAmount || '',
       totalAmount: inv.totalAmount || '',
       description: inv.description || '',
+      isDuplicate: inv.isDuplicate || false,
+      duplicateOfId: inv.duplicateOfId || null,
+      alerts: inv.alerts || [],
     });
     setShowEditModal(true);
+
+    // Si és duplicat o té número DUP, buscar l'original automàticament
+    const isDup = inv.isDuplicate || inv.duplicateOfId || (inv.invoiceNumber || '').includes('-DUP-');
+    if (isDup) {
+      try {
+        // Buscar per duplicateOfId directament, o per número sense -DUP-
+        if (inv.duplicateOfId) {
+          const { data: orig } = await api.get(`/invoices/received/${inv.duplicateOfId}`);
+          setDuplicateOriginal(orig);
+        } else {
+          // Extreure el número base (sense -DUP-xxx)
+          const baseNum = (inv.invoiceNumber || '').replace(/-DUP-.*$/, '');
+          if (baseNum && baseNum !== inv.invoiceNumber) {
+            const { data: searchResult } = await api.get(`/invoices/received`, { search: baseNum, limit: 5 });
+            const original = searchResult?.data?.find(i => i.id !== inv.id && i.invoiceNumber === baseNum);
+            if (original) setDuplicateOriginal(original);
+          }
+        }
+      } catch (err) {
+        // No pasa res si no trobem l'original
+      }
+    }
   };
 
   // Crear proveïdor nou des del formulari inline
@@ -1027,6 +1055,112 @@ export default function ReceivedInvoices() {
       <Modal isOpen={showEditModal} onClose={() => { setShowEditModal(false); setEditForm(null); }} title="Editar factura rebuda" size="lg">
         {editForm && (
           <form onSubmit={handleEditSave} className="space-y-3">
+            {/* Banner de duplicat: comparació amb l'original */}
+            {(editForm.isDuplicate || editForm.invoiceNumber?.includes('-DUP-') || duplicateOriginal) && (
+              <div className="rounded-lg border-2 border-amber-300 bg-amber-50 p-3 space-y-2">
+                <div className="flex items-center gap-2 text-amber-800 font-medium text-sm">
+                  <AlertTriangle size={16} />
+                  Factura duplicada {duplicateOriginal ? `— original trobada` : '— buscant original...'}
+                </div>
+                {duplicateOriginal && (
+                  <>
+                    <div className="grid grid-cols-3 gap-2 text-xs">
+                      <div className="font-medium text-amber-700">Camp</div>
+                      <div className="font-medium text-amber-700">Aquesta (duplicada)</div>
+                      <div className="font-medium text-green-700">Original</div>
+
+                      <div className="text-muted-foreground">Número</div>
+                      <div className={editForm.invoiceNumber !== duplicateOriginal.invoiceNumber ? 'font-medium text-amber-800' : ''}>{editForm.invoiceNumber}</div>
+                      <div className="font-medium text-green-800">{duplicateOriginal.invoiceNumber}</div>
+
+                      <div className="text-muted-foreground">Proveïdor</div>
+                      <div>{suppliersList.find(s => s.id === editForm.supplierId)?.name || '—'}</div>
+                      <div>{duplicateOriginal.supplier?.name || '—'}</div>
+
+                      <div className="text-muted-foreground">Import</div>
+                      <div className={String(editForm.totalAmount) !== String(duplicateOriginal.totalAmount) ? 'font-medium text-amber-800' : ''}>{formatCurrency(editForm.totalAmount)}</div>
+                      <div>{formatCurrency(duplicateOriginal.totalAmount)}</div>
+
+                      <div className="text-muted-foreground">Data</div>
+                      <div>{editForm.issueDate || '—'}</div>
+                      <div>{duplicateOriginal.issueDate ? new Date(duplicateOriginal.issueDate).toISOString().slice(0, 10) : '—'}</div>
+
+                      <div className="text-muted-foreground">Estat</div>
+                      <div>{editForm.currentStatus}</div>
+                      <div>{duplicateOriginal.status}</div>
+                    </div>
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        type="button"
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-red-100 text-red-700 hover:bg-red-200 text-xs font-medium"
+                        onClick={async () => {
+                          if (!confirm(`Eliminar AQUESTA factura (${editForm.invoiceNumber}) i quedar-se amb l'original (${duplicateOriginal.invoiceNumber})?`)) return;
+                          try {
+                            await mutate('delete', `/invoices/received/${editForm.id}`);
+                            setShowEditModal(false);
+                            setEditForm(null);
+                            setDuplicateOriginal(null);
+                            refetch();
+                          } catch (err) {
+                            alert(err.response?.data?.error || 'Error eliminant');
+                          }
+                        }}
+                      >
+                        <Trash2 size={12} /> Eliminar aquesta
+                      </button>
+                      <button
+                        type="button"
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-blue-100 text-blue-700 hover:bg-blue-200 text-xs font-medium"
+                        onClick={async () => {
+                          if (!confirm(`Fusionar: traspassar les dades d'aquesta factura a l'original (${duplicateOriginal.invoiceNumber}) i eliminar aquesta entrada?`)) return;
+                          try {
+                            await mutate('put', `/invoices/received/${editForm.id}`, {
+                              invoiceNumber: duplicateOriginal.invoiceNumber,
+                              totalAmount: parseFloat(editForm.totalAmount) || 0,
+                              subtotal: parseFloat(editForm.subtotal) || 0,
+                              taxRate: parseFloat(editForm.taxRate) || 21,
+                              taxAmount: parseFloat(editForm.taxAmount) || 0,
+                              issueDate: editForm.issueDate,
+                              supplierId: editForm.supplierId || null,
+                              description: editForm.description || null,
+                              mergeDuplicate: true,
+                            });
+                            setShowEditModal(false);
+                            setEditForm(null);
+                            setDuplicateOriginal(null);
+                            refetch();
+                          } catch (err) {
+                            alert(err.response?.data?.error || 'Error fusionant');
+                          }
+                        }}
+                      >
+                        <GitMerge size={12} /> Fusionar amb l'original
+                      </button>
+                      <button
+                        type="button"
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200 text-xs font-medium"
+                        onClick={() => {
+                          setShowEditModal(false);
+                          setEditForm(null);
+                          setDuplicateOriginal(null);
+                          // Obrir l'original
+                          const origInv = data?.data?.find(i => i.id === duplicateOriginal.id);
+                          if (origInv) {
+                            openEditModal(origInv);
+                          } else {
+                            // Si no està a la llista actual, obrir-la directament
+                            openEditModal({ ...duplicateOriginal, hasPdf: !!duplicateOriginal.filePath || !!duplicateOriginal.gdriveFileId });
+                          }
+                        }}
+                      >
+                        <Eye size={12} /> Veure l'original
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
             {/* Botons: previsualitzar PDF + re-escanejar */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
