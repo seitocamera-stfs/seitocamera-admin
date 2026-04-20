@@ -276,7 +276,49 @@ router.get('/stats', async (req, res, next) => {
       })),
     };
 
-    // ----- 6. Totals generals (per cards de resum) -----
+    // ----- 6. Factures pendents de pagament (últims 6 mesos) -----
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+
+    const pendingPayments = await prisma.receivedInvoice.findMany({
+      where: {
+        deletedAt: null,
+        isDuplicate: false,
+        status: { notIn: ['PAID', 'NOT_INVOICE', 'AMOUNT_PENDING'] },
+        totalAmount: { gt: 0, lt: MAX_REASONABLE_AMOUNT },
+        issueDate: { gte: sixMonthsAgo },
+      },
+      select: {
+        id: true,
+        invoiceNumber: true,
+        issueDate: true,
+        dueDate: true,
+        totalAmount: true,
+        status: true,
+        supplier: { select: { id: true, name: true } },
+      },
+      orderBy: [
+        { dueDate: { sort: 'asc', nulls: 'last' } },
+        { issueDate: 'asc' },
+      ],
+      take: 50,
+    });
+
+    // Calcular totals pendents i vençudes
+    const now = new Date();
+    let pendingTotal = 0;
+    let overdueTotal = 0;
+    let overdueCount = 0;
+    for (const inv of pendingPayments) {
+      const amount = parseFloat(inv.totalAmount) || 0;
+      pendingTotal += amount;
+      if (inv.dueDate && new Date(inv.dueDate) < now) {
+        overdueTotal += amount;
+        overdueCount++;
+      }
+    }
+
+    // ----- 7. Totals generals (per cards de resum) -----
     const [totalReceived, totalIssued, unconciliatedCount] = await Promise.all([
       prisma.receivedInvoice.aggregate({
         where: {
@@ -317,6 +359,23 @@ router.get('/stats', async (req, res, next) => {
       topClients,
       topSuppliers,
       invoiceStatusDistribution,
+      pendingPayments: {
+        invoices: pendingPayments.map((inv) => ({
+          id: inv.id,
+          invoiceNumber: inv.invoiceNumber,
+          issueDate: inv.issueDate,
+          dueDate: inv.dueDate,
+          totalAmount: parseFloat(inv.totalAmount) || 0,
+          status: inv.status,
+          supplierName: inv.supplier?.name || 'Desconegut',
+          supplierId: inv.supplier?.id,
+          isOverdue: inv.dueDate ? new Date(inv.dueDate) < now : false,
+        })),
+        total: pendingTotal,
+        count: pendingPayments.length,
+        overdueTotal,
+        overdueCount,
+      },
     });
   } catch (error) {
     logger.error(`Dashboard stats error: ${error.message}`);

@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import {
   FileInput, FileOutput, Landmark, Bell, Calendar,
   TrendingUp, Users, Building2, PieChart as PieIcon,
+  AlertTriangle, Clock, CreditCard,
 } from 'lucide-react';
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
@@ -507,6 +508,88 @@ export default function Dashboard() {
                 )}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Factures pendents de pagament */}
+      {canSeeDashboardPanel(user, 'receivedPending') && stats?.pendingPayments?.count > 0 && (
+        <div className="bg-card border rounded-lg mb-6">
+          <div className="p-4 border-b flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <CreditCard size={18} className="text-amber-500" />
+              <h3 className="font-semibold">Factures pendents de pagament</h3>
+              <span className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">
+                {stats.pendingPayments.count}
+              </span>
+            </div>
+            <div className="flex items-center gap-4 text-sm">
+              <span className="text-muted-foreground">
+                Total: <span className="font-semibold text-foreground">{formatCurrency(stats.pendingPayments.total)}</span>
+              </span>
+              {stats.pendingPayments.overdueCount > 0 && (
+                <span className="flex items-center gap-1 text-red-600">
+                  <AlertTriangle size={14} />
+                  {stats.pendingPayments.overdueCount} vençudes ({formatCurrency(stats.pendingPayments.overdueTotal)})
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b bg-muted/50">
+                  <th className="text-left p-3 font-medium">Proveïdor</th>
+                  <th className="text-left p-3 font-medium">Nº Factura</th>
+                  <th className="text-left p-3 font-medium">Data emissió</th>
+                  <th className="text-left p-3 font-medium">Venciment</th>
+                  <th className="text-right p-3 font-medium">Import</th>
+                  <th className="text-center p-3 font-medium">Estat</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {stats.pendingPayments.invoices.map((inv) => {
+                  const isOverdue = inv.isOverdue;
+                  const daysUntilDue = inv.dueDate
+                    ? Math.ceil((new Date(inv.dueDate) - new Date()) / (1000 * 60 * 60 * 24))
+                    : null;
+                  return (
+                    <tr key={inv.id} className={`hover:bg-muted/30 ${isOverdue ? 'bg-red-50/50' : ''}`}>
+                      <td className="p-3 font-medium">{inv.supplierName}</td>
+                      <td className="p-3 text-muted-foreground">{inv.invoiceNumber || '—'}</td>
+                      <td className="p-3 text-muted-foreground">
+                        {inv.issueDate ? new Date(inv.issueDate).toLocaleDateString('ca-ES') : '—'}
+                      </td>
+                      <td className="p-3">
+                        {inv.dueDate ? (
+                          <span className={`flex items-center gap-1 ${isOverdue ? 'text-red-600 font-medium' : daysUntilDue <= 7 ? 'text-amber-600' : 'text-muted-foreground'}`}>
+                            {isOverdue && <AlertTriangle size={13} />}
+                            {!isOverdue && daysUntilDue <= 7 && <Clock size={13} />}
+                            {new Date(inv.dueDate).toLocaleDateString('ca-ES')}
+                            {isOverdue && <span className="text-xs ml-1">({Math.abs(daysUntilDue)}d)</span>}
+                            {!isOverdue && daysUntilDue <= 7 && <span className="text-xs ml-1">({daysUntilDue}d)</span>}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="p-3 text-right font-medium">{formatCurrency(inv.totalAmount)}</td>
+                      <td className="p-3 text-center">
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${
+                          inv.status === 'PENDING' ? 'bg-amber-100 text-amber-800' :
+                          inv.status === 'REVIEWED' ? 'bg-blue-100 text-blue-800' :
+                          inv.status === 'APPROVED' ? 'bg-teal-100 text-teal-800' :
+                          inv.status === 'PARTIALLY_PAID' ? 'bg-lime-100 text-lime-800' :
+                          'bg-gray-100 text-gray-800'
+                        }`}>
+                          {STATUS_LABELS[inv.status] || inv.status}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
