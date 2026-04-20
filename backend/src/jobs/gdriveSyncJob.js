@@ -207,7 +207,18 @@ async function syncGdriveFiles() {
         const isNotInvoice = docType.type !== 'invoice' && docType.type !== 'unknown' && docType.type !== 'credit_note';
 
         if (isNotInvoice) {
-          logger.info(`GDrive sync: ${file.name} NO és factura → ${docType.label} (${docType.type})`);
+          logger.info(`GDrive sync: ${file.name} NO és factura → ${docType.label} (${docType.type}). Saltant.`);
+          // Moure a carpeta "no-factures" i saltar — NO crear entrada a BD
+          try {
+            const facturesRebudesId = await gdrive.getSubfolderId('factures-rebudes');
+            const noFacturesFolder = await gdrive.findOrCreateFolder('no-factures', facturesRebudesId);
+            await gdrive.moveFile(file.id, noFacturesFolder.id);
+            logger.info(`GDrive sync: Mogut ${file.name} a no-factures/`);
+          } catch (moveErr) {
+            logger.warn(`GDrive sync: No s'ha pogut moure ${file.name} a no-factures: ${moveErr.message}`);
+          }
+          results.push({ file: file.name, status: 'skipped_not_invoice', documentType: docType.label });
+          continue;
         }
 
         // Trobar proveïdor: prioritat plantilla > NIF > nom > crear
@@ -317,27 +328,17 @@ async function syncGdriveFiles() {
 
         {
           // ===== NO DUPLICAT: primer crear a BD, després moure =====
-          // Si no és factura, moure a carpeta "no-factures" en comptes de les dates
-          let destFolderId;
-          if (isNotInvoice) {
-            const facturesRebudesId = await gdrive.getSubfolderId('factures-rebudes');
-            const noFacturesFolder = await gdrive.findOrCreateFolder('no-factures', facturesRebudesId);
-            destFolderId = noFacturesFolder.id;
-          } else {
-            destFolderId = await gdrive.getDateBasedFolderId('factures-rebudes', issueDate);
-          }
+          const destFolderId = await gdrive.getDateBasedFolderId('factures-rebudes', issueDate);
 
           const invoiceData = {
               invoiceNumber,
               source: 'GDRIVE_SYNC',
-              status: isNotInvoice ? 'NOT_INVOICE' : needsAmount ? 'AMOUNT_PENDING' : needsReview ? 'PDF_PENDING' : 'PENDING',
+              status: needsAmount ? 'AMOUNT_PENDING' : needsReview ? 'PDF_PENDING' : 'PENDING',
               gdriveFileId: file.id,
               originalFileName: file.name,
               supplierId: matchedSupplier?.id || null,
               isDuplicate: false,
-              description: isNotInvoice
-                ? `📄 ${docType.label}: no és una factura. Fitxer: ${file.name}`
-                : needsAmount
+              description: needsAmount
                   ? `🔴 IMPORT PENDENT: no s'ha pogut detectar l'import. Cal revisar manualment. Fitxer: ${file.name}`
                   : needsReview
                     ? `⚠️ Cal revisar: ${[

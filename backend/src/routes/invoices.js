@@ -91,7 +91,12 @@ router.get('/received', async (req, res, next) => {
       where.deletedAt = null;
     }
 
-    if (status) where.status = status;
+    // Per defecte, excloure NOT_INVOICE (documents que no són factures)
+    if (status) {
+      where.status = status;
+    } else {
+      where.status = { not: 'NOT_INVOICE' };
+    }
     if (source) where.source = source;
     if (supplierId) where.supplierId = supplierId;
 
