@@ -64,6 +64,8 @@ model Supplier {
   country     String   @default("ES")
   notes       String?
   isActive    Boolean  @default(true)
+  requiresManualDownload Boolean @default(false)  // Cal entrar a la web del proveïdor a descarregar factures
+  manualDownloadUrl      String?                  // URL de la web del proveïdor per descarregar factures
   isSharedDefault       Boolean  @default(false)  // Si les factures d'aquest proveïdor són compartides per defecte
   sharedPercentSeito    Decimal  @default(50) @db.Decimal(5, 2)  // % Seito per defecte
   sharedPercentLogistik Decimal  @default(50) @db.Decimal(5, 2)  // % Logistik per defecte

@@ -13,7 +13,7 @@ export default function Suppliers() {
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedSupplier, setSelectedSupplier] = useState(null);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ name: '', nif: '', email: '', phone: '', address: '', city: '', postalCode: '', isSharedDefault: false, sharedPercentSeito: 50, sharedPercentLogistik: 50 });
+  const [form, setForm] = useState({ name: '', nif: '', email: '', phone: '', address: '', city: '', postalCode: '', requiresManualDownload: false, manualDownloadUrl: '', isSharedDefault: false, sharedPercentSeito: 50, sharedPercentLogistik: 50 });
 
   const handleViewPdf = async (invoiceId) => {
     try {
@@ -43,7 +43,7 @@ export default function Suppliers() {
       }
       setShowModal(false);
       setEditing(null);
-      setForm({ name: '', nif: '', email: '', phone: '', address: '', city: '', postalCode: '', isSharedDefault: false, sharedPercentSeito: 50, sharedPercentLogistik: 50 });
+      setForm({ name: '', nif: '', email: '', phone: '', address: '', city: '', postalCode: '', requiresManualDownload: false, manualDownloadUrl: '', isSharedDefault: false, sharedPercentSeito: 50, sharedPercentLogistik: 50 });
       refetch();
     } catch (err) {
       alert(err.message);
@@ -60,6 +60,8 @@ export default function Suppliers() {
       address: supplier.address || '',
       city: supplier.city || '',
       postalCode: supplier.postalCode || '',
+      requiresManualDownload: supplier.requiresManualDownload || false,
+      manualDownloadUrl: supplier.manualDownloadUrl || '',
       isSharedDefault: supplier.isSharedDefault || false,
       sharedPercentSeito: supplier.sharedPercentSeito ?? 50,
       sharedPercentLogistik: supplier.sharedPercentLogistik ?? 50,
@@ -75,7 +77,7 @@ export default function Suppliers() {
 
   const handleNew = () => {
     setEditing(null);
-    setForm({ name: '', nif: '', email: '', phone: '', address: '', city: '', postalCode: '', isSharedDefault: false, sharedPercentSeito: 50, sharedPercentLogistik: 50 });
+    setForm({ name: '', nif: '', email: '', phone: '', address: '', city: '', postalCode: '', requiresManualDownload: false, manualDownloadUrl: '', isSharedDefault: false, sharedPercentSeito: 50, sharedPercentLogistik: 50 });
     setShowModal(true);
   };
 
@@ -183,6 +185,18 @@ export default function Suppliers() {
             <div className="col-span-2">
               <label className="block text-sm font-medium mb-1">Adreça</label>
               <input type="text" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} className="w-full rounded-md border bg-background px-3 py-2 text-sm" />
+            </div>
+            <div className="col-span-2 p-3 border rounded-md bg-amber-50/50 space-y-2">
+              <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+                <input type="checkbox" checked={form.requiresManualDownload || false} onChange={(e) => setForm({ ...form, requiresManualDownload: e.target.checked })} className="rounded" />
+                Recollida manual de factures (cal entrar a la web)
+              </label>
+              {form.requiresManualDownload && (
+                <div>
+                  <label className="block text-xs text-muted-foreground mb-1">URL de la web del proveïdor</label>
+                  <input type="url" value={form.manualDownloadUrl || ''} onChange={(e) => setForm({ ...form, manualDownloadUrl: e.target.value })} placeholder="https://..." className="w-full rounded-md border bg-background px-3 py-1.5 text-sm" />
+                </div>
+              )}
             </div>
             <div className="col-span-2 p-3 border rounded-md bg-muted/20 space-y-2">
               <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">

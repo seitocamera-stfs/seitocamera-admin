@@ -1,18 +1,35 @@
 import { useState } from 'react';
-import { Plus, Bell, Check, Clock, Repeat } from 'lucide-react';
+import { Plus, Bell, Check, Clock, Repeat, ExternalLink, FileCheck, FileX, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import { PriorityBadge } from '../components/shared/StatusBadge';
 import Modal from '../components/shared/Modal';
-import { formatDate } from '../lib/utils';
+import { formatDate, formatCurrency } from '../lib/utils';
+
+const MONTH_NAMES = ['Gener', 'Febrer', 'Març', 'Abril', 'Maig', 'Juny', 'Juliol', 'Agost', 'Setembre', 'Octubre', 'Novembre', 'Desembre'];
 
 export default function Reminders() {
   const [showCompleted, setShowCompleted] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ title: '', description: '', dueAt: '', priority: 'NORMAL', recurrence: '' });
 
+  // Navegació mensual per la checklist de recollida
+  const now = new Date();
+  const [collMonth, setCollMonth] = useState(now.getMonth() + 1);
+  const [collYear, setCollYear] = useState(now.getFullYear());
+
   const { data, loading, refetch } = useApiGet('/reminders', { completed: showCompleted ? undefined : 'false', limit: 50 });
   const { data: pendingData } = useApiGet('/reminders/pending');
+  const { data: collectionData } = useApiGet('/reminders/invoice-collection', { year: collYear, month: collMonth });
   const { mutate } = useApiMutation();
+
+  const prevMonth = () => {
+    if (collMonth === 1) { setCollMonth(12); setCollYear(collYear - 1); }
+    else setCollMonth(collMonth - 1);
+  };
+  const nextMonth = () => {
+    if (collMonth === 12) { setCollMonth(1); setCollYear(collYear + 1); }
+    else setCollMonth(collMonth + 1);
+  };
 
   const handleSave = async (e) => {
     e.preventDefault();
@@ -60,6 +77,56 @@ export default function Reminders() {
           Mostrar completats
         </label>
       </div>
+
+      {/* Checklist recollida mensual de factures */}
+      {collectionData?.total > 0 && (
+        <div className="bg-card border rounded-lg mb-6">
+          <div className="p-4 border-b flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <FileCheck size={18} className="text-amber-500" />
+              <h3 className="font-semibold">Recollida mensual de factures</h3>
+              <span className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">
+                {collectionData.collected}/{collectionData.total}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={prevMonth} className="p-1 rounded hover:bg-muted"><ChevronLeft size={16} /></button>
+              <span className="text-sm font-medium min-w-[120px] text-center">
+                {MONTH_NAMES[collMonth - 1]} {collYear}
+              </span>
+              <button onClick={nextMonth} className="p-1 rounded hover:bg-muted"><ChevronRight size={16} /></button>
+            </div>
+          </div>
+          <div className="divide-y">
+            {collectionData.suppliers.map((s) => (
+              <div key={s.id} className={`p-3 flex items-center gap-3 ${s.collected ? 'bg-green-50/30' : ''}`}>
+                <div className={`flex-shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center ${s.collected ? 'bg-green-500 border-green-500 text-white' : 'border-muted-foreground/40'}`}>
+                  {s.collected && <Check size={12} />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className={`font-medium text-sm ${s.collected ? 'text-green-700' : ''}`}>{s.name}</span>
+                    {s.collected ? (
+                      <span className="text-xs text-green-600">
+                        {s.invoices.map((inv) => `${inv.invoiceNumber} — ${formatCurrency(inv.totalAmount)}`).join(', ')}
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1 text-xs text-red-500">
+                        <FileX size={12} /> Pendent
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {s.url && (
+                  <a href={s.url} target="_blank" rel="noopener noreferrer" className="p-1.5 rounded hover:bg-blue-50 text-blue-600 flex-shrink-0" title="Obrir web del proveïdor">
+                    <ExternalLink size={14} />
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="space-y-2">
         {loading ? (

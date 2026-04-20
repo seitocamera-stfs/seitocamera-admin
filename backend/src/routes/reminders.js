@@ -254,4 +254,87 @@ router.delete('/:id', async (req, res, next) => {
   }
 });
 
+// ===========================================
+// GET /api/reminders/invoice-collection — Checklist mensual recollida factures
+// ===========================================
+router.get('/invoice-collection', async (req, res, next) => {
+  try {
+    const { year, month } = req.query;
+    const now = new Date();
+    const targetYear = parseInt(year) || now.getFullYear();
+    const targetMonth = parseInt(month) || (now.getMonth() + 1); // 1-12
+
+    const monthStart = new Date(targetYear, targetMonth - 1, 1);
+    const monthEnd = new Date(targetYear, targetMonth, 0, 23, 59, 59);
+
+    // Proveïdors que requereixen recollida manual
+    const suppliers = await prisma.supplier.findMany({
+      where: {
+        requiresManualDownload: true,
+        isActive: true,
+      },
+      select: {
+        id: true,
+        name: true,
+        manualDownloadUrl: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    if (suppliers.length === 0) {
+      return res.json({ year: targetYear, month: targetMonth, suppliers: [], collected: 0, total: 0 });
+    }
+
+    // Comprovar quins tenen factura aquell mes
+    const supplierIds = suppliers.map((s) => s.id);
+    const invoicesThisMonth = await prisma.receivedInvoice.findMany({
+      where: {
+        supplierId: { in: supplierIds },
+        issueDate: { gte: monthStart, lte: monthEnd },
+        deletedAt: null,
+        status: { not: 'NOT_INVOICE' },
+      },
+      select: {
+        supplierId: true,
+        invoiceNumber: true,
+        totalAmount: true,
+        issueDate: true,
+      },
+    });
+
+    // Agrupar factures per proveïdor
+    const invoicesBySupplier = {};
+    for (const inv of invoicesThisMonth) {
+      if (!invoicesBySupplier[inv.supplierId]) {
+        invoicesBySupplier[inv.supplierId] = [];
+      }
+      invoicesBySupplier[inv.supplierId].push(inv);
+    }
+
+    const result = suppliers.map((s) => ({
+      id: s.id,
+      name: s.name,
+      url: s.manualDownloadUrl,
+      collected: !!invoicesBySupplier[s.id],
+      invoices: (invoicesBySupplier[s.id] || []).map((inv) => ({
+        invoiceNumber: inv.invoiceNumber,
+        totalAmount: parseFloat(inv.totalAmount) || 0,
+        issueDate: inv.issueDate,
+      })),
+    }));
+
+    const collected = result.filter((s) => s.collected).length;
+
+    res.json({
+      year: targetYear,
+      month: targetMonth,
+      suppliers: result,
+      collected,
+      total: result.length,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;

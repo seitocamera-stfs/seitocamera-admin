@@ -31,6 +31,8 @@ const supplierSchema = z.object({
   postalCode: z.preprocess(emptyToNull, z.string().nullable().optional()),
   country: z.preprocess((v) => (v === '' || v === undefined ? 'ES' : v), z.string().default('ES')),
   notes: z.preprocess(emptyToNull, z.string().nullable().optional()),
+  requiresManualDownload: z.boolean().optional().default(false),
+  manualDownloadUrl: z.preprocess(emptyToNull, z.string().url('URL invàlida').nullable().optional()),
   isSharedDefault: z.boolean().optional().default(false),
   sharedPercentSeito: z.preprocess((v) => (v === '' || v === undefined ? 50 : Number(v)), z.number().min(0).max(100).default(50)),
   sharedPercentLogistik: z.preprocess((v) => (v === '' || v === undefined ? 50 : Number(v)), z.number().min(0).max(100).default(50)),
