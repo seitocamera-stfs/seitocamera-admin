@@ -95,11 +95,11 @@ services:
   # Nginx (reverse proxy intern — Traefik gestiona SSL)
   # ===========================================
   nginx:
-    image: nginx:alpine
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
     container_name: seitocamera-nginx
     restart: unless-stopped
-    volumes:
-      - ./nginx/nginx.coolify.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - backend
       - frontend

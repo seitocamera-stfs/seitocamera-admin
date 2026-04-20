@@ -1,0 +1,2 @@
+FROM nginx:alpine
+COPY nginx.coolify.conf /etc/nginx/nginx.conf
