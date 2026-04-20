@@ -27,6 +27,7 @@ export const SECTIONS = {
   conciliation: { label: 'Conciliació', path: '/conciliation' },
   reminders: { label: 'Recordatoris', path: '/reminders' },
   equipment: { label: 'Inventari equips', path: '/equipment' },
+  agent: { label: 'Agent comptable', path: '/agent' },
   users: { label: 'Usuaris', path: '/users' },
 };
 
@@ -42,6 +43,7 @@ export const CUSTOMIZABLE_SECTIONS = [
   'conciliation',
   'reminders',
   'equipment',
+  'agent',
 ];
 
 const LEVEL_ORDER = { read: 1, write: 2, admin: 3 };
@@ -64,6 +66,7 @@ export const ROLE_PERMISSIONS = {
     conciliation: 'admin',
     reminders: 'admin',
     equipment: 'admin',
+    agent: 'admin',
     users: 'admin',
     // Panells del dashboard
     _dashboardPanels: [
@@ -81,6 +84,7 @@ export const ROLE_PERMISSIONS = {
     conciliation: 'write',
     reminders: 'write',
     equipment: 'write',
+    agent: 'write',
     _dashboardPanels: [
       'receivedPending', 'issuedPending', 'unconciliated',
       'reminders', 'recentReceived', 'unconciliatedList',

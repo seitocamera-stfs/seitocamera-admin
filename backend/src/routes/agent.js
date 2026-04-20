@@ -1,11 +1,13 @@
 const express = require('express');
 const { prisma } = require('../config/database');
 const { authenticate, authorize } = require('../middleware/auth');
+const { requireSection } = require('../middleware/sectionAccess');
 const agent = require('../services/accountingAgentService');
 
 const router = express.Router();
 
 router.use(authenticate);
+router.use(requireSection('agent'));
 
 // ===========================================
 // XATS — Conversa lliure amb l'agent

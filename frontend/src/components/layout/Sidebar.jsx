@@ -30,7 +30,7 @@ const navItems = [
   { to: '/reminders', icon: Bell, label: 'Recordatoris', section: 'reminders' },
   { to: '/users', icon: UserCog, label: 'Usuaris', section: 'users' },
   { to: '/equipment', icon: Camera, label: 'Inventari equips', section: 'equipment' },
-  { to: '/agent', icon: Bot, label: 'Agent comptable', section: null },
+  { to: '/agent', icon: Bot, label: 'Agent comptable', section: 'agent' },
   { to: '/ai-costs', icon: BrainCircuit, label: 'Costos IA', section: null, adminOnly: true },
 ];
 
