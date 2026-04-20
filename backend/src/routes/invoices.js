@@ -1318,6 +1318,21 @@ router.put('/received/:id', authorize('ADMIN', 'EDITOR'), async (req, res, next)
     if (body.irpfAmount !== undefined) data.irpfAmount = parseFloat(body.irpfAmount) || 0;
     if (body.totalAmount !== undefined) data.totalAmount = parseFloat(body.totalAmount) || 0;
 
+    // Factura compartida SEITO-LOGISTIK
+    if (body.isShared !== undefined) data.isShared = Boolean(body.isShared);
+    if (body.sharedPercentSeito !== undefined) {
+      data.sharedPercentSeito = parseFloat(body.sharedPercentSeito) || 50;
+      if (body.sharedPercentLogistik === undefined) {
+        data.sharedPercentLogistik = 100 - data.sharedPercentSeito;
+      }
+    }
+    if (body.sharedPercentLogistik !== undefined) {
+      data.sharedPercentLogistik = parseFloat(body.sharedPercentLogistik) || 50;
+      if (body.sharedPercentSeito === undefined) {
+        data.sharedPercentSeito = 100 - data.sharedPercentLogistik;
+      }
+    }
+
     // Netejar camps amb valor undefined (no enviar-los a Prisma)
     for (const key of Object.keys(data)) {
       if (data[key] === undefined) delete data[key];

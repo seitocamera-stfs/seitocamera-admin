@@ -3,6 +3,7 @@ import {
   LayoutDashboard,
   FileInput,
   FileOutput,
+  Split,
   Truck,
   Users,
   Landmark,
@@ -20,6 +21,7 @@ import { canAccessSection } from '../../lib/permissions';
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard', section: 'dashboard' },
   { to: '/invoices/received', icon: FileInput, label: 'Factures rebudes', section: 'receivedInvoices' },
+  { to: '/invoices/shared', icon: Split, label: 'Compartides', section: 'receivedInvoices' },
   { to: '/invoices/issued', icon: FileOutput, label: 'Factures emeses', section: 'issuedInvoices' },
   { to: '/suppliers', icon: Truck, label: 'Proveïdors', section: 'suppliers' },
   { to: '/clients', icon: Users, label: 'Clients', section: 'clients' },

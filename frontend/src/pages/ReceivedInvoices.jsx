@@ -388,6 +388,9 @@ export default function ReceivedInvoices() {
       isDuplicate: inv.isDuplicate || false,
       duplicateOfId: inv.duplicateOfId || null,
       alerts: inv.alerts || [],
+      isShared: inv.isShared || false,
+      sharedPercentSeito: inv.sharedPercentSeito ?? 50,
+      sharedPercentLogistik: inv.sharedPercentLogistik ?? 50,
     });
     setShowEditModal(true);
 
@@ -477,6 +480,9 @@ export default function ReceivedInvoices() {
         supplierId: data.supplierId || null,
         issueDate: data.issueDate,
         dueDate: data.dueDate || null,
+        isShared: data.isShared || false,
+        sharedPercentSeito: parseFloat(data.sharedPercentSeito) || 50,
+        sharedPercentLogistik: parseFloat(data.sharedPercentLogistik) || 50,
       };
       if (forceOverwrite) payload.forceOverwrite = true;
 
@@ -1546,6 +1552,60 @@ export default function ReceivedInvoices() {
               <label className="block text-sm font-medium mb-1">Descripció</label>
               <textarea value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} className="w-full rounded-md border bg-background px-3 py-2 text-sm" rows={2} />
             </div>
+            {/* Factura compartida SEITO-LOGISTIK */}
+            <div className="p-3 border rounded-md bg-muted/20 space-y-2">
+              <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={editForm.isShared || false}
+                  onChange={(e) => setEditForm({ ...editForm, isShared: e.target.checked })}
+                  className="rounded"
+                />
+                Compartida SEITO · LOGISTIK
+              </label>
+              {editForm.isShared && (
+                <div className="flex items-center gap-3 text-sm">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-blue-600 font-medium text-xs">Seito</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value={editForm.sharedPercentSeito ?? 50}
+                      onChange={(e) => {
+                        const v = parseFloat(e.target.value) || 0;
+                        setEditForm({ ...editForm, sharedPercentSeito: v, sharedPercentLogistik: 100 - v });
+                      }}
+                      className="w-16 px-2 py-1 border rounded text-xs text-center"
+                    />
+                    <span className="text-xs text-muted-foreground">%</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-orange-600 font-medium text-xs">Logistik</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value={editForm.sharedPercentLogistik ?? 50}
+                      onChange={(e) => {
+                        const v = parseFloat(e.target.value) || 0;
+                        setEditForm({ ...editForm, sharedPercentLogistik: v, sharedPercentSeito: 100 - v });
+                      }}
+                      className="w-16 px-2 py-1 border rounded text-xs text-center"
+                    />
+                    <span className="text-xs text-muted-foreground">%</span>
+                  </div>
+                  {editForm.totalAmount > 0 && (
+                    <span className="text-xs text-muted-foreground ml-auto">
+                      ({formatCurrency(editForm.totalAmount * (editForm.sharedPercentSeito ?? 50) / 100)} / {formatCurrency(editForm.totalAmount * (editForm.sharedPercentLogistik ?? 50) / 100)})
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* Secció equips extrets */}
             {editForm.id && (
               <EquipmentSection invoiceId={editForm.id} />

@@ -64,6 +64,9 @@ model Supplier {
   country     String   @default("ES")
   notes       String?
   isActive    Boolean  @default(true)
+  isSharedDefault       Boolean  @default(false)  // Si les factures d'aquest proveïdor són compartides per defecte
+  sharedPercentSeito    Decimal  @default(50) @db.Decimal(5, 2)  // % Seito per defecte
+  sharedPercentLogistik Decimal  @default(50) @db.Decimal(5, 2)  // % Logistik per defecte
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -203,6 +206,11 @@ model ReceivedInvoice {
   // Extracció d'equips
   equipmentExtracted  Boolean   @default(false)  // Si ja s'ha intentat extreure equips
 
+  // Factura compartida SEITO-LOGISTIK
+  isShared              Boolean  @default(false)   // Si la factura es reparteix entre dues empreses
+  sharedPercentSeito    Decimal  @default(50) @db.Decimal(5, 2)  // % que paga Seito
+  sharedPercentLogistik Decimal  @default(50) @db.Decimal(5, 2)  // % que paga Logistik
+
   // Relacions
   supplier         Supplier?          @relation(fields: [supplierId], references: [id])
   conciliations    Conciliation[]
@@ -216,6 +224,7 @@ model ReceivedInvoice {
   @@index([supplierId])
   @@index([accountingType])
   @@index([deletedAt])
+  @@index([isShared])
   @@map("received_invoices")
 }
 

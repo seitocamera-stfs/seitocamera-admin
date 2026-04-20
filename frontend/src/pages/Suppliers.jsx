@@ -13,7 +13,7 @@ export default function Suppliers() {
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedSupplier, setSelectedSupplier] = useState(null);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ name: '', nif: '', email: '', phone: '', address: '', city: '', postalCode: '' });
+  const [form, setForm] = useState({ name: '', nif: '', email: '', phone: '', address: '', city: '', postalCode: '', isSharedDefault: false, sharedPercentSeito: 50, sharedPercentLogistik: 50 });
 
   const handleViewPdf = async (invoiceId) => {
     try {
@@ -43,7 +43,7 @@ export default function Suppliers() {
       }
       setShowModal(false);
       setEditing(null);
-      setForm({ name: '', nif: '', email: '', phone: '', address: '', city: '', postalCode: '' });
+      setForm({ name: '', nif: '', email: '', phone: '', address: '', city: '', postalCode: '', isSharedDefault: false, sharedPercentSeito: 50, sharedPercentLogistik: 50 });
       refetch();
     } catch (err) {
       alert(err.message);
@@ -60,6 +60,9 @@ export default function Suppliers() {
       address: supplier.address || '',
       city: supplier.city || '',
       postalCode: supplier.postalCode || '',
+      isSharedDefault: supplier.isSharedDefault || false,
+      sharedPercentSeito: supplier.sharedPercentSeito ?? 50,
+      sharedPercentLogistik: supplier.sharedPercentLogistik ?? 50,
     });
     setShowModal(true);
   };
@@ -72,7 +75,7 @@ export default function Suppliers() {
 
   const handleNew = () => {
     setEditing(null);
-    setForm({ name: '', nif: '', email: '', phone: '', address: '', city: '', postalCode: '' });
+    setForm({ name: '', nif: '', email: '', phone: '', address: '', city: '', postalCode: '', isSharedDefault: false, sharedPercentSeito: 50, sharedPercentLogistik: 50 });
     setShowModal(true);
   };
 
@@ -180,6 +183,26 @@ export default function Suppliers() {
             <div className="col-span-2">
               <label className="block text-sm font-medium mb-1">Adreça</label>
               <input type="text" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} className="w-full rounded-md border bg-background px-3 py-2 text-sm" />
+            </div>
+            <div className="col-span-2 p-3 border rounded-md bg-muted/20 space-y-2">
+              <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+                <input type="checkbox" checked={form.isSharedDefault || false} onChange={(e) => setForm({ ...form, isSharedDefault: e.target.checked })} className="rounded" />
+                Factures compartides SEITO · LOGISTIK per defecte
+              </label>
+              {form.isSharedDefault && (
+                <div className="flex items-center gap-3 text-sm">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-blue-600 font-medium text-xs">Seito</span>
+                    <input type="number" min="0" max="100" value={form.sharedPercentSeito ?? 50} onChange={(e) => { const v = parseFloat(e.target.value) || 0; setForm({ ...form, sharedPercentSeito: v, sharedPercentLogistik: 100 - v }); }} className="w-16 px-2 py-1 border rounded text-xs text-center" />
+                    <span className="text-xs text-muted-foreground">%</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-orange-600 font-medium text-xs">Logistik</span>
+                    <input type="number" min="0" max="100" value={form.sharedPercentLogistik ?? 50} onChange={(e) => { const v = parseFloat(e.target.value) || 0; setForm({ ...form, sharedPercentLogistik: v, sharedPercentSeito: 100 - v }); }} className="w-16 px-2 py-1 border rounded text-xs text-center" />
+                    <span className="text-xs text-muted-foreground">%</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           <div className="flex justify-end gap-2 pt-2">
