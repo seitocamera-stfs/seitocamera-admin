@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import {
   FileInput, FileOutput, Landmark, Bell, Calendar,
   TrendingUp, Users, Building2, PieChart as PieIcon,
-  AlertTriangle, Clock, CreditCard, CheckCircle2,
+  AlertTriangle, Clock, CreditCard, CheckCircle2, Mail, X,
 } from 'lucide-react';
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
@@ -92,6 +92,10 @@ function CurrencyTooltip({ active, payload, label }) {
 
 export default function Dashboard() {
   const user = useAuthStore((s) => s.user);
+
+  // Estat: modal recordatori de pagament
+  const [reminderModal, setReminderModal] = useState(null); // { to, subject, body, clientName, invoiceNumber, ... }
+  const [reminderLoading, setReminderLoading] = useState(false);
 
   // Estat: rang de dates configurable (per defecte any natural)
   const currentYear = new Date().getFullYear();
@@ -244,6 +248,27 @@ export default function Dashboard() {
       : visibleStats.length === 2
         ? 'lg:grid-cols-2'
         : 'lg:grid-cols-1';
+
+  // Carregar recordatori de pagament
+  const handlePaymentReminder = async (invoiceId) => {
+    setReminderLoading(true);
+    try {
+      const res = await api.get(`/invoices/issued/${invoiceId}/payment-reminder`);
+      setReminderModal(res.data);
+    } catch (err) {
+      alert('Error generant el recordatori: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setReminderLoading(false);
+    }
+  };
+
+  // Enviar recordatori via mailto:
+  const handleSendReminder = () => {
+    if (!reminderModal) return;
+    const mailto = `mailto:${encodeURIComponent(reminderModal.to)}?subject=${encodeURIComponent(reminderModal.subject)}&body=${encodeURIComponent(reminderModal.body)}`;
+    window.open(mailto, '_blank');
+    setReminderModal(null);
+  };
 
   // Aplicar preset de rang
   const applyPreset = (months) => {
@@ -685,20 +710,33 @@ export default function Dashboard() {
                       </span>
                     </td>
                     <td className="p-3 text-center">
-                      <button
-                        onClick={async () => {
-                          if (!confirm(`Marcar la factura ${inv.invoiceNumber} com a cobrada?`)) return;
-                          try {
-                            await api.patch(`/invoices/issued/${inv.id}/status`, { status: 'PAID' });
-                            refetchStats();
-                          } catch { alert('Error actualitzant l\'estat'); }
-                        }}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-green-50 text-green-700 hover:bg-green-100 transition-colors"
-                        title="Marcar com a cobrada"
-                      >
-                        <CheckCircle2 size={13} />
-                        Cobrada
-                      </button>
+                      <div className="flex items-center justify-center gap-1">
+                        {inv.daysPending >= 90 && (
+                          <button
+                            onClick={() => handlePaymentReminder(inv.id)}
+                            disabled={reminderLoading}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors"
+                            title="Enviar recordatori de pagament"
+                          >
+                            <Mail size={13} />
+                            Recordar
+                          </button>
+                        )}
+                        <button
+                          onClick={async () => {
+                            if (!confirm(`Marcar la factura ${inv.invoiceNumber} com a cobrada?`)) return;
+                            try {
+                              await api.patch(`/invoices/issued/${inv.id}/status`, { status: 'PAID' });
+                              refetchStats();
+                            } catch { alert('Error actualitzant l\'estat'); }
+                          }}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-green-50 text-green-700 hover:bg-green-100 transition-colors"
+                          title="Marcar com a cobrada"
+                        >
+                          <CheckCircle2 size={13} />
+                          Cobrada
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -760,6 +798,72 @@ export default function Dashboard() {
         <div className="bg-card border rounded-lg p-8 text-center text-muted-foreground">
           <p>No tens panells assignats al teu rol.</p>
           <p className="text-sm mt-1">Contacta amb l'administrador si necessites accés a més seccions.</p>
+        </div>
+      )}
+
+      {/* Modal: Recordatori de pagament */}
+      {reminderModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-card rounded-lg border shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-4 border-b">
+              <div className="flex items-center gap-2">
+                <Mail size={18} className="text-amber-500" />
+                <h3 className="font-semibold">Recordatori de pagament</h3>
+              </div>
+              <button onClick={() => setReminderModal(null)} className="p-1 rounded hover:bg-muted">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">Destinatari</label>
+                <input
+                  type="email"
+                  value={reminderModal.to}
+                  onChange={(e) => setReminderModal({ ...reminderModal, to: e.target.value })}
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">Assumpte</label>
+                <input
+                  type="text"
+                  value={reminderModal.subject}
+                  onChange={(e) => setReminderModal({ ...reminderModal, subject: e.target.value })}
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">Cos del missatge</label>
+                <textarea
+                  value={reminderModal.body}
+                  onChange={(e) => setReminderModal({ ...reminderModal, body: e.target.value })}
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm font-mono"
+                  rows={12}
+                />
+              </div>
+              <div className="bg-muted/50 rounded-md p-3 text-xs text-muted-foreground space-y-1">
+                <p><strong>Client:</strong> {reminderModal.clientName}</p>
+                <p><strong>Factura:</strong> {reminderModal.invoiceNumber} — {formatCurrency(reminderModal.totalAmount)}</p>
+                <p><strong>Dies pendents:</strong> {reminderModal.daysPending}</p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 p-4 border-t">
+              <button
+                onClick={() => setReminderModal(null)}
+                className="px-4 py-2 rounded-md border text-sm"
+              >
+                Cancel·lar
+              </button>
+              <button
+                onClick={handleSendReminder}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-amber-500 text-white text-sm font-medium hover:bg-amber-600 transition-colors"
+              >
+                <Mail size={14} />
+                Obrir correu i enviar
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

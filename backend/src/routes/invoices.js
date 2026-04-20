@@ -1709,6 +1709,53 @@ router.delete('/issued/:id', requireLevel('issuedInvoices', 'admin'), async (req
 });
 
 // =============================================
+// GET /api/invoices/issued/:id/payment-reminder — Generar mail recordatori cobrament
+// =============================================
+router.get('/issued/:id/payment-reminder', async (req, res, next) => {
+  try {
+    const invoice = await prisma.issuedInvoice.findUnique({
+      where: { id: req.params.id },
+      include: { client: true },
+    });
+
+    if (!invoice) return res.status(404).json({ error: 'Factura no trobada' });
+
+    const daysPending = Math.floor((new Date() - new Date(invoice.issueDate)) / (1000 * 60 * 60 * 24));
+    const totalAmount = parseFloat(invoice.totalAmount) || 0;
+    const issueDate = new Date(invoice.issueDate).toLocaleDateString('ca-ES');
+    const dueDate = invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString('ca-ES') : null;
+
+    const subject = `Recordatori de pagament - Factura ${invoice.invoiceNumber}`;
+    const body = [
+      `Benvolgut/da,`,
+      ``,
+      `Ens posem en contacte amb vosaltres per recordar-vos que la factura ${invoice.invoiceNumber} emesa el ${issueDate}${dueDate ? ` amb venciment ${dueDate}` : ''} per un import de ${totalAmount.toFixed(2)} € es troba pendent de pagament des de fa ${daysPending} dies.`,
+      ``,
+      `Us agrairíem que procedíssiu al pagament al més aviat possible o, si ja s'ha efectuat, ens ho feu saber per poder actualitzar els nostres registres.`,
+      ``,
+      `Per a qualsevol dubte o aclariment, no dubteu en contactar-nos.`,
+      ``,
+      `Cordialment,`,
+      `Seito Camera S.L.`,
+    ].join('\n');
+
+    res.json({
+      to: invoice.client?.email || null,
+      clientName: invoice.client?.name || 'Desconegut',
+      subject,
+      body,
+      invoiceNumber: invoice.invoiceNumber,
+      totalAmount,
+      daysPending,
+      issueDate,
+      dueDate,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// =============================================
 // ESTADÍSTIQUES
 // =============================================
 
