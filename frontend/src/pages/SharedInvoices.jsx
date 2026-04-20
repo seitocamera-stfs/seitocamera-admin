@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, ExternalLink, Pencil } from 'lucide-react';
+import { ChevronDown, ChevronRight, ExternalLink, Pencil, Eye, Download, X } from 'lucide-react';
 import { useApiGet } from '../hooks/useApi';
 import { formatCurrency, formatDate } from '../lib/utils';
 import api from '../lib/api';
@@ -12,7 +12,44 @@ export default function SharedInvoices() {
   const [editingId, setEditingId] = useState(null);
   const [editPercent, setEditPercent] = useState(50);
 
+  const [pdfUrl, setPdfUrl] = useState(null);
+  const [pdfInvoice, setPdfInvoice] = useState(null);
+
   const { data, loading, refetch } = useApiGet('/shared-invoices', { year, groupBy });
+
+  const handleViewPdf = async (inv) => {
+    setPdfInvoice(inv);
+    setPdfUrl(null);
+    try {
+      const response = await api.get(`/invoices/received/${inv.id}/pdf`, { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      setPdfUrl(window.URL.createObjectURL(blob));
+    } catch {
+      alert('No s\'ha pogut carregar el PDF');
+      setPdfInvoice(null);
+    }
+  };
+
+  const handleDownloadPdf = async (inv) => {
+    try {
+      const response = await api.get(`/invoices/received/${inv.id}/pdf`, { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${inv.invoiceNumber || 'factura'}.pdf`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      alert('No s\'ha pogut descarregar el PDF');
+    }
+  };
+
+  const closePdfModal = () => {
+    if (pdfUrl) window.URL.revokeObjectURL(pdfUrl);
+    setPdfUrl(null);
+    setPdfInvoice(null);
+  };
 
   const toggleGroup = (key) => {
     setExpanded((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -150,6 +187,20 @@ export default function SharedInvoices() {
                           <td className="p-3 text-right">
                             <div className="flex items-center justify-end gap-1">
                               <button
+                                onClick={() => handleViewPdf(inv)}
+                                className="p-1 rounded hover:bg-blue-50 text-blue-600"
+                                title="Veure PDF"
+                              >
+                                <Eye size={13} />
+                              </button>
+                              <button
+                                onClick={() => handleDownloadPdf(inv)}
+                                className="p-1 rounded hover:bg-green-50 text-green-600"
+                                title="Descarregar PDF"
+                              >
+                                <Download size={13} />
+                              </button>
+                              <button
                                 onClick={() => { setEditingId(inv.id); setEditPercent(parseFloat(inv.sharedPercentSeito)); }}
                                 className="p-1 rounded hover:bg-muted text-muted-foreground"
                                 title="Editar percentatge"
@@ -177,6 +228,37 @@ export default function SharedInvoices() {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Modal PDF */}
+      {pdfInvoice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={closePdfModal}>
+          <div className="bg-card rounded-lg shadow-xl w-[90vw] h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-3 border-b">
+              <div className="flex items-center gap-2">
+                <h3 className="font-semibold text-sm">{pdfInvoice.invoiceNumber}</h3>
+                <span className="text-xs text-muted-foreground">{pdfInvoice.supplier?.name}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => handleDownloadPdf(pdfInvoice)} className="p-1.5 rounded hover:bg-green-50 text-green-600" title="Descarregar">
+                  <Download size={16} />
+                </button>
+                <button onClick={closePdfModal} className="p-1.5 rounded hover:bg-muted text-muted-foreground">
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 p-2">
+              {pdfUrl ? (
+                <iframe src={pdfUrl} className="w-full h-full rounded border" title="PDF" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-muted-foreground">
+                  Carregant PDF...
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

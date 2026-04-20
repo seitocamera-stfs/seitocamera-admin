@@ -318,7 +318,29 @@ router.get('/stats', async (req, res, next) => {
       }
     }
 
-    // ----- 7. Totals generals (per cards de resum) -----
+    // ----- 7. Factures emeses pendents >60 dies -----
+    const sixtyDaysAgo = new Date();
+    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+
+    const overdueIssuedInvoices = await prisma.issuedInvoice.findMany({
+      where: {
+        status: { notIn: ['PAID'] },
+        issueDate: { lte: sixtyDaysAgo },
+      },
+      select: {
+        id: true,
+        invoiceNumber: true,
+        issueDate: true,
+        dueDate: true,
+        totalAmount: true,
+        status: true,
+        client: { select: { id: true, name: true } },
+      },
+      orderBy: { issueDate: 'asc' },
+      take: 50,
+    });
+
+    // ----- 8. Totals generals (per cards de resum) -----
     const [totalReceived, totalIssued, unconciliatedCount] = await Promise.all([
       prisma.receivedInvoice.aggregate({
         where: {
@@ -375,6 +397,21 @@ router.get('/stats', async (req, res, next) => {
         count: pendingPayments.length,
         overdueTotal,
         overdueCount,
+      },
+      overdueIssuedInvoices: {
+        invoices: overdueIssuedInvoices.map((inv) => ({
+          id: inv.id,
+          invoiceNumber: inv.invoiceNumber,
+          issueDate: inv.issueDate,
+          dueDate: inv.dueDate,
+          totalAmount: parseFloat(inv.totalAmount) || 0,
+          status: inv.status,
+          clientName: inv.client?.name || 'Desconegut',
+          clientId: inv.client?.id,
+          daysPending: Math.floor((now - new Date(inv.issueDate)) / (1000 * 60 * 60 * 24)),
+        })),
+        total: overdueIssuedInvoices.reduce((sum, inv) => sum + (parseFloat(inv.totalAmount) || 0), 0),
+        count: overdueIssuedInvoices.length,
       },
     });
   } catch (error) {

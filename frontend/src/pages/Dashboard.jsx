@@ -598,6 +598,58 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Factures emeses pendents >60 dies */}
+      {canSeeDashboardPanel(user, 'issuedPending') && stats?.overdueIssuedInvoices?.count > 0 && (
+        <div className="bg-card border rounded-lg mb-6">
+          <div className="p-4 border-b flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={18} className="text-red-500" />
+              <h3 className="font-semibold">Factures emeses pendents de cobrament (+60 dies)</h3>
+              <span className="text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded-full">
+                {stats.overdueIssuedInvoices.count}
+              </span>
+            </div>
+            <span className="text-sm text-muted-foreground">
+              Total: <span className="font-semibold text-foreground">{formatCurrency(stats.overdueIssuedInvoices.total)}</span>
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b bg-muted/50">
+                  <th className="text-left p-3 font-medium">Client</th>
+                  <th className="text-left p-3 font-medium">Nº Factura</th>
+                  <th className="text-left p-3 font-medium">Data emissió</th>
+                  <th className="text-left p-3 font-medium">Venciment</th>
+                  <th className="text-right p-3 font-medium">Import</th>
+                  <th className="text-center p-3 font-medium">Dies</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {stats.overdueIssuedInvoices.invoices.map((inv) => (
+                  <tr key={inv.id} className="hover:bg-muted/30 bg-red-50/30">
+                    <td className="p-3 font-medium">{inv.clientName}</td>
+                    <td className="p-3 text-muted-foreground">{inv.invoiceNumber || '—'}</td>
+                    <td className="p-3 text-muted-foreground">
+                      {inv.issueDate ? new Date(inv.issueDate).toLocaleDateString('ca-ES') : '—'}
+                    </td>
+                    <td className="p-3 text-muted-foreground">
+                      {inv.dueDate ? new Date(inv.dueDate).toLocaleDateString('ca-ES') : '—'}
+                    </td>
+                    <td className="p-3 text-right font-medium">{formatCurrency(inv.totalAmount)}</td>
+                    <td className="p-3 text-center">
+                      <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">
+                        {inv.daysPending}d
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Panells existents */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {canSeeDashboardPanel(user, 'recentReceived') && (
