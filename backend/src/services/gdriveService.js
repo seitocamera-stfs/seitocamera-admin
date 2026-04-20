@@ -298,6 +298,46 @@ async function moveFile(fileId, newParentId, oldParentId = null) {
 }
 
 /**
+ * Copia un fitxer a una altra carpeta dins de Google Drive
+ * @param {string} fileId - ID del fitxer original
+ * @param {string} destinationFolderId - ID de la carpeta destí
+ * @param {string} [newName] - Nom opcional per la còpia
+ * @returns {Object} - Dades del fitxer copiat (id, name, parents)
+ */
+async function copyFile(fileId, destinationFolderId, newName = null) {
+  const drive = getDriveClient();
+  const resource = { parents: [destinationFolderId] };
+  if (newName) resource.name = newName;
+
+  const res = await drive.files.copy({
+    fileId,
+    resource,
+    fields: 'id, name, parents',
+    supportsAllDrives: true,
+  });
+  logger.info(`Fitxer copiat a Google Drive: ${res.data.name} → carpeta ${destinationFolderId}`);
+  return res.data;
+}
+
+/**
+ * Busca una carpeta per nom al Drive (a qualsevol nivell).
+ * Retorna l'ID de la primera carpeta trobada, o null.
+ * @param {string} folderName - Nom exacte de la carpeta
+ * @returns {string|null}
+ */
+async function findFolderByName(folderName) {
+  const drive = getDriveClient();
+  const res = await drive.files.list({
+    q: `name='${folderName.replace(/'/g, "\\'")}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+    fields: 'files(id, name, parents)',
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true,
+    pageSize: 5,
+  });
+  return res.data.files?.length > 0 ? res.data.files[0].id : null;
+}
+
+/**
  * Elimina un fitxer de Google Drive (el mou a la paperera)
  */
 async function deleteFile(fileId) {
@@ -416,6 +456,8 @@ module.exports = {
   getFileLink,
   downloadFile,
   moveFile,
+  copyFile,
+  findFolderByName,
   deleteFile,
   getNewFiles,
   getNewFilesRecursive,

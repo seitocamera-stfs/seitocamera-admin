@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Bell, Check, Clock } from 'lucide-react';
+import { Plus, Bell, Check, Clock, Repeat } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import { PriorityBadge } from '../components/shared/StatusBadge';
 import Modal from '../components/shared/Modal';
@@ -8,7 +8,7 @@ import { formatDate } from '../lib/utils';
 export default function Reminders() {
   const [showCompleted, setShowCompleted] = useState(false);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ title: '', description: '', dueAt: '', priority: 'NORMAL' });
+  const [form, setForm] = useState({ title: '', description: '', dueAt: '', priority: 'NORMAL', recurrence: '' });
 
   const { data, loading, refetch } = useApiGet('/reminders', { completed: showCompleted ? undefined : 'false', limit: 50 });
   const { data: pendingData } = useApiGet('/reminders/pending');
@@ -20,10 +20,11 @@ export default function Reminders() {
       await mutate('post', '/reminders', {
         ...form,
         dueAt: new Date(form.dueAt).toISOString(),
+        recurrence: form.recurrence || null,
         mentionUserIds: [],
       });
       setShowModal(false);
-      setForm({ title: '', description: '', dueAt: '', priority: 'NORMAL' });
+      setForm({ title: '', description: '', dueAt: '', priority: 'NORMAL', recurrence: '' });
       refetch();
     } catch (err) {
       alert(err.message);
@@ -87,6 +88,12 @@ export default function Reminders() {
                     {formatDate(r.dueAt)}
                     {!r.isCompleted && isOverdue(r.dueAt) && ' (vençut)'}
                   </span>
+                  {r.recurrence && (
+                    <span className="flex items-center gap-1 text-blue-600">
+                      <Repeat size={12} />
+                      {{ DAILY: 'Diari', WEEKLY: 'Setmanal', MONTHLY: 'Mensual', QUARTERLY: 'Trimestral', YEARLY: 'Anual' }[r.recurrence]}
+                    </span>
+                  )}
                   {r.mentions?.length > 0 && (
                     <span className="flex items-center gap-1">
                       <Bell size={12} />
@@ -122,6 +129,17 @@ export default function Reminders() {
                 <option value="NORMAL">Normal</option>
                 <option value="HIGH">Alta</option>
                 <option value="URGENT">Urgent</option>
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="block text-sm font-medium mb-1">Recurrència</label>
+              <select value={form.recurrence} onChange={(e) => setForm({ ...form, recurrence: e.target.value })} className="w-full rounded-md border bg-background px-3 py-2 text-sm">
+                <option value="">Cap (una sola vegada)</option>
+                <option value="DAILY">Diari</option>
+                <option value="WEEKLY">Setmanal</option>
+                <option value="MONTHLY">Mensual</option>
+                <option value="QUARTERLY">Trimestral</option>
+                <option value="YEARLY">Anual</option>
               </select>
             </div>
           </div>
