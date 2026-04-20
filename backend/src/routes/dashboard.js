@@ -417,4 +417,81 @@ router.get('/stats', async (req, res, next) => {
   }
 });
 
+// ===========================================
+// GET /api/dashboard/top — Top clients i proveïdors amb rang independent
+// ===========================================
+router.get('/top', async (req, res, next) => {
+  try {
+    const { from, to } = parseDateRange(req);
+
+    // Top clients
+    const topClientsAgg = await prisma.issuedInvoice.groupBy({
+      by: ['clientId'],
+      where: { issueDate: { gte: from, lte: to } },
+      _sum: { totalAmount: true },
+      _count: { _all: true },
+      orderBy: { _sum: { totalAmount: 'desc' } },
+      take: 10,
+    });
+
+    const clientIds = topClientsAgg.map((c) => c.clientId).filter(Boolean);
+    const clientsInfo = clientIds.length
+      ? await prisma.client.findMany({
+          where: { id: { in: clientIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const clientsMap = new Map(clientsInfo.map((c) => [c.id, c.name]));
+
+    const topClients = topClientsAgg.map((c) => ({
+      clientId: c.clientId,
+      name: clientsMap.get(c.clientId) || 'Desconegut',
+      total: parseFloat(c._sum.totalAmount) || 0,
+      count: c._count._all,
+    }));
+
+    // Top proveïdors
+    const topSuppliersAgg = await prisma.receivedInvoice.groupBy({
+      by: ['supplierId'],
+      where: {
+        issueDate: { gte: from, lte: to },
+        supplierId: { not: null },
+        deletedAt: null,
+        isDuplicate: false,
+        totalAmount: { gt: 0, lt: MAX_REASONABLE_AMOUNT },
+        status: { notIn: ['AMOUNT_PENDING', 'NOT_INVOICE'] },
+      },
+      _sum: { totalAmount: true },
+      _count: { _all: true },
+      orderBy: { _sum: { totalAmount: 'desc' } },
+      take: 10,
+    });
+
+    const supplierIds = topSuppliersAgg.map((s) => s.supplierId).filter(Boolean);
+    const suppliersInfo = supplierIds.length
+      ? await prisma.supplier.findMany({
+          where: { id: { in: supplierIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const suppliersMap = new Map(suppliersInfo.map((s) => [s.id, s.name]));
+
+    const topSuppliers = topSuppliersAgg.map((s) => ({
+      supplierId: s.supplierId,
+      name: suppliersMap.get(s.supplierId) || 'Desconegut',
+      total: parseFloat(s._sum.totalAmount) || 0,
+      count: s._count._all,
+    }));
+
+    res.json({
+      range: { from: from.toISOString(), to: to.toISOString() },
+      topClients,
+      topSuppliers,
+    });
+  } catch (error) {
+    logger.error(`Dashboard top error: ${error.message}`);
+    next(error);
+  }
+});
+
 module.exports = router;

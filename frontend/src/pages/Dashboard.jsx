@@ -108,6 +108,24 @@ export default function Dashboard() {
     { from: dateFrom, to: dateTo }
   );
 
+  // Estat: rang de dates per Top Clients/Proveïdors (independent)
+  const [topPeriod, setTopPeriod] = useState('year'); // 'year', '3m', '6m', '12m', 'all'
+  const topRange = useMemo(() => {
+    const now = new Date();
+    const to = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    if (topPeriod === 'year') return { from: `${currentYear}-01-01`, to: `${currentYear}-12-31` };
+    if (topPeriod === '3m') { const f = new Date(now.getFullYear(), now.getMonth() - 2, 1); return { from: f.toISOString().split('T')[0], to: to.toISOString().split('T')[0] }; }
+    if (topPeriod === '6m') { const f = new Date(now.getFullYear(), now.getMonth() - 5, 1); return { from: f.toISOString().split('T')[0], to: to.toISOString().split('T')[0] }; }
+    if (topPeriod === '12m') { const f = new Date(now.getFullYear(), now.getMonth() - 11, 1); return { from: f.toISOString().split('T')[0], to: to.toISOString().split('T')[0] }; }
+    if (topPeriod === 'all') return { from: '2020-01-01', to: `${currentYear}-12-31` };
+    return { from: `${currentYear}-01-01`, to: `${currentYear}-12-31` };
+  }, [topPeriod, currentYear]);
+
+  const { data: topData, loading: topLoading } = useApiGet(
+    canSeeDashboard ? '/dashboard/top' : null,
+    topRange
+  );
+
   // Dades addicionals dels panells existents
   const { data: receivedData } = useApiGet(
     canSeeDashboardPanel(user, 'recentReceived')
@@ -137,22 +155,22 @@ export default function Dashboard() {
   }, [stats?.monthlyBilling]);
 
   const topClientsData = useMemo(() => {
-    if (!stats?.topClients) return [];
-    return stats.topClients.slice(0, 8).map((c) => ({
+    if (!topData?.topClients) return [];
+    return topData.topClients.slice(0, 8).map((c) => ({
       name: c.name.length > 20 ? c.name.slice(0, 18) + '…' : c.name,
       total: c.total,
       count: c.count,
     }));
-  }, [stats?.topClients]);
+  }, [topData?.topClients]);
 
   const topSuppliersData = useMemo(() => {
-    if (!stats?.topSuppliers) return [];
-    return stats.topSuppliers.slice(0, 8).map((s) => ({
+    if (!topData?.topSuppliers) return [];
+    return topData.topSuppliers.slice(0, 8).map((s) => ({
       name: s.name.length > 20 ? s.name.slice(0, 18) + '…' : s.name,
       total: s.total,
       count: s.count,
     }));
-  }, [stats?.topSuppliers]);
+  }, [topData?.topSuppliers]);
 
   const bankBalanceData = useMemo(() => {
     if (!stats?.bankBalance) return [];
@@ -380,6 +398,28 @@ export default function Dashboard() {
           )}
 
           {/* Top clients + Top proveïdors */}
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-muted-foreground">Període de rànquings:</span>
+            <div className="flex gap-1">
+              {[
+                { key: 'year', label: `${currentYear}` },
+                { key: '3m', label: '3M' },
+                { key: '6m', label: '6M' },
+                { key: '12m', label: '12M' },
+                { key: 'all', label: 'Tot' },
+              ].map((p) => (
+                <button
+                  key={p.key}
+                  onClick={() => setTopPeriod(p.key)}
+                  className={`text-xs px-2 py-1 rounded border transition-colors font-medium ${
+                    topPeriod === p.key ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {canSeeDashboardPanel(user, 'issuedPending') && (
               <div className="bg-card border rounded-lg p-5">
@@ -387,7 +427,7 @@ export default function Dashboard() {
                   <Users size={18} className="text-teal-600" />
                   <h3 className="font-semibold">Top clients per facturació</h3>
                 </div>
-                {statsLoading ? (
+                {topLoading ? (
                   <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">Carregant…</div>
                 ) : topClientsData.length === 0 ? (
                   <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">
@@ -413,7 +453,7 @@ export default function Dashboard() {
                   <Building2 size={18} className="text-blue-600" />
                   <h3 className="font-semibold">Top proveïdors per despesa</h3>
                 </div>
-                {statsLoading ? (
+                {topLoading ? (
                   <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">Carregant…</div>
                 ) : topSuppliersData.length === 0 ? (
                   <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">
