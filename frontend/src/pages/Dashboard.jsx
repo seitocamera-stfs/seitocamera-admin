@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import {
   FileInput, FileOutput, Landmark, Bell, Calendar,
   TrendingUp, Users, Building2, PieChart as PieIcon,
-  AlertTriangle, Clock, CreditCard,
+  AlertTriangle, Clock, CreditCard, CheckCircle2,
 } from 'lucide-react';
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
@@ -10,6 +10,7 @@ import {
 } from 'recharts';
 import { useApiGet } from '../hooks/useApi';
 import { formatCurrency } from '../lib/utils';
+import api from '../lib/api';
 import useAuthStore from '../stores/authStore';
 import { canSeeDashboardPanel } from '../lib/permissions';
 
@@ -102,7 +103,7 @@ export default function Dashboard() {
     || canSeeDashboardPanel(user, 'receivedPending')
     || canSeeDashboardPanel(user, 'issuedPending');
 
-  const { data: stats, loading: statsLoading } = useApiGet(
+  const { data: stats, loading: statsLoading, refetch: refetchStats } = useApiGet(
     canSeeDashboard ? '/dashboard/stats' : null,
     { from: dateFrom, to: dateTo }
   );
@@ -598,13 +599,13 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Factures emeses pendents >60 dies */}
+      {/* Factures emeses pendents de cobrament (des de 2025) */}
       {canSeeDashboardPanel(user, 'issuedPending') && stats?.overdueIssuedInvoices?.count > 0 && (
         <div className="bg-card border rounded-lg mb-6">
           <div className="p-4 border-b flex items-center justify-between">
             <div className="flex items-center gap-2">
               <AlertTriangle size={18} className="text-red-500" />
-              <h3 className="font-semibold">Factures emeses pendents de cobrament (+60 dies)</h3>
+              <h3 className="font-semibold">Factures emeses pendents de cobrament</h3>
               <span className="text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded-full">
                 {stats.overdueIssuedInvoices.count}
               </span>
@@ -623,6 +624,7 @@ export default function Dashboard() {
                   <th className="text-left p-3 font-medium">Venciment</th>
                   <th className="text-right p-3 font-medium">Import</th>
                   <th className="text-center p-3 font-medium">Dies</th>
+                  <th className="text-center p-3 font-medium">Acció</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
@@ -641,6 +643,22 @@ export default function Dashboard() {
                       <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">
                         {inv.daysPending}d
                       </span>
+                    </td>
+                    <td className="p-3 text-center">
+                      <button
+                        onClick={async () => {
+                          if (!confirm(`Marcar la factura ${inv.invoiceNumber} com a cobrada?`)) return;
+                          try {
+                            await api.patch(`/invoices/issued/${inv.id}/status`, { status: 'PAID' });
+                            refetchStats();
+                          } catch { alert('Error actualitzant l\'estat'); }
+                        }}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-green-50 text-green-700 hover:bg-green-100 transition-colors"
+                        title="Marcar com a cobrada"
+                      >
+                        <CheckCircle2 size={13} />
+                        Cobrada
+                      </button>
                     </td>
                   </tr>
                 ))}

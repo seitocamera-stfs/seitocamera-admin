@@ -318,14 +318,11 @@ router.get('/stats', async (req, res, next) => {
       }
     }
 
-    // ----- 7. Factures emeses pendents >60 dies -----
-    const sixtyDaysAgo = new Date();
-    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
-
+    // ----- 7. Factures emeses pendents de cobrament (des de 2025) -----
     const overdueIssuedInvoices = await prisma.issuedInvoice.findMany({
       where: {
         status: { notIn: ['PAID'] },
-        issueDate: { lte: sixtyDaysAgo },
+        issueDate: { gte: new Date('2025-01-01') },
       },
       select: {
         id: true,
