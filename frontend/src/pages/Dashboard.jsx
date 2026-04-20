@@ -92,10 +92,10 @@ function CurrencyTooltip({ active, payload, label }) {
 export default function Dashboard() {
   const user = useAuthStore((s) => s.user);
 
-  // Estat: rang de dates configurable (per defecte últims 12 mesos)
-  const defaultRange = getRangePreset(12);
-  const [dateFrom, setDateFrom] = useState(defaultRange.from);
-  const [dateTo, setDateTo] = useState(defaultRange.to);
+  // Estat: rang de dates configurable (per defecte any natural)
+  const currentYear = new Date().getFullYear();
+  const [dateFrom, setDateFrom] = useState(`${currentYear}-01-01`);
+  const [dateTo, setDateTo] = useState(`${currentYear}-12-31`);
 
   // Stats unificades del backend (quan l'usuari pot veure algun panell de dashboard)
   const canSeeDashboard = user?.role === 'ADMIN' || user?.role === 'EDITOR'
@@ -263,6 +263,10 @@ export default function Dashboard() {
               />
             </div>
             <div className="flex flex-wrap gap-1 ml-0 sm:ml-2">
+              <button onClick={() => { setDateFrom(`${currentYear}-01-01`); setDateTo(`${currentYear}-12-31`); }}
+                className="text-xs px-2 py-1 rounded border hover:bg-accent transition-colors font-medium">
+                Any
+              </button>
               <button onClick={() => applyPreset(3)}
                 className="text-xs px-2 py-1 rounded border hover:bg-accent transition-colors">
                 3M
