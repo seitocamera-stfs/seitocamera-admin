@@ -53,8 +53,8 @@ app.use(helmet({
 const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173').split(',');
 app.use(cors({
   origin: (origin, callback) => {
-    // Permetre peticions sense origin (curl, apps mòbils en dev)
-    if (!origin && process.env.NODE_ENV !== 'production') return callback(null, true);
+    // Permetre peticions sense origin (healthcheck intern, nginx reverse proxy)
+    if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) return callback(null, true);
     callback(new Error('CORS no permès'));
   },
