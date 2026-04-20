@@ -4,6 +4,7 @@ WORKDIR /app
 
 # Dependències del sistema per compilar mòduls natius (canvas, sharp, etc.)
 RUN apk add --no-cache \
+    openssl \
     python3 \
     make \
     g++ \
