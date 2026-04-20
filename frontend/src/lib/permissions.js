@@ -26,6 +26,7 @@ export const SECTIONS = {
   bank: { label: 'Moviments bancaris', path: '/bank' },
   conciliation: { label: 'Conciliació', path: '/conciliation' },
   reminders: { label: 'Recordatoris', path: '/reminders' },
+  equipment: { label: 'Inventari equips', path: '/equipment' },
   users: { label: 'Usuaris', path: '/users' },
 };
 
@@ -40,6 +41,7 @@ export const CUSTOMIZABLE_SECTIONS = [
   'bank',
   'conciliation',
   'reminders',
+  'equipment',
 ];
 
 const LEVEL_ORDER = { read: 1, write: 2, admin: 3 };
@@ -61,6 +63,7 @@ export const ROLE_PERMISSIONS = {
     bank: 'admin',
     conciliation: 'admin',
     reminders: 'admin',
+    equipment: 'admin',
     users: 'admin',
     // Panells del dashboard
     _dashboardPanels: [
@@ -77,6 +80,7 @@ export const ROLE_PERMISSIONS = {
     bank: 'write',
     conciliation: 'write',
     reminders: 'write',
+    equipment: 'write',
     _dashboardPanels: [
       'receivedPending', 'issuedPending', 'unconciliated',
       'reminders', 'recentReceived', 'unconciliatedList',

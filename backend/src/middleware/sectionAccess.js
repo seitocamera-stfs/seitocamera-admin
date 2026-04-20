@@ -25,6 +25,7 @@ const ROLE_PERMISSIONS = {
     bank: 'admin',
     conciliation: 'admin',
     reminders: 'admin',
+    equipment: 'admin',
     users: 'admin',
   },
   EDITOR: {
@@ -36,6 +37,7 @@ const ROLE_PERMISSIONS = {
     bank: 'write',
     conciliation: 'write',
     reminders: 'write',
+    equipment: 'write',
     // no users
   },
   VIEWER: {

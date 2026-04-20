@@ -1,11 +1,13 @@
 const express = require('express');
 const { prisma } = require('../config/database');
 const { authenticate, authorize } = require('../middleware/auth');
+const { requireSection, requireLevel } = require('../middleware/sectionAccess');
 const equipmentService = require('../services/equipmentExtractService');
 
 const router = express.Router();
 
 router.use(authenticate);
+router.use(requireSection('equipment'));
 
 // ===========================================
 // GET /api/equipment — Llistar equips
