@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Plus, Search, ArrowUpCircle, ArrowDownCircle, Trash2, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Plus, Search, ArrowUpCircle, ArrowDownCircle, Trash2, RefreshCw, CheckCircle2, AlertCircle, MessageSquare, Send, X } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import Modal from '../components/shared/Modal';
 import { formatCurrency, formatDate } from '../lib/utils';
@@ -64,6 +64,10 @@ export default function BankMovements() {
   const [form, setForm] = useState({ date: '', description: '', amount: '', type: 'EXPENSE', reference: '' });
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState(null);
+  const [notesOpen, setNotesOpen] = useState(null); // ID del moviment amb notes obertes
+  const [notes, setNotes] = useState([]);
+  const [newNote, setNewNote] = useState('');
+  const [loadingNotes, setLoadingNotes] = useState(false);
 
   const { data, loading, refetch } = useApiGet('/bank', { search, type: typeFilter || undefined, conciliated: conciliatedFilter || undefined, page, limit: 50 });
   const { mutate } = useApiMutation();
@@ -79,6 +83,34 @@ export default function BankMovements() {
   useEffect(() => {
     fetchLastSync();
   }, [fetchLastSync]);
+
+  // Notes
+  const openNotes = async (movementId) => {
+    if (notesOpen === movementId) { setNotesOpen(null); return; }
+    setNotesOpen(movementId);
+    setLoadingNotes(true);
+    try {
+      const { data: notesData } = await api.get('/notes', { params: { entityType: 'bank_movement', entityId: movementId } });
+      setNotes(notesData);
+    } catch { setNotes([]); }
+    setLoadingNotes(false);
+  };
+
+  const addNote = async (movementId) => {
+    if (!newNote.trim()) return;
+    try {
+      const { data: note } = await api.post('/notes', { content: newNote.trim(), entityType: 'bank_movement', entityId: movementId });
+      setNotes((prev) => [note, ...prev]);
+      setNewNote('');
+    } catch {}
+  };
+
+  const deleteNote = async (noteId) => {
+    try {
+      await api.delete(`/notes/${noteId}`);
+      setNotes((prev) => prev.filter((n) => n.id !== noteId));
+    } catch {}
+  };
 
   const handleSync = async () => {
     setSyncing(true);
@@ -158,17 +190,19 @@ export default function BankMovements() {
               <th className="text-left p-3 font-medium">Referència</th>
               <th className="text-right p-3 font-medium">Import</th>
               <th className="text-center p-3 font-medium">Conciliat</th>
+              <th className="text-center p-3 font-medium">Notes</th>
               <th className="text-right p-3 font-medium">Accions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
+              <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
             ) : data?.data?.length === 0 ? (
-              <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">Cap moviment trobat</td></tr>
+              <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">Cap moviment trobat</td></tr>
             ) : (
               data?.data?.map((m) => (
-                <tr key={m.id} className="border-t hover:bg-muted/30">
+                <React.Fragment key={m.id}>
+                <tr className="border-t hover:bg-muted/30">
                   <td className="p-3 text-muted-foreground">{formatDate(m.date)}</td>
                   <td className="p-3">
                     <div>{m.description}</div>
@@ -188,10 +222,57 @@ export default function BankMovements() {
                       {m.isConciliated ? 'Sí' : 'No'}
                     </span>
                   </td>
+                  <td className="p-3 text-center">
+                    <button
+                      onClick={() => openNotes(m.id)}
+                      className={`p-1.5 rounded hover:bg-muted ${notesOpen === m.id ? 'bg-muted text-primary' : 'text-muted-foreground'}`}
+                      title="Notes"
+                    >
+                      <MessageSquare size={14} />
+                    </button>
+                  </td>
                   <td className="p-3 text-right">
                     <button onClick={() => handleDelete(m.id)} className="p-1.5 rounded hover:bg-destructive/10 text-destructive"><Trash2 size={14} /></button>
                   </td>
                 </tr>
+                {notesOpen === m.id && (
+                  <tr className="bg-muted/20">
+                    <td colSpan={7} className="p-3">
+                      <div className="max-w-2xl">
+                        <div className="flex items-center gap-2 mb-2">
+                          <input
+                            type="text"
+                            value={newNote}
+                            onChange={(e) => setNewNote(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && addNote(m.id)}
+                            placeholder="Afegir nota..."
+                            className="flex-1 px-3 py-1.5 border rounded text-sm bg-background"
+                          />
+                          <button onClick={() => addNote(m.id)} disabled={!newNote.trim()} className="p-1.5 rounded bg-primary text-primary-foreground disabled:opacity-50"><Send size={14} /></button>
+                        </div>
+                        {loadingNotes ? (
+                          <p className="text-xs text-muted-foreground">Carregant...</p>
+                        ) : notes.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">Cap nota encara</p>
+                        ) : (
+                          <div className="space-y-1.5">
+                            {notes.map((n) => (
+                              <div key={n.id} className="flex items-start gap-2 text-xs bg-background rounded p-2 border">
+                                <div className="flex-1">
+                                  <span className="font-medium">{n.author?.name || 'Usuari'}</span>
+                                  <span className="text-muted-foreground ml-2">{formatDate(n.createdAt)}</span>
+                                  <p className="mt-0.5">{n.content}</p>
+                                </div>
+                                <button onClick={() => deleteNote(n.id)} className="p-0.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive shrink-0"><X size={12} /></button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
               ))
             )}
           </tbody>

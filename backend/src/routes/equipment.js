@@ -38,7 +38,7 @@ router.get('/', async (req, res, next) => {
         orderBy: { createdAt: 'desc' },
         include: {
           supplier: { select: { id: true, name: true } },
-          receivedInvoice: { select: { id: true, invoiceNumber: true, totalAmount: true, issueDate: true } },
+          receivedInvoice: { select: { id: true, invoiceNumber: true, totalAmount: true, issueDate: true, gdriveFileId: true } },
         },
       }),
       prisma.equipment.count({ where }),
@@ -94,7 +94,7 @@ router.get('/:id', async (req, res, next) => {
       where: { id: req.params.id },
       include: {
         supplier: { select: { id: true, name: true } },
-        receivedInvoice: { select: { id: true, invoiceNumber: true, totalAmount: true, issueDate: true, supplier: { select: { name: true } } } },
+        receivedInvoice: { select: { id: true, invoiceNumber: true, totalAmount: true, issueDate: true, gdriveFileId: true, supplier: { select: { name: true } } } },
       },
     });
     if (!item) return res.status(404).json({ error: 'Equip no trobat' });

@@ -219,10 +219,23 @@ export default function Equipment() {
                     <td className="p-3 text-muted-foreground text-xs">{item.supplier?.name || '—'}</td>
                     <td className="p-3 text-xs">
                       {item.receivedInvoice ? (
-                        <span className="text-muted-foreground" title={`Factura ${item.receivedInvoice.invoiceNumber}`}>
-                          {item.receivedInvoice.invoiceNumber}
-                          <span className="ml-1 text-muted-foreground/60">{formatDate(item.receivedInvoice.issueDate)}</span>
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <div>
+                            <span className="text-muted-foreground">{item.receivedInvoice.invoiceNumber}</span>
+                            <span className="ml-1 text-muted-foreground/60">{formatDate(item.receivedInvoice.issueDate)}</span>
+                          </div>
+                          {item.receivedInvoice.gdriveFileId && (
+                            <a
+                              href={`https://drive.google.com/file/d/${item.receivedInvoice.gdriveFileId}/view`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-blue-500 hover:text-blue-700 shrink-0"
+                              title="Obrir factura al Drive"
+                            >
+                              <ExternalLink size={13} />
+                            </a>
+                          )}
+                        </div>
                       ) : '—'}
                     </td>
                     <td className="p-3 text-right font-medium">{item.purchasePrice ? formatCurrency(item.purchasePrice) : '—'}</td>
