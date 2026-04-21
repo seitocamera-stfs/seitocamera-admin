@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Search, Check, X as XIcon, Trash2, Eye, RefreshCw, Download as DownloadIcon } from 'lucide-react';
+import { Plus, Search, Check, X as XIcon, Trash2, Eye, RefreshCw, Download as DownloadIcon, CircleDollarSign } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import api from '../lib/api';
 import { StatusBadge } from '../components/shared/StatusBadge';
@@ -315,7 +315,9 @@ export default function IssuedInvoices() {
                         <button onClick={() => handleStatusChange(inv.id, 'APPROVED')} className="p-1.5 rounded hover:bg-green-50 text-green-600" title="Aprovar"><Check size={14} /></button>
                       )}
                       {inv.status !== 'PAID' && (
-                        <button onClick={() => handleStatusChange(inv.id, 'PAID')} className="p-1.5 rounded hover:bg-emerald-50 text-emerald-600 text-xs font-medium" title="Marcar com pagada">Pagada</button>
+                        <button onClick={() => handleStatusChange(inv.id, 'PAID')} className="p-1.5 rounded hover:bg-emerald-50 text-emerald-600" title="Marcar com a pagada">
+                          <CircleDollarSign size={14} />
+                        </button>
                       )}
                     </div>
                   </td>
