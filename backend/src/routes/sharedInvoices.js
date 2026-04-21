@@ -1,4 +1,5 @@
 const express = require('express');
+const PDFDocument = require('pdfkit');
 const { prisma } = require('../config/database');
 const { authenticate, authorize } = require('../middleware/auth');
 
@@ -141,6 +142,226 @@ router.patch('/:id', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
     res.json(invoice);
   } catch (error) {
     if (error.code === 'P2025') return res.status(404).json({ error: 'Factura no trobada' });
+    next(error);
+  }
+});
+
+// ===========================================
+// POST /api/shared-invoices/extract-pdf — Generar extracte PDF de factures seleccionades
+// ===========================================
+router.post('/extract-pdf', async (req, res, next) => {
+  try {
+    const { invoiceIds, year, title } = req.body;
+
+    if (!invoiceIds?.length) {
+      return res.status(400).json({ error: 'Cal seleccionar almenys una factura' });
+    }
+
+    const invoices = await prisma.receivedInvoice.findMany({
+      where: { id: { in: invoiceIds }, isShared: true, deletedAt: null },
+      orderBy: { issueDate: 'asc' },
+      include: { supplier: { select: { name: true } } },
+    });
+
+    if (!invoices.length) {
+      return res.status(404).json({ error: 'Cap factura trobada' });
+    }
+
+    // Calcular imports
+    const rows = invoices.map((inv) => {
+      const total = parseFloat(inv.totalAmount);
+      const pSeito = parseFloat(inv.sharedPercentSeito) / 100;
+      const pLogistik = parseFloat(inv.sharedPercentLogistik) / 100;
+      return {
+        invoiceNumber: inv.invoiceNumber || '—',
+        supplier: inv.supplier?.name || '—',
+        issueDate: inv.issueDate,
+        total,
+        percentSeito: parseFloat(inv.sharedPercentSeito),
+        percentLogistik: parseFloat(inv.sharedPercentLogistik),
+        amountSeito: +(total * pSeito).toFixed(2),
+        amountLogistik: +(total * pLogistik).toFixed(2),
+        paidBy: inv.paidBy === 'SEITO' ? 'Seito' : inv.paidBy === 'LOGISTIK' ? 'Logistik' : 'Pendent',
+      };
+    });
+
+    const totals = rows.reduce((acc, r) => ({
+      total: acc.total + r.total,
+      seito: acc.seito + r.amountSeito,
+      logistik: acc.logistik + r.amountLogistik,
+    }), { total: 0, seito: 0, logistik: 0 });
+
+    // Generar PDF
+    const doc = new PDFDocument({
+      size: 'A4',
+      layout: 'landscape',
+      margins: { top: 40, bottom: 40, left: 30, right: 30 },
+      info: { Title: title || 'Extracte factures compartides', Author: 'SeitoCamera Admin' },
+    });
+
+    const chunks = [];
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('end', () => {
+      const buffer = Buffer.concat(chunks);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="extracte-compartides-${year || 'seleccio'}.pdf"`);
+      res.send(buffer);
+    });
+
+    const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    const startX = doc.page.margins.left;
+
+    // Títol
+    doc.fontSize(16).font('Helvetica-Bold').text(title || 'Extracte factures compartides', { align: 'center' });
+    doc.moveDown(0.3);
+    doc.fontSize(9).font('Helvetica').fillColor('#666666').text(
+      `SEITO CAMERA · LA LOGISTIK FILM SERVICES — ${rows.length} factures — Generat: ${new Date().toLocaleDateString('ca-ES')}`,
+      { align: 'center' }
+    );
+    doc.moveDown(0.8);
+    doc.fillColor('#000000');
+
+    // Columnes
+    const columns = [
+      { label: 'Factura', width: 1.3 },
+      { label: 'Proveïdor', width: 2.2 },
+      { label: 'Data', width: 1 },
+      { label: 'Total', width: 1.2, align: 'right' },
+      { label: '%', width: 0.7, align: 'center' },
+      { label: 'Seito', width: 1.2, align: 'right' },
+      { label: 'Logistik', width: 1.2, align: 'right' },
+      { label: 'Pagat per', width: 1, align: 'center' },
+    ];
+    const totalWeight = columns.reduce((s, c) => s + c.width, 0);
+    const colWidths = columns.map((c) => (c.width / totalWeight) * pageWidth);
+
+    const rowHeight = 18;
+    const headerHeight = 22;
+    let y = doc.y;
+
+    function fmtDate(d) {
+      if (!d) return '';
+      const dt = new Date(d);
+      return `${dt.getDate().toString().padStart(2, '0')}/${(dt.getMonth() + 1).toString().padStart(2, '0')}/${dt.getFullYear()}`;
+    }
+    function fmtCurrency(n) {
+      return parseFloat(n).toLocaleString('ca-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+    }
+
+    function drawHeader() {
+      doc.rect(startX, y, pageWidth, headerHeight).fill('#1F2937');
+      let x = startX;
+      doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#FFFFFF');
+      for (let i = 0; i < columns.length; i++) {
+        doc.text(columns[i].label, x + 3, y + 6, { width: colWidths[i] - 6, height: headerHeight, ellipsis: true });
+        x += colWidths[i];
+      }
+      y += headerHeight;
+      doc.fillColor('#000000');
+    }
+
+    drawHeader();
+
+    doc.font('Helvetica').fontSize(7);
+    for (let r = 0; r < rows.length; r++) {
+      if (y + rowHeight > doc.page.height - doc.page.margins.bottom) {
+        doc.addPage();
+        y = doc.page.margins.top;
+        drawHeader();
+        doc.font('Helvetica').fontSize(7);
+      }
+
+      if (r % 2 === 0) {
+        doc.rect(startX, y, pageWidth, rowHeight).fill('#F9FAFB');
+        doc.fillColor('#000000');
+      }
+
+      const row = rows[r];
+      const vals = [
+        row.invoiceNumber,
+        row.supplier,
+        fmtDate(row.issueDate),
+        fmtCurrency(row.total),
+        `${row.percentSeito}/${row.percentLogistik}`,
+        fmtCurrency(row.amountSeito),
+        fmtCurrency(row.amountLogistik),
+        row.paidBy,
+      ];
+
+      let x = startX;
+      for (let i = 0; i < vals.length; i++) {
+        doc.text(String(vals[i]), x + 3, y + 5, { width: colWidths[i] - 6, height: rowHeight, ellipsis: true });
+        x += colWidths[i];
+      }
+
+      doc.moveTo(startX, y + rowHeight).lineTo(startX + pageWidth, y + rowHeight).strokeColor('#E5E7EB').lineWidth(0.5).stroke();
+      y += rowHeight;
+    }
+
+    // Fila totals
+    y += 5;
+    if (y + 25 > doc.page.height - doc.page.margins.bottom) {
+      doc.addPage();
+      y = doc.page.margins.top;
+    }
+
+    doc.rect(startX, y, pageWidth, 22).fill('#F3F4F6');
+    doc.fillColor('#000000').font('Helvetica-Bold').fontSize(8);
+
+    let x = startX;
+    const totalVals = [
+      'TOTALS', '', `${rows.length} fact.`,
+      fmtCurrency(totals.total), '',
+      fmtCurrency(totals.seito), fmtCurrency(totals.logistik), '',
+    ];
+    for (let i = 0; i < totalVals.length; i++) {
+      if (totalVals[i]) {
+        doc.text(totalVals[i], x + 3, y + 6, { width: colWidths[i] - 6 });
+      }
+      x += colWidths[i];
+    }
+
+    // Resum balanç Seito vs Logistik
+    y += 30;
+    if (y + 60 > doc.page.height - doc.page.margins.bottom) {
+      doc.addPage();
+      y = doc.page.margins.top;
+    }
+
+    doc.fontSize(10).font('Helvetica-Bold').text('Resum de balanç', startX, y);
+    y += 18;
+    doc.fontSize(9).font('Helvetica');
+
+    const seitoPaid = rows.filter((r) => r.paidBy === 'Seito').reduce((s, r) => s + r.total, 0);
+    const logistikPaid = rows.filter((r) => r.paidBy === 'Logistik').reduce((s, r) => s + r.total, 0);
+    const pendingPaid = rows.filter((r) => r.paidBy === 'Pendent').reduce((s, r) => s + r.total, 0);
+
+    doc.text(`Part Seito: ${fmtCurrency(totals.seito)}  |  Part Logistik: ${fmtCurrency(totals.logistik)}`, startX, y);
+    y += 15;
+    doc.text(`Pagat per Seito: ${fmtCurrency(seitoPaid)}  |  Pagat per Logistik: ${fmtCurrency(logistikPaid)}  |  Pendent: ${fmtCurrency(pendingPaid)}`, startX, y);
+    y += 15;
+
+    // Calcular qui deu a qui
+    const seitoShouldPay = totals.seito;
+    const logistikShouldPay = totals.logistik;
+    const seitoActuallyPaid = seitoPaid;
+    const logistikActuallyPaid = logistikPaid;
+    const seitoBalance = seitoActuallyPaid - seitoShouldPay; // positiu = ha pagat de més
+    const logistikBalance = logistikActuallyPaid - logistikShouldPay;
+
+    doc.font('Helvetica-Bold');
+    if (Math.abs(seitoBalance) > 0.01) {
+      if (seitoBalance > 0) {
+        doc.fillColor('#2563EB').text(`Logistik deu a Seito: ${fmtCurrency(seitoBalance)}`, startX, y);
+      } else {
+        doc.fillColor('#EA580C').text(`Seito deu a Logistik: ${fmtCurrency(Math.abs(seitoBalance))}`, startX, y);
+      }
+    } else {
+      doc.fillColor('#16A34A').text('Balanç equilibrat — no hi ha deutes pendents', startX, y);
+    }
+
+    doc.end();
+  } catch (error) {
     next(error);
   }
 });

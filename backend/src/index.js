@@ -77,11 +77,13 @@ if (process.env.NODE_ENV !== 'test') {
 // Desactivar header X-Powered-By (helmet ja ho fa, però per si de cas)
 app.disable('x-powered-by');
 
-// Rate limiting global
+// Rate limiting global (relaxat — endpoints sensibles com login tenen el seu propi limiter)
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minuts
-  max: 100,
+  max: 1000,
   message: { error: 'Massa peticions. Torna-ho a provar en 15 minuts.' },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 app.use('/api/', limiter);
 

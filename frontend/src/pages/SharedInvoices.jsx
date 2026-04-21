@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ChevronDown, ChevronRight, ExternalLink, Pencil, Eye, Download, X } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { ChevronDown, ChevronRight, ExternalLink, Pencil, Eye, Download, X, FileText, CheckSquare } from 'lucide-react';
 import { useApiGet } from '../hooks/useApi';
 import { formatCurrency, formatDate } from '../lib/utils';
 import api from '../lib/api';
@@ -14,8 +14,61 @@ export default function SharedInvoices() {
 
   const [pdfUrl, setPdfUrl] = useState(null);
   const [pdfInvoice, setPdfInvoice] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [extractLoading, setExtractLoading] = useState(false);
 
   const { data, loading, refetch } = useApiGet('/shared-invoices', { year, groupBy });
+
+  // Totes les factures aplanades
+  const allInvoices = useMemo(() => {
+    if (!data?.groups) return [];
+    return data.groups.flatMap((g) => g.invoices);
+  }, [data]);
+
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.length === allInvoices.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(allInvoices.map((inv) => inv.id));
+    }
+  };
+
+  const toggleSelectGroup = (group) => {
+    const groupIds = group.invoices.map((inv) => inv.id);
+    const allSelected = groupIds.every((id) => selectedIds.includes(id));
+    if (allSelected) {
+      setSelectedIds((prev) => prev.filter((id) => !groupIds.includes(id)));
+    } else {
+      setSelectedIds((prev) => [...new Set([...prev, ...groupIds])]);
+    }
+  };
+
+  const handleExtractPdf = async () => {
+    if (!selectedIds.length) return;
+    setExtractLoading(true);
+    try {
+      const response = await api.post('/shared-invoices/extract-pdf', {
+        invoiceIds: selectedIds,
+        year,
+        title: `Extracte factures compartides — ${year}`,
+      }, { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `extracte-compartides-${year}.pdf`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      alert('Error generant l\'extracte PDF');
+    } finally {
+      setExtractLoading(false);
+    }
+  };
 
   const handleViewPdf = async (inv) => {
     setPdfInvoice(inv);
@@ -83,11 +136,31 @@ export default function SharedInvoices() {
           <p className="text-sm text-muted-foreground mt-1">SEITO · LOGISTIK — Repartiment de costos</p>
         </div>
         <div className="flex items-center gap-3">
+          {selectedIds.length > 0 && (
+            <button
+              onClick={handleExtractPdf}
+              disabled={extractLoading}
+              className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            >
+              <FileText size={14} />
+              {extractLoading ? 'Generant...' : `Extracte PDF (${selectedIds.length})`}
+            </button>
+          )}
+          {allInvoices.length > 0 && (
+            <button
+              onClick={toggleSelectAll}
+              className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium border ${selectedIds.length === allInvoices.length ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+              title={selectedIds.length === allInvoices.length ? 'Deseleccionar tot' : 'Seleccionar tot'}
+            >
+              <CheckSquare size={14} />
+              {selectedIds.length > 0 ? `${selectedIds.length} sel.` : 'Sel. tot'}
+            </button>
+          )}
           <select value={groupBy} onChange={(e) => setGroupBy(e.target.value)} className="rounded-md border bg-background px-3 py-2 text-sm">
             <option value="month">Per mes</option>
             <option value="quarter">Per trimestre</option>
           </select>
-          <select value={year} onChange={(e) => setYear(parseInt(e.target.value))} className="rounded-md border bg-background px-3 py-2 text-sm">
+          <select value={year} onChange={(e) => { setYear(parseInt(e.target.value)); setSelectedIds([]); }} className="rounded-md border bg-background px-3 py-2 text-sm">
             {[currentYear, currentYear - 1, currentYear - 2].map((y) => (
               <option key={y} value={y}>{y}</option>
             ))}
@@ -129,10 +202,18 @@ export default function SharedInvoices() {
           {data.groups.map((group) => (
             <div key={group.key} className="bg-card border rounded-lg overflow-hidden">
               {/* Capçalera del grup */}
-              <button
-                onClick={() => toggleGroup(group.key)}
-                className="w-full flex items-center justify-between p-4 hover:bg-muted/30 transition-colors"
-              >
+              <div className="flex items-center p-4 hover:bg-muted/30 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={group.invoices.every((inv) => selectedIds.includes(inv.id))}
+                  onChange={() => toggleSelectGroup(group)}
+                  className="mr-3 h-4 w-4 rounded border-gray-300 shrink-0"
+                  onClick={(e) => e.stopPropagation()}
+                />
+                <button
+                  onClick={() => toggleGroup(group.key)}
+                  className="flex-1 flex items-center justify-between"
+                >
                 <div className="flex items-center gap-3">
                   {expanded[group.key] ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                   <span className="font-medium">{group.label}</span>
@@ -143,7 +224,8 @@ export default function SharedInvoices() {
                   <span className="text-blue-600 font-medium">{formatCurrency(group.totalSeito)}</span>
                   <span className="text-orange-600 font-medium">{formatCurrency(group.totalLogistik)}</span>
                 </div>
-              </button>
+                </button>
+              </div>
 
               {/* Detall factures */}
               {expanded[group.key] && (
@@ -151,6 +233,7 @@ export default function SharedInvoices() {
                   <table className="w-full text-sm">
                     <thead className="bg-muted/30">
                       <tr>
+                        <th className="p-3 w-8"></th>
                         <th className="text-left p-3 font-medium">Factura</th>
                         <th className="text-left p-3 font-medium">Proveïdor</th>
                         <th className="text-left p-3 font-medium">Data</th>
@@ -164,7 +247,15 @@ export default function SharedInvoices() {
                     </thead>
                     <tbody>
                       {group.invoices.map((inv) => (
-                        <tr key={inv.id} className="border-t hover:bg-muted/20">
+                        <tr key={inv.id} className={`border-t hover:bg-muted/20 ${selectedIds.includes(inv.id) ? 'bg-primary/5' : ''}`}>
+                          <td className="p-3">
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.includes(inv.id)}
+                              onChange={() => toggleSelect(inv.id)}
+                              className="h-4 w-4 rounded border-gray-300"
+                            />
+                          </td>
                           <td className="p-3 font-mono text-xs">{inv.invoiceNumber}</td>
                           <td className="p-3 text-muted-foreground">{inv.supplier?.name || '—'}</td>
                           <td className="p-3 text-muted-foreground">{formatDate(inv.issueDate)}</td>

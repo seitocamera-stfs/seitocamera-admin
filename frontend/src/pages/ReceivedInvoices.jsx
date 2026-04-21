@@ -129,6 +129,7 @@ export default function ReceivedInvoices() {
   const [sortBy, setSortBy] = useState('issueDate');
   const [sortDir, setSortDir] = useState('desc');
   const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(50);
   const [showModal, setShowModal] = useState(false);
   const [showPdfModal, setShowPdfModal] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -160,7 +161,7 @@ export default function ReceivedInvoices() {
     deleted: showTrash ? 'true' : undefined,
     alerts: showAlerts ? 'true' : undefined,
     page,
-    limit: 25,
+    limit: perPage,
   };
   const { data, loading, refetch } = useApiGet('/invoices/received', params);
   const { data: suppliersData, refetch: refetchSuppliers } = useApiGet('/suppliers', { limit: 500 });
@@ -999,14 +1000,28 @@ export default function ReceivedInvoices() {
           </tbody>
         </table>
 
-        {data?.pagination && data.pagination.totalPages > 1 && (
+        {data?.pagination && (
           <div className="flex items-center justify-between p-3 border-t text-sm">
-            <span className="text-muted-foreground">{data.pagination.total} factures</span>
-            <div className="flex gap-2">
-              <button onClick={() => { setPage(Math.max(1, page - 1)); clearSelection(); }} disabled={page === 1} className="px-3 py-1 rounded border disabled:opacity-50">Anterior</button>
-              <span className="px-3 py-1">{page} / {data.pagination.totalPages}</span>
-              <button onClick={() => { setPage(Math.min(data.pagination.totalPages, page + 1)); clearSelection(); }} disabled={page >= data.pagination.totalPages} className="px-3 py-1 rounded border disabled:opacity-50">Següent</button>
+            <div className="flex items-center gap-3">
+              <span className="text-muted-foreground">{data.pagination.total} factures</span>
+              <select
+                value={perPage}
+                onChange={(e) => { setPerPage(parseInt(e.target.value)); setPage(1); clearSelection(); }}
+                className="rounded border bg-background px-2 py-1 text-xs"
+              >
+                <option value={25}>25 / pàg</option>
+                <option value={50}>50 / pàg</option>
+                <option value={100}>100 / pàg</option>
+                <option value={200}>200 / pàg</option>
+              </select>
             </div>
+            {data.pagination.totalPages > 1 && (
+              <div className="flex gap-2">
+                <button onClick={() => { setPage(Math.max(1, page - 1)); clearSelection(); }} disabled={page === 1} className="px-3 py-1 rounded border disabled:opacity-50">Anterior</button>
+                <span className="px-3 py-1">{page} / {data.pagination.totalPages}</span>
+                <button onClick={() => { setPage(Math.min(data.pagination.totalPages, page + 1)); clearSelection(); }} disabled={page >= data.pagination.totalPages} className="px-3 py-1 rounded border disabled:opacity-50">Següent</button>
+              </div>
+            )}
           </div>
         )}
       </div>

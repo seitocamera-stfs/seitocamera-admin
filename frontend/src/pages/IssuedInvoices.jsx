@@ -314,7 +314,7 @@ export default function IssuedInvoices() {
                       {inv.status === 'PENDING' && (
                         <button onClick={() => handleStatusChange(inv.id, 'APPROVED')} className="p-1.5 rounded hover:bg-green-50 text-green-600" title="Aprovar"><Check size={14} /></button>
                       )}
-                      {inv.status === 'APPROVED' && (
+                      {inv.status !== 'PAID' && (
                         <button onClick={() => handleStatusChange(inv.id, 'PAID')} className="p-1.5 rounded hover:bg-emerald-50 text-emerald-600 text-xs font-medium" title="Marcar com pagada">Pagada</button>
                       )}
                     </div>

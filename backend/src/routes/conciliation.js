@@ -99,6 +99,44 @@ router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
       logger.info(`Auto-conciliació: ${dismissedTransfers} transferències internes descartades`);
     }
 
+    // 1b. Reparar inconsistències: conciliacions existents on la factura encara no està PAID
+    const inconsistentConciliations = await prisma.conciliation.findMany({
+      where: {
+        status: { in: ['CONFIRMED', 'AUTO_MATCHED', 'MANUAL_MATCHED'] },
+        OR: [
+          { receivedInvoice: { status: { not: 'PAID' } } },
+          { issuedInvoice: { status: { not: 'PAID' } } },
+        ],
+      },
+      include: {
+        receivedInvoice: { select: { id: true, invoiceNumber: true, status: true } },
+        issuedInvoice: { select: { id: true, invoiceNumber: true, status: true } },
+      },
+    });
+
+    let repairedInvoices = 0;
+    for (const conc of inconsistentConciliations) {
+      if (conc.receivedInvoice && conc.receivedInvoice.status !== 'PAID') {
+        await prisma.receivedInvoice.update({
+          where: { id: conc.receivedInvoice.id },
+          data: { status: 'PAID' },
+        });
+        repairedInvoices++;
+        logger.info(`Reparació: factura rebuda ${conc.receivedInvoice.invoiceNumber} marcada com PAID (conciliació ${conc.id})`);
+      }
+      if (conc.issuedInvoice && conc.issuedInvoice.status !== 'PAID') {
+        await prisma.issuedInvoice.update({
+          where: { id: conc.issuedInvoice.id },
+          data: { status: 'PAID' },
+        });
+        repairedInvoices++;
+        logger.info(`Reparació: factura emesa ${conc.issuedInvoice.invoiceNumber} marcada com PAID (conciliació ${conc.id})`);
+      }
+    }
+    if (repairedInvoices > 0) {
+      logger.info(`Auto-conciliació: ${repairedInvoices} factures reparades (tenien conciliació però status != PAID)`);
+    }
+
     // 2. Buscar moviments no conciliats restants (incloent transfers a proveïdors)
     const unconciliated = await prisma.bankMovement.findMany({
       where: {
@@ -298,6 +336,7 @@ router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
       pendingReview: matched - autoConfirmed,
       unmatched: allToProcess.length - matched,
       orphanedRecovered: orphanedMovements.length,
+      repairedInvoices,
       dismissedTransfers,
       details: details.slice(0, 50),
     });
@@ -510,8 +549,8 @@ router.put('/:id/reassign', authorize('ADMIN', 'EDITOR'), async (req, res, next)
       return res.status(404).json({ error: 'Conciliació no trobada' });
     }
 
-    await prisma.$transaction([
-      prisma.conciliation.update({
+    await prisma.$transaction(async (tx) => {
+      await tx.conciliation.update({
         where: { id: req.params.id },
         data: {
           status: 'MANUAL_MATCHED',
@@ -521,12 +560,25 @@ router.put('/:id/reassign', authorize('ADMIN', 'EDITOR'), async (req, res, next)
           confirmedAt: new Date(),
           matchReason: 'Reassignació manual',
         },
-      }),
-      prisma.bankMovement.update({
+      });
+      await tx.bankMovement.update({
         where: { id: conciliation.bankMovementId },
         data: { isConciliated: true },
-      }),
-    ]);
+      });
+      // Marcar la factura com a PAID
+      if (receivedInvoiceId) {
+        await tx.receivedInvoice.update({
+          where: { id: receivedInvoiceId },
+          data: { status: 'PAID' },
+        });
+      }
+      if (issuedInvoiceId) {
+        await tx.issuedInvoice.update({
+          where: { id: issuedInvoiceId },
+          data: { status: 'PAID' },
+        });
+      }
+    });
 
     res.json({ message: 'Factura reassignada correctament' });
   } catch (error) {
