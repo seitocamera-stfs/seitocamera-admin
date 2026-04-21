@@ -110,29 +110,33 @@ router.get('/', async (req, res, next) => {
 router.patch('/:id', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
   try {
     // Comprovar si el període està bloquejat
-    const existing = await prisma.receivedInvoice.findUnique({
-      where: { id: req.params.id },
-      select: { issueDate: true },
-    });
-    if (existing?.issueDate) {
-      const d = new Date(existing.issueDate);
-      const m = d.getMonth() + 1;
-      const monthKey = String(m).padStart(2, '0');
-      const quarterKey = `Q${Math.ceil(m / 3)}`;
-      const yr = d.getFullYear();
-      const locks = await prisma.sharedPeriodLock.findMany({
-        where: {
-          year: yr,
-          locked: true,
-          OR: [
-            { period: monthKey, periodType: 'month' },
-            { period: quarterKey, periodType: 'quarter' },
-          ],
-        },
+    try {
+      const existing = await prisma.receivedInvoice.findUnique({
+        where: { id: req.params.id },
+        select: { issueDate: true },
       });
-      if (locks.length > 0) {
-        return res.status(403).json({ error: 'Període tancat. No es poden editar factures d\'un període bloquejat.' });
+      if (existing?.issueDate) {
+        const d = new Date(existing.issueDate);
+        const m = d.getMonth() + 1;
+        const monthKey = String(m).padStart(2, '0');
+        const quarterKey = `Q${Math.ceil(m / 3)}`;
+        const yr = d.getFullYear();
+        const locks = await prisma.sharedPeriodLock.findMany({
+          where: {
+            year: yr,
+            locked: true,
+            OR: [
+              { period: monthKey, periodType: 'month' },
+              { period: quarterKey, periodType: 'quarter' },
+            ],
+          },
+        });
+        if (locks.length > 0) {
+          return res.status(403).json({ error: 'Període tancat. No es poden editar factures d\'un període bloquejat.' });
+        }
       }
+    } catch (lockErr) {
+      // Si la taula encara no existeix (migració pendent), no bloquejar
     }
 
     const { sharedPercentSeito, sharedPercentLogistik, isShared } = req.body;
@@ -398,13 +402,16 @@ router.post('/extract-pdf', async (req, res, next) => {
 router.get('/period-locks', async (req, res, next) => {
   try {
     const year = parseInt(req.query.year) || new Date().getFullYear();
-    const locks = await prisma.sharedPeriodLock.findMany({
-      where: { year },
-      include: {
-        lockedByUser: { select: { name: true } },
-        compensatedByUser: { select: { name: true } },
-      },
-    });
+    let locks = [];
+    try {
+      locks = await prisma.sharedPeriodLock.findMany({
+        where: { year },
+        include: {
+          lockedByUser: { select: { name: true } },
+          compensatedByUser: { select: { name: true } },
+        },
+      });
+    } catch { /* taula pot no existir encara */ }
     // Retorna un objecte indexat per "periodType:period" per fàcil consulta al frontend
     const map = {};
     for (const lock of locks) {
