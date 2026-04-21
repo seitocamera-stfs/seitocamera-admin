@@ -322,6 +322,114 @@ export default function SharedInvoices() {
         </div>
       )}
 
+      {/* Registre de períodes */}
+      {data?.groups?.length > 0 && (
+        <div className="bg-card border rounded-lg overflow-hidden mb-6">
+          <div className="px-4 py-3 border-b bg-muted/30">
+            <h3 className="text-sm font-semibold">Registre per {groupBy === 'quarter' ? 'trimestre' : 'mes'}</h3>
+          </div>
+          <table className="w-full text-sm">
+            <thead className="bg-muted/20">
+              <tr>
+                <th className="text-left p-3 font-medium">Període</th>
+                <th className="text-center p-3 font-medium">Factures</th>
+                <th className="text-right p-3 font-medium">Total</th>
+                <th className="text-right p-3 font-medium text-blue-600">Seito</th>
+                <th className="text-right p-3 font-medium text-orange-600">Logistik</th>
+                <th className="text-right p-3 font-medium">Pagat Seito</th>
+                <th className="text-right p-3 font-medium">Pagat Logistik</th>
+                <th className="text-center p-3 font-medium">Balanç</th>
+                <th className="text-center p-3 font-medium">Estat</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.groups.map((group) => {
+                const lockState = getLockState(group);
+                // Calcular pagat per Seito i Logistik dins el grup
+                let paidSeito = 0, paidLogistik = 0, pendingCount = 0;
+                for (const inv of group.invoices) {
+                  const total = parseFloat(inv.totalAmount);
+                  if (inv.paidBy === 'SEITO') paidSeito += total;
+                  else if (inv.paidBy === 'LOGISTIK') paidLogistik += total;
+                  else pendingCount++;
+                }
+                const balance = paidSeito - group.totalSeito;
+                return (
+                  <tr key={group.key} className="border-t hover:bg-muted/10">
+                    <td className="p-3 font-medium">{group.label}</td>
+                    <td className="p-3 text-center">{group.invoices.length}</td>
+                    <td className="p-3 text-right">{formatCurrency(group.totalAmount)}</td>
+                    <td className="p-3 text-right text-blue-600">{formatCurrency(group.totalSeito)}</td>
+                    <td className="p-3 text-right text-orange-600">{formatCurrency(group.totalLogistik)}</td>
+                    <td className="p-3 text-right">{formatCurrency(paidSeito)}</td>
+                    <td className="p-3 text-right">{formatCurrency(paidLogistik)}</td>
+                    <td className="p-3 text-center text-xs">
+                      {pendingCount > 0 ? (
+                        <span className="text-gray-400">{pendingCount} pendent{pendingCount > 1 ? 's' : ''}</span>
+                      ) : balance > 0.01 ? (
+                        <span className="text-orange-600 font-medium">Logistik → Seito {formatCurrency(balance)}</span>
+                      ) : balance < -0.01 ? (
+                        <span className="text-blue-600 font-medium">Seito → Logistik {formatCurrency(Math.abs(balance))}</span>
+                      ) : (
+                        <span className="text-emerald-600">Equilibrat</span>
+                      )}
+                    </td>
+                    <td className="p-3 text-center">
+                      {lockState.compensated ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
+                          <CheckCircle2 size={10} /> Compensat
+                        </span>
+                      ) : lockState.locked ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                          <Lock size={10} /> Tancat
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
+                          Obert
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {/* Fila totals */}
+              {(() => {
+                let totPaidSeito = 0, totPaidLogistik = 0;
+                for (const g of data.groups) {
+                  for (const inv of g.invoices) {
+                    const total = parseFloat(inv.totalAmount);
+                    if (inv.paidBy === 'SEITO') totPaidSeito += total;
+                    else if (inv.paidBy === 'LOGISTIK') totPaidLogistik += total;
+                  }
+                }
+                const totBalance = totPaidSeito - data.totals.totalSeito;
+                return (
+                  <tr className="border-t-2 bg-muted/30 font-semibold">
+                    <td className="p-3">Total {year}</td>
+                    <td className="p-3 text-center">{data.totals.count}</td>
+                    <td className="p-3 text-right">{formatCurrency(data.totals.totalAmount)}</td>
+                    <td className="p-3 text-right text-blue-600">{formatCurrency(data.totals.totalSeito)}</td>
+                    <td className="p-3 text-right text-orange-600">{formatCurrency(data.totals.totalLogistik)}</td>
+                    <td className="p-3 text-right">{formatCurrency(totPaidSeito)}</td>
+                    <td className="p-3 text-right">{formatCurrency(totPaidLogistik)}</td>
+                    <td className="p-3 text-center text-xs">
+                      {totBalance > 0.01 ? (
+                        <span className="text-orange-600">Logistik → Seito {formatCurrency(totBalance)}</span>
+                      ) : totBalance < -0.01 ? (
+                        <span className="text-blue-600">Seito → Logistik {formatCurrency(Math.abs(totBalance))}</span>
+                      ) : (
+                        <span className="text-emerald-600">Equilibrat</span>
+                      )}
+                    </td>
+                    <td className="p-3"></td>
+                  </tr>
+                );
+              })()}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {/* Grups */}
       {loading ? (
         <div className="bg-card border rounded-lg p-8 text-center text-muted-foreground">Carregant...</div>
