@@ -1,7 +1,11 @@
 const express = require('express');
+const fs = require('fs');
 const PDFDocument = require('pdfkit');
 const { prisma } = require('../config/database');
 const { authenticate, authorize } = require('../middleware/auth');
+const { upload } = require('../config/upload');
+const gdrive = require('../services/gdriveService');
+const { logger } = require('../config/logger');
 
 const router = express.Router();
 
@@ -392,6 +396,57 @@ router.post('/extract-pdf', async (req, res, next) => {
 
     doc.end();
   } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================
+// POST /api/shared-invoices/upload — Pujar PDF a Google Drive (Seito-logistik/inbox)
+// ===========================================
+router.post('/upload', authorize('ADMIN', 'EDITOR'), upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Cal adjuntar un fitxer PDF' });
+    }
+
+    // Trobar o crear la carpeta Seito-logistik/inbox dins factures-rebudes
+    const rootName = process.env.GDRIVE_ROOT_FOLDER || 'SeitoCamera';
+    const root = await gdrive.findOrCreateFolder(rootName);
+    const facturesRebudes = await gdrive.findOrCreateFolder('factures-rebudes', root.id);
+    const seitoLogistik = await gdrive.findOrCreateFolder('Seito-logistik', facturesRebudes.id);
+    const inboxFolder = await gdrive.findOrCreateFolder('inbox', seitoLogistik.id);
+
+    // Pujar el fitxer
+    const drive = gdrive.getDriveClient();
+    const uploadResult = await drive.files.create({
+      resource: {
+        name: req.file.originalname,
+        parents: [inboxFolder.id],
+      },
+      media: {
+        mimeType: 'application/pdf',
+        body: fs.createReadStream(req.file.path),
+      },
+      fields: 'id, name, webViewLink',
+      supportsAllDrives: true,
+    });
+
+    // Esborrar fitxer temporal local
+    try { fs.unlinkSync(req.file.path); } catch {}
+
+    logger.info(`PDF compartida pujada a Drive: ${req.file.originalname} → Seito-logistik/inbox (${uploadResult.data.id})`);
+
+    res.json({
+      success: true,
+      file: {
+        id: uploadResult.data.id,
+        name: uploadResult.data.name,
+        webViewLink: uploadResult.data.webViewLink,
+      },
+    });
+  } catch (error) {
+    // Esborrar fitxer temporal si hi ha error
+    if (req.file?.path) try { fs.unlinkSync(req.file.path); } catch {}
     next(error);
   }
 });

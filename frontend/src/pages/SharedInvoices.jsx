@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import { ChevronDown, ChevronRight, ExternalLink, Pencil, Eye, Download, X, FileText, CheckSquare, Lock, Unlock, HandCoins, CheckCircle2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, ExternalLink, Pencil, Eye, Download, X, FileText, CheckSquare, Lock, Unlock, HandCoins, CheckCircle2, Upload } from 'lucide-react';
+import { useRef } from 'react';
 import { useApiGet } from '../hooks/useApi';
 import { formatCurrency, formatDate } from '../lib/utils';
 import api from '../lib/api';
@@ -16,6 +17,10 @@ export default function SharedInvoices() {
   const [pdfInvoice, setPdfInvoice] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [extractLoading, setExtractLoading] = useState(false);
+
+  // Upload PDF
+  const [uploadLoading, setUploadLoading] = useState(false);
+  const fileInputRef = useRef(null);
 
   // Estat de bloqueig/compensació
   const [locks, setLocks] = useState({});
@@ -207,6 +212,37 @@ export default function SharedInvoices() {
     }
   };
 
+  const handleUploadPdf = async (e) => {
+    const files = e.target.files;
+    if (!files?.length) return;
+    setUploadLoading(true);
+    let successCount = 0;
+    let errorCount = 0;
+    for (const file of files) {
+      if (file.type !== 'application/pdf') {
+        alert(`${file.name} no és un PDF`);
+        errorCount++;
+        continue;
+      }
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        await api.post('/shared-invoices/upload', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        successCount++;
+      } catch (err) {
+        errorCount++;
+        alert(err.response?.data?.error || `Error pujant ${file.name}`);
+      }
+    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    setUploadLoading(false);
+    if (successCount > 0) {
+      alert(`${successCount} PDF${successCount > 1 ? 's' : ''} pujat${successCount > 1 ? 's' : ''} a Google Drive (Seito-logistik/inbox). Es processaran automàticament amb el proper sync.`);
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -215,6 +251,23 @@ export default function SharedInvoices() {
           <p className="text-sm text-muted-foreground mt-1">SEITO · LOGISTIK — Repartiment de costos</p>
         </div>
         <div className="flex items-center gap-3">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf"
+            multiple
+            className="hidden"
+            onChange={handleUploadPdf}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploadLoading}
+            className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium border hover:bg-muted disabled:opacity-50"
+            title="Pujar PDF a Google Drive (Seito-logistik/inbox)"
+          >
+            <Upload size={14} />
+            {uploadLoading ? 'Pujant...' : 'Pujar factura'}
+          </button>
           {selectedIds.length > 0 && (
             <button
               onClick={handleExtractPdf}
