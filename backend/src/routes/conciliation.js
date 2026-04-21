@@ -99,18 +99,15 @@ router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
       logger.info(`Auto-conciliació: ${dismissedTransfers} transferències internes descartades`);
     }
 
-    // 1b. Reparar inconsistències: conciliacions existents on la factura encara no està PAID
+    // 1b. Reparar inconsistències: conciliacions existents on la factura REBUDA encara no està PAID
+    // Factures EMESES no es toquen — l'usuari les marca manualment
     const inconsistentConciliations = await prisma.conciliation.findMany({
       where: {
         status: { in: ['CONFIRMED', 'AUTO_MATCHED', 'MANUAL_MATCHED'] },
-        OR: [
-          { receivedInvoice: { status: { not: 'PAID' } } },
-          { issuedInvoice: { status: { not: 'PAID' } } },
-        ],
+        receivedInvoice: { status: { not: 'PAID' } },
       },
       include: {
         receivedInvoice: { select: { id: true, invoiceNumber: true, status: true } },
-        issuedInvoice: { select: { id: true, invoiceNumber: true, status: true } },
       },
     });
 
@@ -123,14 +120,6 @@ router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
         });
         repairedInvoices++;
         logger.info(`Reparació: factura rebuda ${conc.receivedInvoice.invoiceNumber} marcada com PAID (conciliació ${conc.id})`);
-      }
-      if (conc.issuedInvoice && conc.issuedInvoice.status !== 'PAID') {
-        await prisma.issuedInvoice.update({
-          where: { id: conc.issuedInvoice.id },
-          data: { status: 'PAID' },
-        });
-        repairedInvoices++;
-        logger.info(`Reparació: factura emesa ${conc.issuedInvoice.invoiceNumber} marcada com PAID (conciliació ${conc.id})`);
       }
     }
     if (repairedInvoices > 0) {
@@ -301,11 +290,10 @@ router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
               where: { id: movement.id },
               data: { isConciliated: true },
             });
-            // Marcar la factura com a PAID
+            // Marcar factura REBUDA com a PAID automàticament
+            // Factures EMESES NO es marquen — l'usuari ho fa manualment
             if (bestType === 'received') {
               await tx.receivedInvoice.update({ where: { id: bestMatch.id }, data: { status: 'PAID' } });
-            } else {
-              await tx.issuedInvoice.update({ where: { id: bestMatch.id }, data: { status: 'PAID' } });
             }
           });
 
@@ -373,16 +361,10 @@ router.post('/manual', authorize('ADMIN', 'EDITOR'), validate(manualMatchSchema)
         data: { isConciliated: true },
       });
 
-      // Marcar la factura com a PAID
+      // Marcar factura REBUDA com a PAID (emeses es marquen manualment)
       if (receivedInvoiceId) {
         await tx.receivedInvoice.update({
           where: { id: receivedInvoiceId },
-          data: { status: 'PAID' },
-        });
-      }
-      if (issuedInvoiceId) {
-        await tx.issuedInvoice.update({
-          where: { id: issuedInvoiceId },
           data: { status: 'PAID' },
         });
       }
@@ -424,11 +406,9 @@ router.post('/multi', authorize('ADMIN', 'EDITOR'), validate(multiMatchSchema), 
         });
         results.push(conc);
 
-        // Marcar cada factura com a PAID
+        // Marcar factura REBUDA com a PAID (emeses es marquen manualment)
         if (inv.type === 'received') {
           await tx.receivedInvoice.update({ where: { id: inv.id }, data: { status: 'PAID' } });
-        } else if (inv.type === 'issued') {
-          await tx.issuedInvoice.update({ where: { id: inv.id }, data: { status: 'PAID' } });
         }
       }
 
@@ -464,16 +444,10 @@ router.patch('/:id/confirm', authorize('ADMIN', 'EDITOR'), async (req, res, next
         },
       });
 
-      // Marcar la factura com a PAID si encara no ho està
+      // Marcar factura REBUDA com a PAID (emeses es marquen manualment)
       if (conc.receivedInvoiceId) {
         await tx.receivedInvoice.updateMany({
           where: { id: conc.receivedInvoiceId, status: { not: 'PAID' } },
-          data: { status: 'PAID' },
-        });
-      }
-      if (conc.issuedInvoiceId) {
-        await tx.issuedInvoice.updateMany({
-          where: { id: conc.issuedInvoiceId, status: { not: 'PAID' } },
           data: { status: 'PAID' },
         });
       }
@@ -565,16 +539,10 @@ router.put('/:id/reassign', authorize('ADMIN', 'EDITOR'), async (req, res, next)
         where: { id: conciliation.bankMovementId },
         data: { isConciliated: true },
       });
-      // Marcar la factura com a PAID
+      // Marcar factura REBUDA com a PAID (emeses es marquen manualment)
       if (receivedInvoiceId) {
         await tx.receivedInvoice.update({
           where: { id: receivedInvoiceId },
-          data: { status: 'PAID' },
-        });
-      }
-      if (issuedInvoiceId) {
-        await tx.issuedInvoice.update({
-          where: { id: issuedInvoiceId },
           data: { status: 'PAID' },
         });
       }
