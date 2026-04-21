@@ -1452,7 +1452,7 @@ async function analyzePdf(filePathOrBuffer) {
  * @param {number} [totalAmount] - Import total detectat (opcional, per verificar)
  * @returns {Object|null} Factura existent si és duplicada, null si no
  */
-async function checkDuplicateByContent(invoiceNumber, supplierId = null, totalAmount = null) {
+async function checkDuplicateByContent(invoiceNumber, supplierId = null, totalAmount = null, invoiceDate = null) {
   if (!invoiceNumber) return null;
 
   // Números provisionals no es consideren per duplicats
@@ -1474,6 +1474,7 @@ async function checkDuplicateByContent(invoiceNumber, supplierId = null, totalAm
   const where = {
     invoiceNumber: { equals: invoiceNumber, mode: 'insensitive' },
     isDuplicate: false,  // No comparar amb altres duplicats
+    deletedAt: null,
   };
   if (supplierId) where.supplierId = supplierId;
 
@@ -1500,6 +1501,21 @@ async function checkDuplicateByContent(invoiceNumber, supplierId = null, totalAm
       logger.info(
         `checkDuplicate: Nº ${invoiceNumber} existeix però import diferent ` +
         `(${totalAmount}€ vs ${existing.totalAmount}€, diff: ${diff.toFixed(2)}€) — NO duplicat`
+      );
+      return null;
+    }
+  }
+
+  // Si tenim dates d'ambdues factures, comparar-les
+  // Dates diferents (>30 dies) amb el mateix número pot ser un proveïdor que reinicia numeració cada any
+  if (invoiceDate && existing.issueDate) {
+    const newDate = new Date(invoiceDate);
+    const existingDate = new Date(existing.issueDate);
+    const daysDiff = Math.abs((newDate - existingDate) / (1000 * 86400));
+    if (daysDiff > 30) {
+      logger.info(
+        `checkDuplicate: Nº ${invoiceNumber} existeix però data molt diferent ` +
+        `(${newDate.toISOString().slice(0,10)} vs ${existingDate.toISOString().slice(0,10)}, ${Math.round(daysDiff)} dies) — NO duplicat`
       );
       return null;
     }

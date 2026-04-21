@@ -244,7 +244,8 @@ async function syncGdriveFiles() {
           duplicateOf = await pdfExtract.checkDuplicateByContent(
             pdfAnalysis.invoiceNumber,
             matchedSupplier?.id || null,
-            pdfAnalysis.totalAmount || null
+            pdfAnalysis.totalAmount || null,
+            pdfAnalysis.invoiceDate || null
           );
           if (duplicateOf) {
             isDuplicate = true;

@@ -752,7 +752,8 @@ router.post('/received/bulk-rescan', authorize('ADMIN', 'EDITOR'), async (req, r
           const duplicate = await pdfExtract.checkDuplicateByContent(
             analysis.invoiceNumber,
             matchedSupplier?.id || invoice.supplierId || null,
-            analysis.totalAmount
+            analysis.totalAmount,
+            analysis.invoiceDate || null
           );
           if (duplicate && duplicate.id !== invoice.id) {
             updateData.isDuplicate = true;
@@ -959,7 +960,8 @@ router.post('/received/:id/rescan', authorize('ADMIN', 'EDITOR'), async (req, re
       duplicate = await pdfExtract.checkDuplicateByContent(
         analysis.invoiceNumber,
         matchedSupplier?.id || invoice.supplierId || null,
-        analysis.totalAmount
+        analysis.totalAmount,
+        analysis.invoiceDate || null
       );
       // No comptar la pròpia factura com a duplicat
       if (duplicate && duplicate.id === invoice.id) duplicate = null;
@@ -1028,7 +1030,9 @@ router.post('/received/analyze-pdf', authorize('ADMIN', 'EDITOR'), upload.single
     if (analysis.invoiceNumber) {
       duplicate = await pdfExtract.checkDuplicateByContent(
         analysis.invoiceNumber,
-        matchedSupplier?.id || null
+        matchedSupplier?.id || null,
+        analysis.totalAmount || null,
+        analysis.invoiceDate || null
       );
     }
 
@@ -1199,7 +1203,9 @@ router.post('/received/:id/attach-pdf', authorize('ADMIN', 'EDITOR'), upload.sin
     if (pdfAnalysis?.invoiceNumber) {
       const duplicate = await pdfExtract.checkDuplicateByContent(
         pdfAnalysis.invoiceNumber,
-        invoice.supplierId
+        invoice.supplierId,
+        null,
+        pdfAnalysis.invoiceDate
       );
       // Si hi ha duplicat i NO és la mateixa factura, avisar
       if (duplicate && duplicate.id !== invoice.id) {
