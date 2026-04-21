@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { ChevronDown, ChevronRight, ExternalLink, Pencil, Eye, Download, X, FileText, CheckSquare } from 'lucide-react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
+import { ChevronDown, ChevronRight, ExternalLink, Pencil, Eye, Download, X, FileText, CheckSquare, Lock, Unlock, HandCoins, CheckCircle2 } from 'lucide-react';
 import { useApiGet } from '../hooks/useApi';
 import { formatCurrency, formatDate } from '../lib/utils';
 import api from '../lib/api';
@@ -17,7 +17,30 @@ export default function SharedInvoices() {
   const [selectedIds, setSelectedIds] = useState([]);
   const [extractLoading, setExtractLoading] = useState(false);
 
+  // Estat de bloqueig/compensació
+  const [locks, setLocks] = useState({});
+  const [lockLoading, setLockLoading] = useState(null); // "periodType:period" que s'està processant
+  const [confirmAction, setConfirmAction] = useState(null); // { type: 'lock'|'unlock'|'compensate', group }
+
   const { data, loading, refetch } = useApiGet('/shared-invoices', { year, groupBy });
+
+  // Carregar estat de bloqueig
+  const fetchLocks = useCallback(async () => {
+    try {
+      const res = await api.get('/shared-invoices/period-locks', { params: { year } });
+      setLocks(res.data || {});
+    } catch {
+      setLocks({});
+    }
+  }, [year]);
+
+  useEffect(() => { fetchLocks(); }, [fetchLocks]);
+
+  // Helper: obtenir estat de bloqueig d'un grup
+  const getLockState = (group) => {
+    const key = `${groupBy}:${group.key}`;
+    return locks[key] || { locked: false, compensated: false };
+  };
 
   // Totes les factures aplanades
   const allInvoices = useMemo(() => {
@@ -116,15 +139,71 @@ export default function SharedInvoices() {
       });
       setEditingId(null);
       refetch();
-    } catch {}
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error actualitzant');
+    }
   };
 
   const handlePaidByChange = async (invoiceId, paidBy) => {
     try {
       await api.patch(`/shared-invoices/${invoiceId}`, { paidBy });
       refetch();
-    } catch {
-      alert('Error actualitzant el pagament');
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error actualitzant el pagament');
+    }
+  };
+
+  // === Accions de bloqueig i compensació ===
+  const handleLock = async (group) => {
+    const key = `${groupBy}:${group.key}`;
+    setLockLoading(key);
+    try {
+      await api.post('/shared-invoices/lock', { year, period: group.key, periodType: groupBy });
+      await fetchLocks();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error bloquejant');
+    } finally {
+      setLockLoading(null);
+      setConfirmAction(null);
+    }
+  };
+
+  const handleUnlock = async (group) => {
+    const key = `${groupBy}:${group.key}`;
+    setLockLoading(key);
+    try {
+      await api.post('/shared-invoices/unlock', { year, period: group.key, periodType: groupBy });
+      await fetchLocks();
+      refetch();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error desbloquejant');
+    } finally {
+      setLockLoading(null);
+      setConfirmAction(null);
+    }
+  };
+
+  const handleCompensate = async (group) => {
+    const key = `${groupBy}:${group.key}`;
+    setLockLoading(key);
+    try {
+      const res = await api.post('/shared-invoices/compensate', { year, period: group.key, periodType: groupBy });
+      await fetchLocks();
+      const s = res.data.summary;
+      let msg = `Compensació registrada: ${s.invoiceCount} factures.`;
+      if (s.direction === 'LOGISTIK_PAYS_SEITO') {
+        msg += `\nLogistik ha de pagar ${formatCurrency(s.amount)} a Seito.`;
+      } else if (s.direction === 'SEITO_PAYS_LOGISTIK') {
+        msg += `\nSeito ha de pagar ${formatCurrency(s.amount)} a Logistik.`;
+      } else {
+        msg += '\nBalanç equilibrat — no cal compensar.';
+      }
+      alert(msg);
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error compensant');
+    } finally {
+      setLockLoading(null);
+      setConfirmAction(null);
     }
   };
 
@@ -195,21 +274,30 @@ export default function SharedInvoices() {
         <div className="bg-card border rounded-lg p-8 text-center text-muted-foreground">Carregant...</div>
       ) : !data?.groups?.length ? (
         <div className="bg-card border rounded-lg p-8 text-center text-muted-foreground">
-          Cap factura compartida aquest any. Marca factures com a compartides des de l'edició de factures rebudes.
+          Cap factura compartida aquest any. Marca factures com a compartides des de l&apos;edició de factures rebudes.
         </div>
       ) : (
         <div className="space-y-3">
-          {data.groups.map((group) => (
-            <div key={group.key} className="bg-card border rounded-lg overflow-hidden">
+          {data.groups.map((group) => {
+            const lockState = getLockState(group);
+            const isLocked = lockState.locked;
+            const isCompensated = lockState.compensated;
+            const lockKey = `${groupBy}:${group.key}`;
+            const isProcessing = lockLoading === lockKey;
+
+            return (
+            <div key={group.key} className={`bg-card border rounded-lg overflow-hidden ${isCompensated ? 'border-emerald-300' : isLocked ? 'border-amber-300' : ''}`}>
               {/* Capçalera del grup */}
               <div className="flex items-center p-4 hover:bg-muted/30 transition-colors">
-                <input
-                  type="checkbox"
-                  checked={group.invoices.every((inv) => selectedIds.includes(inv.id))}
-                  onChange={() => toggleSelectGroup(group)}
-                  className="mr-3 h-4 w-4 rounded border-gray-300 shrink-0"
-                  onClick={(e) => e.stopPropagation()}
-                />
+                {!isLocked && (
+                  <input
+                    type="checkbox"
+                    checked={group.invoices.every((inv) => selectedIds.includes(inv.id))}
+                    onChange={() => toggleSelectGroup(group)}
+                    className="mr-3 h-4 w-4 rounded border-gray-300 shrink-0"
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                )}
                 <button
                   onClick={() => toggleGroup(group.key)}
                   className="flex-1 flex items-center justify-between"
@@ -218,6 +306,24 @@ export default function SharedInvoices() {
                   {expanded[group.key] ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                   <span className="font-medium">{group.label}</span>
                   <span className="text-xs text-muted-foreground">({group.invoices.length} factures)</span>
+                  {/* Badges d'estat */}
+                  {isCompensated && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
+                      <CheckCircle2 size={11} />
+                      Compensat
+                      {lockState.compensatedDirection === 'LOGISTIK_PAYS_SEITO' && lockState.compensatedAmount
+                        ? ` — Logistik → Seito ${formatCurrency(lockState.compensatedAmount)}`
+                        : lockState.compensatedDirection === 'SEITO_PAYS_LOGISTIK' && lockState.compensatedAmount
+                        ? ` — Seito → Logistik ${formatCurrency(lockState.compensatedAmount)}`
+                        : ' — Equilibrat'}
+                    </span>
+                  )}
+                  {isLocked && !isCompensated && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                      <Lock size={11} />
+                      Tancat
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-6 text-sm">
                   <span className="text-muted-foreground">{formatCurrency(group.totalAmount)}</span>
@@ -225,15 +331,86 @@ export default function SharedInvoices() {
                   <span className="text-orange-600 font-medium">{formatCurrency(group.totalLogistik)}</span>
                 </div>
                 </button>
+
+                {/* Botons de bloqueig/compensació */}
+                <div className="flex items-center gap-1 ml-3">
+                  {!isLocked && !isCompensated && (
+                    <>
+                      <button
+                        onClick={() => setConfirmAction({ type: 'lock', group })}
+                        disabled={isProcessing}
+                        className="p-1.5 rounded hover:bg-amber-50 text-amber-600 disabled:opacity-50"
+                        title="Tancar període"
+                      >
+                        <Lock size={14} />
+                      </button>
+                      <button
+                        onClick={() => setConfirmAction({ type: 'compensate', group })}
+                        disabled={isProcessing}
+                        className="p-1.5 rounded hover:bg-emerald-50 text-emerald-600 disabled:opacity-50"
+                        title="Compensar (liquidar balanç)"
+                      >
+                        <HandCoins size={14} />
+                      </button>
+                    </>
+                  )}
+                  {isLocked && !isCompensated && (
+                    <>
+                      <button
+                        onClick={() => setConfirmAction({ type: 'unlock', group })}
+                        disabled={isProcessing}
+                        className="p-1.5 rounded hover:bg-gray-100 text-gray-500 disabled:opacity-50"
+                        title="Desbloquejar"
+                      >
+                        <Unlock size={14} />
+                      </button>
+                      <button
+                        onClick={() => setConfirmAction({ type: 'compensate', group })}
+                        disabled={isProcessing}
+                        className="p-1.5 rounded hover:bg-emerald-50 text-emerald-600 disabled:opacity-50"
+                        title="Compensar (liquidar balanç)"
+                      >
+                        <HandCoins size={14} />
+                      </button>
+                    </>
+                  )}
+                  {isCompensated && (
+                    <button
+                      onClick={() => setConfirmAction({ type: 'unlock', group })}
+                      disabled={isProcessing}
+                      className="p-1.5 rounded hover:bg-gray-100 text-gray-500 disabled:opacity-50"
+                      title="Reobrir període"
+                    >
+                      <Unlock size={14} />
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Detall factures */}
               {expanded[group.key] && (
                 <div className="border-t">
+                  {/* Resum de compensació si existeix */}
+                  {isCompensated && lockState.compensatedDirection && (
+                    <div className="px-4 py-2 bg-emerald-50 border-b border-emerald-200 text-sm">
+                      <span className="font-medium text-emerald-800">
+                        {lockState.compensatedDirection === 'LOGISTIK_PAYS_SEITO'
+                          ? `Logistik compensa ${formatCurrency(lockState.compensatedAmount)} a Seito`
+                          : lockState.compensatedDirection === 'SEITO_PAYS_LOGISTIK'
+                          ? `Seito compensa ${formatCurrency(lockState.compensatedAmount)} a Logistik`
+                          : 'Balanç equilibrat — no cal compensar'}
+                      </span>
+                      {lockState.compensatedByName && (
+                        <span className="text-emerald-600 ml-2">
+                          — per {lockState.compensatedByName} el {formatDate(lockState.compensatedAt)}
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <table className="w-full text-sm">
                     <thead className="bg-muted/30">
                       <tr>
-                        <th className="p-3 w-8"></th>
+                        {!isLocked && <th className="p-3 w-8"></th>}
                         <th className="text-left p-3 font-medium">Factura</th>
                         <th className="text-left p-3 font-medium">Proveïdor</th>
                         <th className="text-left p-3 font-medium">Data</th>
@@ -248,14 +425,16 @@ export default function SharedInvoices() {
                     <tbody>
                       {group.invoices.map((inv) => (
                         <tr key={inv.id} className={`border-t hover:bg-muted/20 ${selectedIds.includes(inv.id) ? 'bg-primary/5' : ''}`}>
-                          <td className="p-3">
-                            <input
-                              type="checkbox"
-                              checked={selectedIds.includes(inv.id)}
-                              onChange={() => toggleSelect(inv.id)}
-                              className="h-4 w-4 rounded border-gray-300"
-                            />
-                          </td>
+                          {!isLocked && (
+                            <td className="p-3">
+                              <input
+                                type="checkbox"
+                                checked={selectedIds.includes(inv.id)}
+                                onChange={() => toggleSelect(inv.id)}
+                                className="h-4 w-4 rounded border-gray-300"
+                              />
+                            </td>
+                          )}
                           <td className="p-3 font-mono text-xs">{inv.invoiceNumber}</td>
                           <td className="p-3 text-muted-foreground">{inv.supplier?.name || '—'}</td>
                           <td className="p-3 text-muted-foreground">{formatDate(inv.issueDate)}</td>
@@ -263,7 +442,7 @@ export default function SharedInvoices() {
                           <td className="p-3 text-right text-blue-600">{formatCurrency(inv.amountSeito)}</td>
                           <td className="p-3 text-right text-orange-600">{formatCurrency(inv.amountLogistik)}</td>
                           <td className="p-3 text-center">
-                            {editingId === inv.id ? (
+                            {!isLocked && editingId === inv.id ? (
                               <div className="flex items-center gap-1 justify-center">
                                 <input
                                   type="number"
@@ -286,19 +465,29 @@ export default function SharedInvoices() {
                             )}
                           </td>
                           <td className="p-3 text-center">
-                            <select
-                              value={inv.paidBy || 'NONE'}
-                              onChange={(e) => handlePaidByChange(inv.id, e.target.value)}
-                              className={`text-xs px-2 py-1 rounded-full border font-medium ${
+                            {isLocked ? (
+                              <span className={`text-xs px-2 py-1 rounded-full border font-medium ${
                                 inv.paidBy === 'SEITO' ? 'bg-blue-50 text-blue-700 border-blue-200' :
                                 inv.paidBy === 'LOGISTIK' ? 'bg-orange-50 text-orange-700 border-orange-200' :
                                 'bg-gray-50 text-gray-500 border-gray-200'
-                              }`}
-                            >
-                              <option value="NONE">Pendent</option>
-                              <option value="SEITO">Seito</option>
-                              <option value="LOGISTIK">Logistik</option>
-                            </select>
+                              }`}>
+                                {inv.paidBy === 'SEITO' ? 'Seito' : inv.paidBy === 'LOGISTIK' ? 'Logistik' : 'Pendent'}
+                              </span>
+                            ) : (
+                              <select
+                                value={inv.paidBy || 'NONE'}
+                                onChange={(e) => handlePaidByChange(inv.id, e.target.value)}
+                                className={`text-xs px-2 py-1 rounded-full border font-medium ${
+                                  inv.paidBy === 'SEITO' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                                  inv.paidBy === 'LOGISTIK' ? 'bg-orange-50 text-orange-700 border-orange-200' :
+                                  'bg-gray-50 text-gray-500 border-gray-200'
+                                }`}
+                              >
+                                <option value="NONE">Pendent</option>
+                                <option value="SEITO">Seito</option>
+                                <option value="LOGISTIK">Logistik</option>
+                              </select>
+                            )}
                           </td>
                           <td className="p-3 text-right">
                             <div className="flex items-center justify-end gap-1">
@@ -316,13 +505,15 @@ export default function SharedInvoices() {
                               >
                                 <Download size={13} />
                               </button>
-                              <button
-                                onClick={() => { setEditingId(inv.id); setEditPercent(parseFloat(inv.sharedPercentSeito)); }}
-                                className="p-1 rounded hover:bg-muted text-muted-foreground"
-                                title="Editar percentatge"
-                              >
-                                <Pencil size={13} />
-                              </button>
+                              {!isLocked && (
+                                <button
+                                  onClick={() => { setEditingId(inv.id); setEditPercent(parseFloat(inv.sharedPercentSeito)); }}
+                                  className="p-1 rounded hover:bg-muted text-muted-foreground"
+                                  title="Editar percentatge"
+                                >
+                                  <Pencil size={13} />
+                                </button>
+                              )}
                               {inv.gdriveFileId && (
                                 <a
                                   href={`https://drive.google.com/file/d/${inv.gdriveFileId}/view`}
@@ -343,7 +534,111 @@ export default function SharedInvoices() {
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
+        </div>
+      )}
+
+      {/* Modal de confirmació */}
+      {confirmAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setConfirmAction(null)}>
+          <div className="bg-card rounded-lg shadow-xl p-6 max-w-md w-full mx-4" onClick={(e) => e.stopPropagation()}>
+            {confirmAction.type === 'lock' && (
+              <>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="p-2 rounded-full bg-amber-100"><Lock size={20} className="text-amber-600" /></div>
+                  <h3 className="text-lg font-semibold">Tancar {confirmAction.group.label}?</h3>
+                </div>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Un cop tancat, no es podran editar els percentatges ni el camp &quot;Pagat per&quot; de les {confirmAction.group.invoices.length} factures d&apos;aquest període. Podràs desbloquejar-ho més tard si cal.
+                </p>
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setConfirmAction(null)} className="px-4 py-2 rounded-md border text-sm hover:bg-muted">Cancel·lar</button>
+                  <button onClick={() => handleLock(confirmAction.group)} className="px-4 py-2 rounded-md bg-amber-600 text-white text-sm hover:bg-amber-700">Tancar període</button>
+                </div>
+              </>
+            )}
+            {confirmAction.type === 'unlock' && (
+              <>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="p-2 rounded-full bg-gray-100"><Unlock size={20} className="text-gray-600" /></div>
+                  <h3 className="text-lg font-semibold">Reobrir {confirmAction.group.label}?</h3>
+                </div>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Això desbloquejarà el període i anul·larà la compensació si n&apos;hi havia. Es podran tornar a editar les factures.
+                </p>
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setConfirmAction(null)} className="px-4 py-2 rounded-md border text-sm hover:bg-muted">Cancel·lar</button>
+                  <button onClick={() => handleUnlock(confirmAction.group)} className="px-4 py-2 rounded-md bg-gray-600 text-white text-sm hover:bg-gray-700">Reobrir</button>
+                </div>
+              </>
+            )}
+            {confirmAction.type === 'compensate' && (() => {
+              // Calcular resum
+              const invs = confirmAction.group.invoices;
+              let totalSeito = 0, totalLogistik = 0, seitoPaid = 0, logistikPaid = 0, pendingCount = 0;
+              for (const inv of invs) {
+                const total = parseFloat(inv.totalAmount);
+                totalSeito += inv.amountSeito;
+                totalLogistik += inv.amountLogistik;
+                if (inv.paidBy === 'SEITO') seitoPaid += total;
+                else if (inv.paidBy === 'LOGISTIK') logistikPaid += total;
+                else pendingCount++;
+              }
+              const seitoBalance = seitoPaid - totalSeito;
+
+              return (
+                <>
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="p-2 rounded-full bg-emerald-100"><HandCoins size={20} className="text-emerald-600" /></div>
+                    <h3 className="text-lg font-semibold">Compensar {confirmAction.group.label}?</h3>
+                  </div>
+
+                  {pendingCount > 0 ? (
+                    <div className="mb-4">
+                      <p className="text-sm text-red-600 font-medium mb-2">
+                        Hi ha {pendingCount} factures sense &quot;Pagat per&quot; assignat.
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        Cal indicar qui ha pagat cada factura abans de poder compensar.
+                      </p>
+                      <div className="flex justify-end gap-2 mt-4">
+                        <button onClick={() => setConfirmAction(null)} className="px-4 py-2 rounded-md border text-sm hover:bg-muted">Entesos</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="bg-muted/50 rounded-lg p-3 mb-4 text-sm space-y-1">
+                        <div className="flex justify-between"><span>Part Seito:</span><span className="font-medium text-blue-600">{formatCurrency(totalSeito)}</span></div>
+                        <div className="flex justify-between"><span>Part Logistik:</span><span className="font-medium text-orange-600">{formatCurrency(totalLogistik)}</span></div>
+                        <div className="border-t my-2"></div>
+                        <div className="flex justify-between"><span>Pagat per Seito:</span><span>{formatCurrency(seitoPaid)}</span></div>
+                        <div className="flex justify-between"><span>Pagat per Logistik:</span><span>{formatCurrency(logistikPaid)}</span></div>
+                        <div className="border-t my-2"></div>
+                        <div className="flex justify-between font-semibold">
+                          <span>Resultat:</span>
+                          <span className={seitoBalance > 0.01 ? 'text-orange-600' : seitoBalance < -0.01 ? 'text-blue-600' : 'text-emerald-600'}>
+                            {seitoBalance > 0.01
+                              ? `Logistik paga ${formatCurrency(seitoBalance)} a Seito`
+                              : seitoBalance < -0.01
+                              ? `Seito paga ${formatCurrency(Math.abs(seitoBalance))} a Logistik`
+                              : 'Equilibrat — no cal compensar'}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-sm text-muted-foreground mb-4">
+                        Això tancarà el període i registrarà la compensació.
+                      </p>
+                      <div className="flex justify-end gap-2">
+                        <button onClick={() => setConfirmAction(null)} className="px-4 py-2 rounded-md border text-sm hover:bg-muted">Cancel·lar</button>
+                        <button onClick={() => handleCompensate(confirmAction.group)} className="px-4 py-2 rounded-md bg-emerald-600 text-white text-sm hover:bg-emerald-700">Compensar i tancar</button>
+                      </div>
+                    </>
+                  )}
+                </>
+              );
+            })()}
+          </div>
         </div>
       )}
 

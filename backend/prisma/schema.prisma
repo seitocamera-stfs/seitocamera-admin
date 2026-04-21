@@ -44,6 +44,8 @@ model User {
   reminderMentions  ReminderMention[]
   activityLogs      ActivityLog[]
   agentChats        AgentChat[]
+  lockedPeriods       SharedPeriodLock[] @relation("lockedPeriods")
+  compensatedPeriods  SharedPeriodLock[] @relation("compensatedPeriods")
 
   @@map("users")
 }
@@ -573,4 +575,35 @@ model AiUsageLog {
   @@index([service])
   @@index([timestamp, service])
   @@map("ai_usage_logs")
+}
+
+model SharedPeriodLock {
+  id                  String    @id @default(cuid())
+  year                Int
+  period              String    // "01".."12" (mes) o "Q1".."Q4" (trimestre)
+  periodType          String    // "month" o "quarter"
+
+  // Bloqueig
+  locked              Boolean   @default(false)
+  lockedAt            DateTime?
+  lockedBy            String?   // userId
+
+  // Compensació
+  compensated         Boolean   @default(false)
+  compensatedAt       DateTime?
+  compensatedBy       String?   // userId
+  compensatedDirection String?  // "SEITO_PAYS_LOGISTIK" o "LOGISTIK_PAYS_SEITO"
+  compensatedAmount   Decimal?  @db.Decimal(12, 2)
+  balanceSeito        Decimal?  @db.Decimal(12, 2) // total que ha pagat Seito
+  balanceLogistik     Decimal?  @db.Decimal(12, 2) // total que ha pagat Logistik
+
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  // Relació amb l'usuari que ha bloquejat/compensat
+  lockedByUser        User?     @relation("lockedPeriods", fields: [lockedBy], references: [id])
+  compensatedByUser   User?     @relation("compensatedPeriods", fields: [compensatedBy], references: [id])
+
+  @@unique([year, period, periodType])
+  @@map("shared_period_locks")
 }

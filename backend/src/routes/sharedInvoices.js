@@ -109,6 +109,32 @@ router.get('/', async (req, res, next) => {
 // ===========================================
 router.patch('/:id', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
   try {
+    // Comprovar si el període està bloquejat
+    const existing = await prisma.receivedInvoice.findUnique({
+      where: { id: req.params.id },
+      select: { issueDate: true },
+    });
+    if (existing?.issueDate) {
+      const d = new Date(existing.issueDate);
+      const m = d.getMonth() + 1;
+      const monthKey = String(m).padStart(2, '0');
+      const quarterKey = `Q${Math.ceil(m / 3)}`;
+      const yr = d.getFullYear();
+      const locks = await prisma.sharedPeriodLock.findMany({
+        where: {
+          year: yr,
+          locked: true,
+          OR: [
+            { period: monthKey, periodType: 'month' },
+            { period: quarterKey, periodType: 'quarter' },
+          ],
+        },
+      });
+      if (locks.length > 0) {
+        return res.status(403).json({ error: 'Període tancat. No es poden editar factures d\'un període bloquejat.' });
+      }
+    }
+
     const { sharedPercentSeito, sharedPercentLogistik, isShared } = req.body;
     const data = {};
 
@@ -361,6 +387,236 @@ router.post('/extract-pdf', async (req, res, next) => {
     }
 
     doc.end();
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================
+// GET /api/shared-invoices/period-locks — Estat de bloqueig/compensació de tots els períodes d'un any
+// ===========================================
+router.get('/period-locks', async (req, res, next) => {
+  try {
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+    const locks = await prisma.sharedPeriodLock.findMany({
+      where: { year },
+      include: {
+        lockedByUser: { select: { name: true } },
+        compensatedByUser: { select: { name: true } },
+      },
+    });
+    // Retorna un objecte indexat per "periodType:period" per fàcil consulta al frontend
+    const map = {};
+    for (const lock of locks) {
+      map[`${lock.periodType}:${lock.period}`] = {
+        id: lock.id,
+        locked: lock.locked,
+        lockedAt: lock.lockedAt,
+        lockedByName: lock.lockedByUser?.name || null,
+        compensated: lock.compensated,
+        compensatedAt: lock.compensatedAt,
+        compensatedByName: lock.compensatedByUser?.name || null,
+        compensatedDirection: lock.compensatedDirection,
+        compensatedAmount: lock.compensatedAmount ? parseFloat(lock.compensatedAmount) : null,
+        balanceSeito: lock.balanceSeito ? parseFloat(lock.balanceSeito) : null,
+        balanceLogistik: lock.balanceLogistik ? parseFloat(lock.balanceLogistik) : null,
+      };
+    }
+    res.json(map);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================
+// POST /api/shared-invoices/lock — Bloquejar un període
+// ===========================================
+router.post('/lock', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const { year, period, periodType } = req.body;
+    if (!year || !period || !periodType) {
+      return res.status(400).json({ error: 'Falten camps: year, period, periodType' });
+    }
+    const lock = await prisma.sharedPeriodLock.upsert({
+      where: { year_period_periodType: { year: parseInt(year), period, periodType } },
+      create: {
+        year: parseInt(year),
+        period,
+        periodType,
+        locked: true,
+        lockedAt: new Date(),
+        lockedBy: req.user.id,
+      },
+      update: {
+        locked: true,
+        lockedAt: new Date(),
+        lockedBy: req.user.id,
+      },
+    });
+    res.json({ success: true, lock });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================
+// POST /api/shared-invoices/unlock — Desbloquejar un període
+// ===========================================
+router.post('/unlock', authorize('ADMIN'), async (req, res, next) => {
+  try {
+    const { year, period, periodType } = req.body;
+    if (!year || !period || !periodType) {
+      return res.status(400).json({ error: 'Falten camps: year, period, periodType' });
+    }
+    const lock = await prisma.sharedPeriodLock.upsert({
+      where: { year_period_periodType: { year: parseInt(year), period, periodType } },
+      create: {
+        year: parseInt(year),
+        period,
+        periodType,
+        locked: false,
+      },
+      update: {
+        locked: false,
+        lockedAt: null,
+        lockedBy: null,
+        // Si es desbloqueja, també es descompensa
+        compensated: false,
+        compensatedAt: null,
+        compensatedBy: null,
+        compensatedDirection: null,
+        compensatedAmount: null,
+        balanceSeito: null,
+        balanceLogistik: null,
+      },
+    });
+    res.json({ success: true, lock });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================
+// POST /api/shared-invoices/compensate — Compensar un període (liquidar balanç)
+// ===========================================
+router.post('/compensate', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const { year, period, periodType } = req.body;
+    if (!year || !period || !periodType) {
+      return res.status(400).json({ error: 'Falten camps: year, period, periodType' });
+    }
+
+    const targetYear = parseInt(year);
+
+    // Determinar rang de dates pel període
+    let dateFrom, dateTo;
+    if (periodType === 'quarter') {
+      const q = parseInt(period.replace('Q', ''));
+      const startMonth = (q - 1) * 3; // 0-indexed
+      dateFrom = new Date(targetYear, startMonth, 1);
+      dateTo = new Date(targetYear, startMonth + 3, 1);
+    } else {
+      // mes: period = "01".."12"
+      const m = parseInt(period) - 1; // 0-indexed
+      dateFrom = new Date(targetYear, m, 1);
+      dateTo = new Date(targetYear, m + 1, 1);
+    }
+
+    // Obtenir factures compartides del període
+    const invoices = await prisma.receivedInvoice.findMany({
+      where: {
+        isShared: true,
+        deletedAt: null,
+        issueDate: { gte: dateFrom, lt: dateTo },
+      },
+    });
+
+    if (!invoices.length) {
+      return res.status(400).json({ error: 'No hi ha factures compartides en aquest període' });
+    }
+
+    // Calcular balanç
+    let totalSeito = 0;
+    let totalLogistik = 0;
+    let seitoPaid = 0;
+    let logistikPaid = 0;
+    let pendingCount = 0;
+
+    for (const inv of invoices) {
+      const total = parseFloat(inv.totalAmount);
+      const pSeito = parseFloat(inv.sharedPercentSeito) / 100;
+      const pLogistik = parseFloat(inv.sharedPercentLogistik) / 100;
+      totalSeito += total * pSeito;
+      totalLogistik += total * pLogistik;
+      if (inv.paidBy === 'SEITO') seitoPaid += total;
+      else if (inv.paidBy === 'LOGISTIK') logistikPaid += total;
+      else pendingCount++;
+    }
+
+    if (pendingCount > 0) {
+      return res.status(400).json({
+        error: `Hi ha ${pendingCount} factures sense indicar qui les ha pagat. Cal assignar "Pagat per" a totes.`,
+      });
+    }
+
+    // Balanç: qui ha pagat de més respecte la seva part
+    const seitoBalance = seitoPaid - totalSeito; // positiu = Seito ha pagat de més
+    let direction = null;
+    let amount = 0;
+
+    if (seitoBalance > 0.01) {
+      direction = 'LOGISTIK_PAYS_SEITO';
+      amount = Math.round(seitoBalance * 100) / 100;
+    } else if (seitoBalance < -0.01) {
+      direction = 'SEITO_PAYS_LOGISTIK';
+      amount = Math.round(Math.abs(seitoBalance) * 100) / 100;
+    }
+    // Si seitoBalance ≈ 0, no cal compensar (direction queda null, amount 0)
+
+    const lock = await prisma.sharedPeriodLock.upsert({
+      where: { year_period_periodType: { year: targetYear, period, periodType } },
+      create: {
+        year: targetYear,
+        period,
+        periodType,
+        locked: true,
+        lockedAt: new Date(),
+        lockedBy: req.user.id,
+        compensated: true,
+        compensatedAt: new Date(),
+        compensatedBy: req.user.id,
+        compensatedDirection: direction,
+        compensatedAmount: amount,
+        balanceSeito: Math.round(seitoPaid * 100) / 100,
+        balanceLogistik: Math.round(logistikPaid * 100) / 100,
+      },
+      update: {
+        locked: true,
+        lockedAt: new Date(),
+        lockedBy: req.user.id,
+        compensated: true,
+        compensatedAt: new Date(),
+        compensatedBy: req.user.id,
+        compensatedDirection: direction,
+        compensatedAmount: amount,
+        balanceSeito: Math.round(seitoPaid * 100) / 100,
+        balanceLogistik: Math.round(logistikPaid * 100) / 100,
+      },
+    });
+
+    res.json({
+      success: true,
+      lock,
+      summary: {
+        invoiceCount: invoices.length,
+        totalSeito: Math.round(totalSeito * 100) / 100,
+        totalLogistik: Math.round(totalLogistik * 100) / 100,
+        seitoPaid: Math.round(seitoPaid * 100) / 100,
+        logistikPaid: Math.round(logistikPaid * 100) / 100,
+        direction,
+        amount,
+      },
+    });
   } catch (error) {
     next(error);
   }
