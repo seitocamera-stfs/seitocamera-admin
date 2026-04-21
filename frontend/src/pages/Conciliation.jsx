@@ -24,6 +24,8 @@ export default function Conciliation() {
   const [selectedCandidates, setSelectedCandidates] = useState([]); // IDs seleccionats per multi-match
   const [aiRunning, setAiRunning] = useState(false);
   const [aiResult, setAiResult] = useState(null);
+  const [selectedForAI, setSelectedForAI] = useState([]); // Moviments seleccionats per IA
+  const [aiSelectMode, setAiSelectMode] = useState(false);
   const { mutate, loading: mutating } = useApiMutation();
 
   // Carregar detalls complets d'una factura emesa (per popup)
@@ -220,13 +222,49 @@ export default function Conciliation() {
     }
   };
 
+  // Toggle mode selecció per IA
+  const toggleAISelectMode = () => {
+    if (aiSelectMode) {
+      setAiSelectMode(false);
+      setSelectedForAI([]);
+    } else {
+      setAiSelectMode(true);
+      setSelectedForAI([]);
+      setSelectedMovement(null);
+    }
+  };
+
+  // Toggle selecció d'un moviment per IA
+  const toggleMovementForAI = (id) => {
+    setSelectedForAI(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  };
+
+  // Seleccionar/deseleccionar tots els moviments visibles
+  const toggleAllForAI = () => {
+    if (selectedForAI.length === movements.length) {
+      setSelectedForAI([]);
+    } else {
+      setSelectedForAI(movements.map(m => m.id));
+    }
+  };
+
   // Conciliar amb IA (Claude)
   const handleAIMatch = async () => {
+    if (selectedForAI.length === 0) {
+      setAiResult({ error: 'Selecciona almenys un moviment per conciliar amb IA' });
+      return;
+    }
     setAiRunning(true);
     setAiResult(null);
     try {
-      const { data } = await api.post('/conciliation/ai-auto');
-      setAiResult(data);
+      const result = await mutate('post', '/conciliation/ai-auto', {
+        movementIds: selectedForAI,
+      });
+      setAiResult(result);
+      setAiSelectMode(false);
+      setSelectedForAI([]);
       pendingQuery.refetch();
       matchedQuery.refetch();
     } catch (err) {
@@ -285,10 +323,24 @@ export default function Conciliation() {
           <button onClick={handleAutoMatch} disabled={mutating || aiRunning} className="flex items-center gap-2 bg-teal-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-teal-700 disabled:opacity-50">
             <Zap size={16} /> {mutating ? 'Processant...' : 'Auto-conciliar'}
           </button>
-          <button onClick={handleAIMatch} disabled={mutating || aiRunning} className="flex items-center gap-2 bg-violet-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-violet-700 disabled:opacity-50">
-            {aiRunning ? <Loader2 size={16} className="animate-spin" /> : <Brain size={16} />}
-            {aiRunning ? 'IA analitzant...' : 'Conciliar amb IA'}
-          </button>
+          {!aiSelectMode ? (
+            <button onClick={toggleAISelectMode} disabled={mutating || aiRunning || !isPending} className="flex items-center gap-2 bg-violet-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-violet-700 disabled:opacity-50">
+              <Brain size={16} /> Conciliar amb IA
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-violet-700 font-medium">
+                {selectedForAI.length} seleccionats
+              </span>
+              <button onClick={handleAIMatch} disabled={mutating || aiRunning || selectedForAI.length === 0} className="flex items-center gap-2 bg-violet-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-violet-700 disabled:opacity-50">
+                {aiRunning ? <Loader2 size={16} className="animate-spin" /> : <Brain size={16} />}
+                {aiRunning ? 'IA analitzant...' : `Enviar ${selectedForAI.length} a IA`}
+              </button>
+              <button onClick={toggleAISelectMode} className="px-3 py-2 rounded-md border text-sm font-medium hover:bg-muted">
+                Cancel·lar
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -374,7 +426,19 @@ export default function Conciliation() {
         <div className="grid grid-cols-2 gap-4">
           {/* ESQUERRA: Moviments bancaris */}
           <div>
-            <h3 className="text-sm font-semibold text-muted-foreground mb-2 uppercase tracking-wide">Moviments bancaris</h3>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Moviments bancaris</h3>
+              {aiSelectMode && movements.length > 0 && (
+                <button onClick={toggleAllForAI} className="text-xs text-violet-600 hover:text-violet-800 font-medium">
+                  {selectedForAI.length === movements.length ? 'Deseleccionar tots' : 'Seleccionar tots'}
+                </button>
+              )}
+            </div>
+            {aiSelectMode && (
+              <div className="bg-violet-50 border border-violet-200 rounded-lg p-2 mb-2 text-xs text-violet-700">
+                Selecciona els moviments que vols conciliar amb IA i clica "Enviar a IA"
+              </div>
+            )}
             <div className="space-y-2">
               {activeQuery.loading && !selectedMovement ? (
                 <div className="bg-card border rounded-lg p-8 text-center text-muted-foreground">Carregant...</div>
@@ -388,24 +452,41 @@ export default function Conciliation() {
                 ).map((m) => {
                   const isSelected = selectedMovement?.id === m.id;
                   const isExpense = parseFloat(m.amount) < 0;
+                  const isAISelected = selectedForAI.includes(m.id);
                   return (
                     <div
                       key={m.id}
-                      onClick={() => setSelectedMovement(isSelected ? null : m)}
-                      className={`bg-card border rounded-lg p-3 cursor-pointer transition-all ${isSelected ? 'ring-2 ring-teal-500 border-teal-500' : 'hover:border-muted-foreground/30'}`}
+                      onClick={() => aiSelectMode ? toggleMovementForAI(m.id) : setSelectedMovement(isSelected ? null : m)}
+                      className={`bg-card border rounded-lg p-3 cursor-pointer transition-all ${
+                        aiSelectMode && isAISelected ? 'ring-2 ring-violet-400 border-violet-400 bg-violet-50/40' :
+                        isSelected ? 'ring-2 ring-teal-500 border-teal-500' :
+                        'hover:border-muted-foreground/30'
+                      }`}
                     >
-                      <div className="flex items-start justify-between">
+                      <div className="flex items-start gap-2">
+                        {aiSelectMode && (
+                          <input
+                            type="checkbox"
+                            checked={isAISelected}
+                            onChange={() => {}}
+                            className="mt-1 rounded border-gray-300 text-violet-600 focus:ring-violet-500"
+                          />
+                        )}
                         <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            {isExpense ? <ArrowUpCircle size={14} className="text-red-500" /> : <ArrowDownCircle size={14} className="text-green-500" />}
-                            <span className="font-medium text-sm">{m.counterparty || m.description}</span>
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                {isExpense ? <ArrowUpCircle size={14} className="text-red-500" /> : <ArrowDownCircle size={14} className="text-green-500" />}
+                                <span className="font-medium text-sm">{m.counterparty || m.description}</span>
+                              </div>
+                              <div className="text-xs text-muted-foreground mt-1 ml-6">
+                                {formatDate(m.date)} {m.reference ? `· ${m.reference}` : ''} {m.accountName ? `· ${m.accountName}` : ''}
+                              </div>
+                            </div>
+                            <div className={`font-semibold text-sm ${isExpense ? 'text-red-600' : 'text-green-600'}`}>
+                              {isExpense ? '-' : '+'}{formatCurrency(Math.abs(parseFloat(m.amount)))}
+                            </div>
                           </div>
-                          <div className="text-xs text-muted-foreground mt-1 ml-6">
-                            {formatDate(m.date)} {m.reference ? `· ${m.reference}` : ''} {m.accountName ? `· ${m.accountName}` : ''}
-                          </div>
-                        </div>
-                        <div className={`font-semibold text-sm ${isExpense ? 'text-red-600' : 'text-green-600'}`}>
-                          {isExpense ? '-' : '+'}{formatCurrency(Math.abs(parseFloat(m.amount)))}
                         </div>
                       </div>
                     </div>

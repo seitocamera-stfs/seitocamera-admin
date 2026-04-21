@@ -351,15 +351,22 @@ router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
 // ===========================================
 router.post('/ai-auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
   try {
-    // 1. Recollir moviments no conciliats
+    const { movementIds } = req.body || {};
+
+    // 1. Recollir moviments — si s'envien IDs, només aquells; sinó, tots els no conciliats
+    const whereMovements = {
+      isConciliated: false,
+      NOT: [
+        { description: { contains: 'Internal transfer', mode: 'insensitive' } },
+        { counterparty: { contains: 'SEITO CAMERA', mode: 'insensitive' } },
+      ],
+    };
+    if (Array.isArray(movementIds) && movementIds.length > 0) {
+      whereMovements.id = { in: movementIds };
+    }
+
     const movements = await prisma.bankMovement.findMany({
-      where: {
-        isConciliated: false,
-        NOT: [
-          { description: { contains: 'Internal transfer', mode: 'insensitive' } },
-          { counterparty: { contains: 'SEITO CAMERA', mode: 'insensitive' } },
-        ],
-      },
+      where: whereMovements,
       orderBy: { date: 'desc' },
     });
 
