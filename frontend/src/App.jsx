@@ -46,7 +46,7 @@ function App() {
         <Route path="conciliation" element={<RoleGuard section="conciliation"><Conciliation /></RoleGuard>} />
         <Route path="reminders" element={<RoleGuard section="reminders"><Reminders /></RoleGuard>} />
         <Route path="users" element={<RoleGuard section="users"><Users /></RoleGuard>} />
-        <Route path="invoices/shared" element={<SharedInvoices />} />
+        <Route path="invoices/shared" element={<RoleGuard section="sharedInvoices"><SharedInvoices /></RoleGuard>} />
         <Route path="agent" element={<AccountingAgent />} />
         <Route path="equipment" element={<Equipment />} />
         <Route path="ai-costs" element={<AiCosts />} />
