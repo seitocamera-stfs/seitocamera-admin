@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Zap, Check, X as XIcon, Search, FileText, Eye, ChevronLeft, ChevronRight, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
+import { Zap, Check, X as XIcon, Search, FileText, Eye, ChevronLeft, ChevronRight, ArrowDownCircle, ArrowUpCircle, Brain, Loader2 } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import { StatusBadge } from '../components/shared/StatusBadge';
 import { formatCurrency, formatDate } from '../lib/utils';
@@ -22,6 +22,8 @@ export default function Conciliation() {
   const [searchType, setSearchType] = useState('auto');
   const [detailInvoice, setDetailInvoice] = useState(null);
   const [selectedCandidates, setSelectedCandidates] = useState([]); // IDs seleccionats per multi-match
+  const [aiRunning, setAiRunning] = useState(false);
+  const [aiResult, setAiResult] = useState(null);
   const { mutate, loading: mutating } = useApiMutation();
 
   // Carregar detalls complets d'una factura emesa (per popup)
@@ -218,6 +220,22 @@ export default function Conciliation() {
     }
   };
 
+  // Conciliar amb IA (Claude)
+  const handleAIMatch = async () => {
+    setAiRunning(true);
+    setAiResult(null);
+    try {
+      const { data } = await api.post('/conciliation/ai-auto');
+      setAiResult(data);
+      pendingQuery.refetch();
+      matchedQuery.refetch();
+    } catch (err) {
+      const msg = err.response?.data?.error || err.message;
+      setAiResult({ error: msg });
+    }
+    setAiRunning(false);
+  };
+
   // Confirmar conciliació
   const handleConfirm = async (id) => {
     await mutate('patch', `/conciliation/${id}/confirm`);
@@ -264,11 +282,79 @@ export default function Conciliation() {
             filters={{}}
             filenameBase="conciliacions"
           />
-          <button onClick={handleAutoMatch} disabled={mutating} className="flex items-center gap-2 bg-teal-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-teal-700 disabled:opacity-50">
+          <button onClick={handleAutoMatch} disabled={mutating || aiRunning} className="flex items-center gap-2 bg-teal-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-teal-700 disabled:opacity-50">
             <Zap size={16} /> {mutating ? 'Processant...' : 'Auto-conciliar'}
+          </button>
+          <button onClick={handleAIMatch} disabled={mutating || aiRunning} className="flex items-center gap-2 bg-violet-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-violet-700 disabled:opacity-50">
+            {aiRunning ? <Loader2 size={16} className="animate-spin" /> : <Brain size={16} />}
+            {aiRunning ? 'IA analitzant...' : 'Conciliar amb IA'}
           </button>
         </div>
       </div>
+
+      {/* Resultat IA */}
+      {aiResult && (
+        <div className={`mb-4 p-4 rounded-lg border ${aiResult.error ? 'bg-red-50 border-red-200' : 'bg-violet-50 border-violet-200'}`}>
+          <div className="flex items-start justify-between">
+            <div className="flex-1">
+              {aiResult.error ? (
+                <div className="text-red-700 text-sm font-medium">{aiResult.error}</div>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Brain size={18} className="text-violet-600" />
+                    <span className="font-semibold text-violet-800">Resultat IA</span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-4 text-sm mb-2">
+                    <div>
+                      <span className="text-muted-foreground">Processats:</span>{' '}
+                      <span className="font-medium">{aiResult.processed}</span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Conciliats:</span>{' '}
+                      <span className="font-medium text-green-700">{aiResult.matched}</span>
+                      {aiResult.autoConfirmed > 0 && (
+                        <span className="text-xs text-green-600 ml-1">({aiResult.autoConfirmed} auto-confirmats)</span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Per revisar:</span>{' '}
+                      <span className="font-medium text-amber-700">{aiResult.pendingReview}</span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Sense match:</span>{' '}
+                      <span className="font-medium text-gray-600">{aiResult.unmatched}</span>
+                    </div>
+                  </div>
+                  {aiResult.summary && (
+                    <p className="text-sm text-violet-700 italic">{aiResult.summary}</p>
+                  )}
+                  {aiResult.tokens && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Tokens: {aiResult.tokens.input_tokens?.toLocaleString()} entrada + {aiResult.tokens.output_tokens?.toLocaleString()} sortida
+                    </p>
+                  )}
+                  {aiResult.noMatchReasons?.length > 0 && (
+                    <details className="mt-2">
+                      <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">
+                        Moviments sense match ({aiResult.noMatchReasons.length})
+                      </summary>
+                      <div className="mt-1 space-y-1 max-h-32 overflow-y-auto">
+                        {aiResult.noMatchReasons.map((n, i) => (
+                          <div key={i} className="text-xs text-muted-foreground">· {n.reason}</div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                </>
+              )}
+            </div>
+            <button onClick={() => setAiResult(null)} className="text-muted-foreground hover:text-foreground p-1">
+              <XIcon size={16} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Pestanyes */}
       <div className="flex border-b mb-4">

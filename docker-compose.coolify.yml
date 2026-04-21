@@ -105,14 +105,11 @@ services:
     networks:
       - internal
       - coolify
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:80/ > /dev/null 2>&1 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 5s
+    # IMPORTANT: NO posar healthcheck aquí — Traefik filtra containers "unhealthy"
+    # i deixa de fer routing, causant Gateway Timeout
     labels:
       - "traefik.enable=true"
+      - "traefik.docker.network=coolify"
       - "traefik.http.routers.seitocamera.rule=Host(`admin.seito.camera`)"
       - "traefik.http.routers.seitocamera.entrypoints=https"
       - "traefik.http.routers.seitocamera.tls=true"

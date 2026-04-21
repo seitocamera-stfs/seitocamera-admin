@@ -5,6 +5,7 @@ const { authenticate, authorize } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { requireSection, requireLevel } = require('../middleware/sectionAccess');
 const { logger } = require('../config/logger');
+const { runAIConciliation } = require('../services/aiConciliationService');
 
 const router = express.Router();
 
@@ -341,6 +342,150 @@ router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
       details: details.slice(0, 50),
     });
   } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================
+// POST /api/conciliation/ai-auto — Conciliació amb IA (Claude)
+// ===========================================
+router.post('/ai-auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    // 1. Recollir moviments no conciliats
+    const movements = await prisma.bankMovement.findMany({
+      where: {
+        isConciliated: false,
+        NOT: [
+          { description: { contains: 'Internal transfer', mode: 'insensitive' } },
+          { counterparty: { contains: 'SEITO CAMERA', mode: 'insensitive' } },
+        ],
+      },
+      orderBy: { date: 'desc' },
+    });
+
+    if (movements.length === 0) {
+      return res.json({
+        message: 'No hi ha moviments pendents de conciliar',
+        matched: 0,
+        processed: 0,
+      });
+    }
+
+    // 2. Recollir factures rebudes no conciliades
+    const receivedInvoices = await prisma.receivedInvoice.findMany({
+      where: {
+        conciliations: { none: {} },
+        deletedAt: null,
+        isDuplicate: false,
+        status: { notIn: ['NOT_INVOICE', 'PAID'] },
+      },
+      include: { supplier: { select: { name: true, nif: true } } },
+      orderBy: { issueDate: 'desc' },
+    });
+
+    // 3. Recollir factures emeses no conciliades
+    const issuedInvoices = await prisma.issuedInvoice.findMany({
+      where: {
+        conciliations: { none: {} },
+        status: { not: 'PAID' },
+      },
+      include: { client: { select: { name: true, nif: true } } },
+      orderBy: { issueDate: 'desc' },
+    });
+
+    if (receivedInvoices.length === 0 && issuedInvoices.length === 0) {
+      return res.json({
+        message: 'No hi ha factures pendents per conciliar',
+        matched: 0,
+        processed: movements.length,
+      });
+    }
+
+    // 4. Cridar a Claude
+    const aiResult = await runAIConciliation(movements, receivedInvoices, issuedInvoices);
+
+    // 5. Crear les conciliacions a la BD
+    let matched = 0;
+    let autoConfirmed = 0;
+    const details = [];
+
+    for (const match of aiResult.matches) {
+      try {
+        const autoConfirm = match.confidence >= 0.90;
+
+        await prisma.$transaction(async (tx) => {
+          for (const inv of match.invoices) {
+            await tx.conciliation.create({
+              data: {
+                bankMovementId: match.movementId,
+                receivedInvoiceId: inv.type === 'received' ? inv.invoiceId : null,
+                issuedInvoiceId: inv.type === 'issued' ? inv.invoiceId : null,
+                status: autoConfirm ? 'CONFIRMED' : 'AUTO_MATCHED',
+                confidence: match.confidence,
+                matchReason: `[IA] ${match.reason}`,
+                ...(autoConfirm ? { confirmedAt: new Date(), confirmedBy: req.user.id } : {}),
+              },
+            });
+
+            // Marcar factura com PAID
+            if (inv.type === 'received') {
+              await tx.receivedInvoice.update({
+                where: { id: inv.invoiceId },
+                data: { status: 'PAID' },
+              });
+            } else {
+              await tx.issuedInvoice.update({
+                where: { id: inv.invoiceId },
+                data: { status: 'PAID' },
+              });
+            }
+          }
+
+          await tx.bankMovement.update({
+            where: { id: match.movementId },
+            data: { isConciliated: true },
+          });
+        });
+
+        matched++;
+        if (autoConfirm) autoConfirmed++;
+
+        details.push({
+          movementId: match.movementId,
+          invoices: match.invoices.map(i => i.invoiceId),
+          confidence: Math.round(match.confidence * 100) + '%',
+          reason: match.reason,
+          autoConfirmed: autoConfirm,
+        });
+      } catch (concErr) {
+        logger.warn(`Conciliació IA: error creant match ${match.movementId}: ${concErr.message}`);
+      }
+    }
+
+    logger.info(`Conciliació IA completada: ${matched} matches de ${movements.length} moviments`);
+
+    res.json({
+      message: `Conciliació IA completada`,
+      processed: aiResult.movementsSent,
+      matched,
+      autoConfirmed,
+      pendingReview: matched - autoConfirmed,
+      unmatched: aiResult.movementsSent - matched,
+      noMatch: aiResult.noMatch?.length || 0,
+      noMatchReasons: (aiResult.noMatch || []).slice(0, 20).map(n => ({
+        movementId: n.movementId,
+        reason: n.reason,
+      })),
+      summary: aiResult.summary,
+      tokens: aiResult.tokens,
+      details: details.slice(0, 50),
+    });
+  } catch (error) {
+    logger.error(`Conciliació IA error: ${error.message}`);
+    // Si és error de l'API, retornar 502
+    if (error.message.includes('Claude API')) {
+      return res.status(502).json({ error: `Error de la IA: ${error.message}` });
+    }
     next(error);
   }
 });
