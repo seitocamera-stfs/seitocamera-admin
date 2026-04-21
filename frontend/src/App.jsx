@@ -17,6 +17,7 @@ import AccountingAgent from './pages/AccountingAgent';
 import Equipment from './pages/Equipment';
 import AiCosts from './pages/AiCosts';
 import SharedInvoices from './pages/SharedInvoices';
+import Fiscal from './pages/Fiscal';
 import useAuthStore from './stores/authStore';
 
 function App() {
@@ -47,6 +48,7 @@ function App() {
         <Route path="reminders" element={<RoleGuard section="reminders"><Reminders /></RoleGuard>} />
         <Route path="users" element={<RoleGuard section="users"><Users /></RoleGuard>} />
         <Route path="invoices/shared" element={<RoleGuard section="sharedInvoices"><SharedInvoices /></RoleGuard>} />
+        <Route path="fiscal" element={<RoleGuard section="fiscal"><Fiscal /></RoleGuard>} />
         <Route path="agent" element={<AccountingAgent />} />
         <Route path="equipment" element={<Equipment />} />
         <Route path="ai-costs" element={<AiCosts />} />

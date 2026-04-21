@@ -132,6 +132,7 @@ app.use('/api/zoho', require('./routes/zoho'));
 app.use('/api/export', require('./routes/export'));
 app.use('/api/agent', require('./routes/agent'));
 app.use('/api/equipment', require('./routes/equipment'));
+app.use('/api/fiscal', require('./routes/fiscal'));
 app.use('/api/shared-invoices', require('./routes/sharedInvoices'));
 app.use('/api/ai-costs', require('./routes/aiCosts'));
 

@@ -14,6 +14,7 @@ import {
   Bot,
   Camera,
   BrainCircuit,
+  Calculator,
 } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
 import { canAccessSection } from '../../lib/permissions';
@@ -28,6 +29,7 @@ const navItems = [
   { to: '/bank', icon: Landmark, label: 'Moviments bancaris', section: 'bank' },
   { to: '/conciliation', icon: GitCompare, label: 'Conciliació', section: 'conciliation' },
   { to: '/reminders', icon: Bell, label: 'Recordatoris', section: 'reminders' },
+  { to: '/fiscal', icon: Calculator, label: 'Fiscal', section: 'fiscal' },
   { to: '/users', icon: UserCog, label: 'Usuaris', section: 'users' },
   { to: '/equipment', icon: Camera, label: 'Inventari equips', section: 'equipment' },
   { to: '/agent', icon: Bot, label: 'Agent comptable', section: 'agent' },
