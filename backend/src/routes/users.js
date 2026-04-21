@@ -20,8 +20,9 @@ const levelEnum = z.enum(['read', 'write', 'admin']);
 
 // Seccions que es poden assignar a un rol CUSTOM (users queda exclosa)
 const SECTION_KEYS = [
-  'dashboard', 'receivedInvoices', 'issuedInvoices', 'suppliers',
-  'clients', 'bank', 'conciliation', 'reminders',
+  'dashboard', 'receivedInvoices', 'issuedInvoices', 'sharedInvoices',
+  'suppliers', 'clients', 'bank', 'conciliation', 'reminders',
+  'equipment', 'agent',
 ];
 
 const customPermissionsSchema = z.record(z.string(), levelEnum)
