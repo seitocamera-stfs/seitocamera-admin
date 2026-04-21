@@ -77,6 +77,9 @@ if (process.env.NODE_ENV !== 'test') {
 // Desactivar header X-Powered-By (helmet ja ho fa, però per si de cas)
 app.disable('x-powered-by');
 
+// Trust proxy (nginx davant) — necessari perquè express-rate-limit identifiqui IPs correctament
+app.set('trust proxy', 1);
+
 // Rate limiting global (relaxat — endpoints sensibles com login tenen el seu propi limiter)
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minuts
