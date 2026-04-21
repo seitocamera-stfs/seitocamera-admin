@@ -63,6 +63,7 @@ router.get('/', async (req, res, next) => {
 
       groups[key].invoices.push({
         ...inv,
+        paidBy: inv.paidBy || 'NONE',
         amountSeito: +(total * pSeito).toFixed(2),
         amountLogistik: +(total * pLogistik).toFixed(2),
       });
@@ -122,6 +123,12 @@ router.patch('/:id', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
       data.sharedPercentLogistik = parseFloat(sharedPercentLogistik);
       if (sharedPercentSeito === undefined) {
         data.sharedPercentSeito = 100 - data.sharedPercentLogistik;
+      }
+    }
+    if (req.body.paidBy !== undefined) {
+      const validPaidBy = ['NONE', 'SEITO', 'LOGISTIK'];
+      if (validPaidBy.includes(req.body.paidBy)) {
+        data.paidBy = req.body.paidBy;
       }
     }
 

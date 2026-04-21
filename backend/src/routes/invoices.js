@@ -100,6 +100,18 @@ router.get('/received', async (req, res, next) => {
     if (source) where.source = source;
     if (supplierId) where.supplierId = supplierId;
 
+    // Per defecte, excloure factures LOGISTIK (comptabilitat independent)
+    // Amb ?origin=LOGISTIK es mostren NOMÉS les de Logistik
+    // Amb ?origin=all es mostren totes
+    const { origin } = req.query;
+    if (origin === 'all') {
+      // No filtrar per origin
+    } else if (origin) {
+      where.origin = origin;
+    } else {
+      where.origin = { not: 'LOGISTIK' };
+    }
+
     if (dateFrom || dateTo) {
       where.issueDate = {};
       if (dateFrom) where.issueDate.gte = new Date(dateFrom);

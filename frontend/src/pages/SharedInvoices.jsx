@@ -66,6 +66,15 @@ export default function SharedInvoices() {
     } catch {}
   };
 
+  const handlePaidByChange = async (invoiceId, paidBy) => {
+    try {
+      await api.patch(`/shared-invoices/${invoiceId}`, { paidBy });
+      refetch();
+    } catch {
+      alert('Error actualitzant el pagament');
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -149,6 +158,7 @@ export default function SharedInvoices() {
                         <th className="text-right p-3 font-medium text-blue-600">Seito</th>
                         <th className="text-right p-3 font-medium text-orange-600">Logistik</th>
                         <th className="text-center p-3 font-medium">%</th>
+                        <th className="text-center p-3 font-medium">Pagat per</th>
                         <th className="text-right p-3 font-medium">Accions</th>
                       </tr>
                     </thead>
@@ -183,6 +193,21 @@ export default function SharedInvoices() {
                                 {parseFloat(inv.sharedPercentSeito)}/{parseFloat(inv.sharedPercentLogistik)}
                               </span>
                             )}
+                          </td>
+                          <td className="p-3 text-center">
+                            <select
+                              value={inv.paidBy || 'NONE'}
+                              onChange={(e) => handlePaidByChange(inv.id, e.target.value)}
+                              className={`text-xs px-2 py-1 rounded-full border font-medium ${
+                                inv.paidBy === 'SEITO' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                                inv.paidBy === 'LOGISTIK' ? 'bg-orange-50 text-orange-700 border-orange-200' :
+                                'bg-gray-50 text-gray-500 border-gray-200'
+                              }`}
+                            >
+                              <option value="NONE">Pendent</option>
+                              <option value="SEITO">Seito</option>
+                              <option value="LOGISTIK">Logistik</option>
+                            </select>
                           </td>
                           <td className="p-3 text-right">
                             <div className="flex items-center justify-end gap-1">

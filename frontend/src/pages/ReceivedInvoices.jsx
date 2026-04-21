@@ -1611,23 +1611,44 @@ export default function ReceivedInvoices() {
               <EquipmentSection invoiceId={editForm.id} />
             )}
             <div className="flex justify-between pt-2">
-              <button
-                type="button"
-                className="flex items-center gap-1.5 px-3 py-2 rounded-md text-sm text-red-600 hover:bg-red-50 border border-red-200"
-                onClick={async () => {
-                  if (!confirm('Moure a la paperera? (Es pot restaurar durant 30 dies)')) return;
-                  try {
-                    await mutate('delete', `/invoices/received/${editForm.id}`);
-                    setShowEditModal(false);
-                    setEditForm(null);
-                    refetch();
-                  } catch (err) {
-                    alert(err.response?.data?.error || 'Error eliminant');
-                  }
-                }}
-              >
-                <Trash2 size={14} /> Eliminar
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-md text-sm text-red-600 hover:bg-red-50 border border-red-200"
+                  onClick={async () => {
+                    if (!confirm('Moure a la paperera? (Es pot restaurar durant 30 dies)')) return;
+                    try {
+                      await mutate('delete', `/invoices/received/${editForm.id}`);
+                      setShowEditModal(false);
+                      setEditForm(null);
+                      refetch();
+                    } catch (err) {
+                      alert(err.response?.data?.error || 'Error eliminant');
+                    }
+                  }}
+                >
+                  <Trash2 size={14} /> Eliminar
+                </button>
+                {editForm.currentStatus !== 'PAID' && (
+                  <button
+                    type="button"
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-md text-sm text-green-700 hover:bg-green-50 border border-green-200"
+                    onClick={async () => {
+                      if (!confirm(`Marcar la factura ${editForm.invoiceNumber} com a pagada?`)) return;
+                      try {
+                        await mutate('patch', `/invoices/received/${editForm.id}/status`, { status: 'PAID' });
+                        setShowEditModal(false);
+                        setEditForm(null);
+                        refetch();
+                      } catch (err) {
+                        alert(err.response?.data?.error || 'Error actualitzant');
+                      }
+                    }}
+                  >
+                    <CheckCircle size={14} /> Marcar pagada
+                  </button>
+                )}
+              </div>
               <div className="flex gap-2">
                 <button type="button" onClick={() => setShowEditModal(false)} className="px-4 py-2 rounded-md border text-sm">Cancel·lar</button>
                 <button type="submit" className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium">Guardar</button>

@@ -69,6 +69,7 @@ router.get('/stats', async (req, res, next) => {
           AND "totalAmount" > 0
           AND "totalAmount" < ${MAX_REASONABLE_AMOUNT}
           AND "status" NOT IN ('AMOUNT_PENDING', 'NOT_INVOICE')
+          AND ("origin" IS NULL OR "origin" != 'LOGISTIK')
         GROUP BY DATE_TRUNC('month', "issueDate")
         ORDER BY DATE_TRUNC('month', "issueDate") ASC
       `,
@@ -95,6 +96,7 @@ router.get('/stats', async (req, res, next) => {
           AND "totalAmount" > 0
           AND "totalAmount" < ${MAX_REASONABLE_AMOUNT}
           AND "status" NOT IN ('AMOUNT_PENDING', 'NOT_INVOICE')
+          AND ("origin" IS NULL OR "origin" != 'LOGISTIK')
         GROUP BY DATE_TRUNC('month', "issueDate")
         ORDER BY DATE_TRUNC('month', "issueDate") ASC
       `,
@@ -220,6 +222,7 @@ router.get('/stats', async (req, res, next) => {
         isDuplicate: false,
         totalAmount: { gt: 0, lt: MAX_REASONABLE_AMOUNT },
         status: { notIn: ['AMOUNT_PENDING', 'NOT_INVOICE'] },
+        origin: { not: 'LOGISTIK' },
       },
       _sum: { totalAmount: true },
       _count: { _all: true },
@@ -251,6 +254,7 @@ router.get('/stats', async (req, res, next) => {
           issueDate: { gte: from, lte: to },
           deletedAt: null,
           isDuplicate: false,
+          origin: { not: 'LOGISTIK' },
         },
         _sum: { totalAmount: true },
         _count: { _all: true },
@@ -287,6 +291,7 @@ router.get('/stats', async (req, res, next) => {
         status: { notIn: ['PAID', 'NOT_INVOICE', 'AMOUNT_PENDING'] },
         totalAmount: { gt: 0, lt: MAX_REASONABLE_AMOUNT },
         issueDate: { gte: sixMonthsAgo },
+        origin: { not: 'LOGISTIK' },
       },
       select: {
         id: true,
@@ -346,6 +351,7 @@ router.get('/stats', async (req, res, next) => {
           isDuplicate: false,
           totalAmount: { gt: 0, lt: MAX_REASONABLE_AMOUNT },
           status: { notIn: ['AMOUNT_PENDING', 'NOT_INVOICE'] },
+          origin: { not: 'LOGISTIK' },
         },
         _sum: { totalAmount: true },
         _count: { _all: true },
@@ -460,6 +466,7 @@ router.get('/top', async (req, res, next) => {
         isDuplicate: false,
         totalAmount: { gt: 0, lt: MAX_REASONABLE_AMOUNT },
         status: { notIn: ['AMOUNT_PENDING', 'NOT_INVOICE'] },
+        origin: { not: 'LOGISTIK' },
       },
       _sum: { totalAmount: true },
       _count: { _all: true },

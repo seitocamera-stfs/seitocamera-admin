@@ -486,12 +486,256 @@ async function syncGdriveFiles() {
       logger.info(`GDrive sync completat: ${results.processed} processats, ${results.duplicates} duplicats, ${results.errors} errors`);
     }
 
+    // Sync carpeta Logistik (independentment)
+    try {
+      const logistikResults = await syncLogistikFiles();
+      results.logistik = logistikResults;
+    } catch (logErr) {
+      logger.error(`GDrive Logistik sync error dins del job principal: ${logErr.message}`);
+    }
+
     return results;
   } catch (error) {
     logger.error(`GDrive sync error: ${error.message}`);
     return { ...results, error: error.message };
   } finally {
     isRunning = false;
+  }
+}
+
+// ===========================================
+// Sync carpeta Seito-logistik/inbox → Factures compartides (origin: LOGISTIK)
+// ===========================================
+
+let logistikInboxFolderId = null;
+
+async function getLogistikInboxFolderId() {
+  if (logistikInboxFolderId) return logistikInboxFolderId;
+  const facturesRebudesId = await gdrive.getSubfolderId('factures-rebudes');
+  const logistikFolder = await gdrive.findOrCreateFolder('Seito-logistik', facturesRebudesId);
+  const inbox = await gdrive.findOrCreateFolder('inbox', logistikFolder.id);
+  logistikInboxFolderId = inbox.id;
+  return logistikInboxFolderId;
+}
+
+async function getLogistikDateFolderId(date) {
+  const d = new Date(date);
+  const year = String(d.getFullYear());
+  const month = d.getMonth() + 1;
+  const quarter = `T${Math.ceil(month / 3)}`;
+  const monthStr = String(month).padStart(2, '0');
+
+  const facturesRebudesId = await gdrive.getSubfolderId('factures-rebudes');
+  const logistikFolder = await gdrive.findOrCreateFolder('Seito-logistik', facturesRebudesId);
+  const yearFolder = await gdrive.findOrCreateFolder(year, logistikFolder.id);
+  const quarterFolder = await gdrive.findOrCreateFolder(quarter, yearFolder.id);
+  const monthFolder = await gdrive.findOrCreateFolder(monthStr, quarterFolder.id);
+  return monthFolder.id;
+}
+
+async function syncLogistikFiles() {
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY && !process.env.GOOGLE_CREDENTIALS_JSON && !process.env.GOOGLE_REFRESH_TOKEN) {
+    return { processed: 0, errors: 0 };
+  }
+
+  const results = { processed: 0, duplicates: 0, errors: 0, details: [] };
+
+  try {
+    const inboxId = await getLogistikInboxFolderId();
+    const drive = gdrive.getDriveClient();
+    const res = await drive.files.list({
+      q: `'${inboxId}' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'`,
+      fields: 'files(id, name, mimeType, size, createdTime, modifiedTime)',
+      orderBy: 'createdTime asc',
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+    });
+
+    const files = (res.data.files || []).filter((f) => {
+      const name = (f.name || '').toLowerCase();
+      const mime = (f.mimeType || '').toLowerCase();
+      return name.endsWith('.pdf') || mime === 'application/pdf';
+    });
+
+    if (!files.length) return results;
+
+    logger.info(`GDrive Logistik sync: ${files.length} PDFs trobats a Seito-logistik/inbox`);
+
+    const admin = await prisma.user.findFirst({
+      where: { role: 'ADMIN', isActive: true },
+      select: { id: true },
+    });
+
+    for (const file of files) {
+      try {
+        const alreadyProcessed = await redis.get(`gdrive:logistik:processed:${file.id}`);
+        if (alreadyProcessed) continue;
+
+        const existingByFileId = await prisma.receivedInvoice.findFirst({
+          where: { gdriveFileId: file.id },
+          select: { id: true },
+        });
+        if (existingByFileId) {
+          await redis.set(`gdrive:logistik:processed:${file.id}`, '1', 'EX', 86400 * 30);
+          continue;
+        }
+
+        // Analitzar PDF
+        let pdfAnalysis = { hasText: false, invoiceNumber: null, nifCif: [], totalAmount: null, invoiceDate: null };
+        let tmpPath = null;
+
+        try {
+          const tmpDir = path.join(os.tmpdir(), 'seitocamera-gdrive');
+          if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+          const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+          tmpPath = path.join(tmpDir, `${Date.now()}_logistik_${safeName}`);
+          await gdrive.downloadFile(file.id, tmpPath);
+          pdfAnalysis = await pdfExtract.analyzePdfWithTemplates(tmpPath, file.name);
+          logger.info(`GDrive Logistik: Analitzat ${file.name} → nº: ${pdfAnalysis.invoiceNumber || '-'}, total: ${pdfAnalysis.totalAmount || '-'}`);
+        } catch (dlErr) {
+          logger.warn(`GDrive Logistik: No s'ha pogut analitzar ${file.name}: ${dlErr.message}`);
+        } finally {
+          if (tmpPath) setTimeout(() => { try { fs.unlinkSync(tmpPath); } catch {} }, 5000);
+        }
+
+        // Trobar proveïdor
+        let matchedSupplier = pdfAnalysis.matchedSupplierFromTemplate || null;
+        if (!matchedSupplier) {
+          matchedSupplier = await pdfExtract.findOrCreateSupplier(pdfAnalysis.nifCif, pdfAnalysis.supplierName);
+        }
+
+        // Dades de la factura
+        const invoiceNumber = pdfAnalysis.invoiceNumber || generateProvisionalNumber(file.name);
+        const totalAmount = pdfAnalysis.totalAmount ? parseFloat(pdfAnalysis.totalAmount) : null;
+        let taxRate = 21;
+        let subtotal, taxAmount;
+        let irpfRate = pdfAnalysis.irpfRate || 0;
+        let irpfAmount = pdfAnalysis.irpfAmount || 0;
+
+        if (totalAmount && pdfAnalysis.aiExtracted && pdfAnalysis.baseAmount && pdfAnalysis.taxRate !== undefined) {
+          subtotal = parseFloat(pdfAnalysis.baseAmount.toFixed(2));
+          taxRate = pdfAnalysis.taxRate;
+          taxAmount = pdfAnalysis.taxAmount != null
+            ? parseFloat(pdfAnalysis.taxAmount.toFixed(2))
+            : Math.round((subtotal * taxRate / 100) * 100) / 100;
+        } else if (totalAmount && pdfAnalysis.baseAmount && pdfAnalysis.baseAmount < totalAmount) {
+          subtotal = parseFloat(pdfAnalysis.baseAmount.toFixed(2));
+          taxAmount = Math.round((totalAmount - subtotal) * 100) / 100;
+          if (subtotal > 0) taxRate = Math.round((taxAmount / subtotal) * 100);
+        } else {
+          subtotal = totalAmount ? Math.round((totalAmount / (1 + taxRate / 100)) * 100) / 100 : null;
+          taxAmount = (totalAmount && subtotal) ? Math.round((totalAmount - subtotal) * 100) / 100 : null;
+        }
+
+        const dateFromPdf = !!pdfAnalysis.invoiceDate;
+        const issueDate = pdfAnalysis.invoiceDate || (file.createdTime ? new Date(file.createdTime) : new Date());
+        const needsReview = !pdfAnalysis.invoiceNumber || !pdfAnalysis.totalAmount || !dateFromPdf;
+        const needsAmount = !pdfAnalysis.totalAmount;
+
+        // Obtenir percentatge per defecte del proveïdor (si existeix)
+        let sharedPercentSeito = 50;
+        let sharedPercentLogistik = 50;
+        if (matchedSupplier?.id) {
+          const supplierData = await prisma.supplier.findUnique({
+            where: { id: matchedSupplier.id },
+            select: { isSharedDefault: true, sharedPercentSeito: true, sharedPercentLogistik: true },
+          });
+          if (supplierData?.isSharedDefault) {
+            sharedPercentSeito = parseFloat(supplierData.sharedPercentSeito) || 50;
+            sharedPercentLogistik = parseFloat(supplierData.sharedPercentLogistik) || 50;
+          }
+        }
+
+        const invoiceData = {
+          invoiceNumber,
+          source: 'GDRIVE_SYNC',
+          status: needsAmount ? 'AMOUNT_PENDING' : needsReview ? 'PDF_PENDING' : 'PENDING',
+          gdriveFileId: file.id,
+          originalFileName: file.name,
+          supplierId: matchedSupplier?.id || null,
+          isDuplicate: false,
+          origin: 'LOGISTIK',
+          isShared: true,
+          sharedPercentSeito,
+          sharedPercentLogistik,
+          description: `Factura Logistik: ${file.name}${needsReview ? ' (cal revisar)' : ''}`,
+          issueDate,
+          subtotal: subtotal || 0,
+          taxRate,
+          taxAmount: taxAmount || 0,
+          irpfRate: irpfRate || 0,
+          irpfAmount: irpfAmount || 0,
+          totalAmount: totalAmount ? Math.round(totalAmount * 100) / 100 : 0,
+          currency: 'EUR',
+          ocrRawData: sanitizeForDb({
+            text: pdfAnalysis.text?.substring(0, 5000) || null,
+            invoiceNumber: pdfAnalysis.invoiceNumber || null,
+            nifCif: pdfAnalysis.nifCif || [],
+            totalAmount: pdfAnalysis.totalAmount || null,
+            invoiceDate: pdfAnalysis.invoiceDate || null,
+            supplierName: pdfAnalysis.supplierName || null,
+          }),
+          ocrConfidence: pdfAnalysis.invoiceNumber && pdfAnalysis.totalAmount ? 0.8 : 0.4,
+        };
+
+        let invoice;
+        try {
+          invoice = await prisma.receivedInvoice.create({ data: invoiceData });
+        } catch (createErr) {
+          if (createErr.code === 'P2002') {
+            logger.warn(`GDrive Logistik: Duplicat constraint per ${file.name}, saltant`);
+            await redis.set(`gdrive:logistik:processed:${file.id}`, '1', 'EX', 86400 * 30);
+            results.duplicates++;
+            continue;
+          }
+          throw createErr;
+        }
+
+        // Moure a carpeta organitzada: Seito-logistik/{any}/{trimestre}/{mes}
+        const destFolderId = await getLogistikDateFolderId(issueDate);
+        await gdrive.moveFile(file.id, destFolderId, inboxId);
+
+        const m = issueDate.getMonth() + 1;
+        const destPath = `Seito-logistik/${issueDate.getFullYear()}/T${Math.ceil(m / 3)}/${m.toString().padStart(2, '0')}`;
+        logger.info(`GDrive Logistik: ${file.name} → ${invoiceNumber} (${totalAmount || 0}€) mogut a ${destPath}`);
+
+        // Recordatori si falten dades
+        if (admin && needsReview) {
+          try {
+            await prisma.reminder.create({
+              data: {
+                title: `Factura Logistik: ${file.name} — ${needsAmount ? '🔴 IMPORT PENDENT' : '⚠️ Cal revisar'}`,
+                description: `Factura de Logistik processada des de Seito-logistik/inbox.\nNúmero: ${invoiceNumber}\nImport: ${totalAmount || 'NO DETECTAT'}€\nProveïdor: ${matchedSupplier?.name || 'No detectat'}`,
+                dueAt: new Date(Date.now() + 1 * 24 * 3600 * 1000),
+                priority: needsAmount ? 'URGENT' : 'HIGH',
+                entityType: 'received_invoice',
+                entityId: invoice.id,
+                authorId: admin.id,
+              },
+            });
+          } catch (remErr) {
+            logger.warn(`GDrive Logistik: Error creant recordatori: ${remErr.message}`);
+          }
+        }
+
+        await redis.set(`gdrive:logistik:processed:${file.id}`, 'done', 'EX', 90 * 24 * 3600);
+        results.processed++;
+        results.details.push({ file: file.name, status: 'processed', invoiceNumber, movedTo: destPath });
+
+      } catch (err) {
+        logger.error(`GDrive Logistik: Error processant ${file.name}: ${err.message}`);
+        results.errors++;
+      }
+    }
+
+    if (results.processed > 0 || results.errors > 0) {
+      logger.info(`GDrive Logistik sync completat: ${results.processed} processats, ${results.errors} errors`);
+    }
+
+    return results;
+  } catch (error) {
+    logger.error(`GDrive Logistik sync error: ${error.message}`);
+    return { ...results, error: error.message };
   }
 }
 
@@ -513,4 +757,4 @@ function startGdriveSyncJob() {
   return task;
 }
 
-module.exports = { startGdriveSyncJob, syncGdriveFiles };
+module.exports = { startGdriveSyncJob, syncGdriveFiles, syncLogistikFiles };

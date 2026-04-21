@@ -213,6 +213,10 @@ model ReceivedInvoice {
   sharedPercentSeito    Decimal  @default(50) @db.Decimal(5, 2)  // % que paga Seito
   sharedPercentLogistik Decimal  @default(50) @db.Decimal(5, 2)  // % que paga Logistik
 
+  // Origen i pagament de la factura
+  origin                String   @default("SEITO")   // SEITO, LOGISTIK, SHARED
+  paidBy                String   @default("NONE")     // NONE, SEITO, LOGISTIK
+
   // Relacions
   supplier         Supplier?          @relation(fields: [supplierId], references: [id])
   conciliations    Conciliation[]
@@ -225,6 +229,7 @@ model ReceivedInvoice {
   @@index([issueDate])
   @@index([supplierId])
   @@index([accountingType])
+  @@index([origin])
   @@index([deletedAt])
   @@index([isShared])
   @@map("received_invoices")
