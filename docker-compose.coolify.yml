@@ -72,6 +72,13 @@ services:
       - internal
     volumes:
       - uploads_data:/app/uploads
+      - /opt/seitocamera/google-service-account.json:/app/google-service-account.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/api/health > /dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   # ===========================================
   # Frontend (React + Vite → Nginx static)
@@ -98,6 +105,12 @@ services:
     networks:
       - internal
       - coolify
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:80/ > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.seitocamera.rule=Host(`admin.seito.camera`)"
