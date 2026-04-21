@@ -1650,7 +1650,7 @@ export default function ReceivedInvoices() {
                 >
                   <Trash2 size={14} /> Eliminar
                 </button>
-                {editForm.currentStatus !== 'PAID' && (
+                {editForm.currentStatus !== 'PAID' ? (
                   <button
                     type="button"
                     className="flex items-center gap-1.5 px-3 py-2 rounded-md text-sm text-green-700 hover:bg-green-50 border border-green-200"
@@ -1667,6 +1667,24 @@ export default function ReceivedInvoices() {
                     }}
                   >
                     <CheckCircle size={14} /> Marcar pagada
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-md text-sm text-amber-700 hover:bg-amber-50 border border-amber-200"
+                    onClick={async () => {
+                      if (!confirm(`Desmarcar la factura ${editForm.invoiceNumber} com a pagada?`)) return;
+                      try {
+                        await mutate('patch', `/invoices/received/${editForm.id}/status`, { status: 'APPROVED' });
+                        setShowEditModal(false);
+                        setEditForm(null);
+                        refetch();
+                      } catch (err) {
+                        alert(err.response?.data?.error || 'Error actualitzant');
+                      }
+                    }}
+                  >
+                    <XIcon size={14} /> Desmarcar pagada
                   </button>
                 )}
               </div>
