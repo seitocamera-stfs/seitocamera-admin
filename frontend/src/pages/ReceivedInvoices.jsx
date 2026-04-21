@@ -230,6 +230,10 @@ export default function ReceivedInvoices() {
           valA = new Date(a.issueDate || 0).getTime();
           valB = new Date(b.issueDate || 0).getTime();
           break;
+        case 'createdAt':
+          valA = new Date(a.createdAt || 0).getTime();
+          valB = new Date(b.createdAt || 0).getTime();
+          break;
         case 'totalAmount':
           valA = parseFloat(a.totalAmount) || 0;
           valB = parseFloat(b.totalAmount) || 0;
@@ -857,7 +861,8 @@ export default function ReceivedInvoices() {
               </th>
               <SortableHeader label="Número" field="invoiceNumber" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <SortableHeader label="Proveïdor" field="supplier" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
-              <SortableHeader label="Data" field="issueDate" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+              <SortableHeader label="Data factura" field="issueDate" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+              <SortableHeader label="Entrada" field="createdAt" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <SortableHeader label="Import" field="totalAmount" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <SortableHeader label="Estat" field="status" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <SortableHeader label="Font" field="source" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
@@ -870,9 +875,9 @@ export default function ReceivedInvoices() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={12} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
+              <tr><td colSpan={13} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
             ) : data?.data?.length === 0 ? (
-              <tr><td colSpan={12} className="p-8 text-center text-muted-foreground">Cap factura trobada</td></tr>
+              <tr><td colSpan={13} className="p-8 text-center text-muted-foreground">Cap factura trobada</td></tr>
             ) : (
               sortedData.map((inv) => {
                 const src = SOURCE_LABELS[inv.source] || SOURCE_LABELS.MANUAL;
@@ -907,6 +912,7 @@ export default function ReceivedInvoices() {
                     </td>
                     <td className="p-3">{inv.supplier?.name || (<span className="text-xs text-red-400 italic">Sense proveïdor</span>)}</td>
                     <td className="p-3 text-muted-foreground">{formatDate(inv.issueDate)}</td>
+                    <td className="p-3 text-muted-foreground text-xs">{formatDate(inv.createdAt)}</td>
                     <td className="p-3 text-right font-medium">{formatCurrency(inv.totalAmount)}</td>
                     <td className="p-3 text-center"><StatusBadge status={inv.status} /></td>
                     <td className="p-3 text-center">
