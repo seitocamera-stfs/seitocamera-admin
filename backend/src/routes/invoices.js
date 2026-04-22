@@ -92,7 +92,10 @@ router.get('/received', async (req, res, next) => {
     }
 
     // Per defecte, excloure NOT_INVOICE (documents que no són factures)
-    if (status) {
+    if (status === 'PENDING_ALL') {
+      // Agrupa tots els estats "pendents" (PENDING, PDF_PENDING, AMOUNT_PENDING, REVIEWED)
+      where.status = { in: ['PENDING', 'PDF_PENDING', 'AMOUNT_PENDING', 'REVIEWED'] };
+    } else if (status) {
       where.status = status;
     } else {
       where.status = { not: 'NOT_INVOICE' };

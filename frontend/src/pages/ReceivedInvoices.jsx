@@ -737,20 +737,11 @@ export default function ReceivedInvoices() {
         </div>
         <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); clearSelection(); }} className="rounded-md border bg-background px-3 py-2 text-sm">
           <option value="">Tots els estats</option>
-          <option value="PENDING">Pendent</option>
-          <option value="PDF_PENDING">Cal revisar</option>
-          <option value="APPROVED">Aprovada</option>
-          <option value="PAID">Pagada</option>
-          <option value="REJECTED">Rebutjada</option>
+          <option value="PENDING_ALL">Pendents</option>
+          <option value="APPROVED">Aprovades</option>
+          <option value="PAID">Pagades</option>
+          <option value="REJECTED">Rebutjades</option>
           <option value="NOT_INVOICE">No és factura</option>
-        </select>
-        <select value={sourceFilter} onChange={(e) => { setSourceFilter(e.target.value); setPage(1); clearSelection(); }} className="rounded-md border bg-background px-3 py-2 text-sm">
-          <option value="">Totes les fonts</option>
-          <option value="MANUAL">Manual</option>
-          <option value="EMAIL_WITH_PDF">Email+PDF</option>
-          <option value="EMAIL_NO_PDF">Email</option>
-          <option value="PCLOUD_SYNC">pCloud</option>
-          <option value="BANK_DETECTED">Banc</option>
         </select>
         <select value={paidFilter} onChange={(e) => { setPaidFilter(e.target.value); setPage(1); clearSelection(); }} className="rounded-md border bg-background px-3 py-2 text-sm">
           <option value="">Pagament: totes</option>
