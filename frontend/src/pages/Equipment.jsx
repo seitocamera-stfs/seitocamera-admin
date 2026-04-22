@@ -2,7 +2,7 @@ import { useState } from 'react';
 import {
   Search, Plus, Pencil, Trash2, Package,
   Sparkles, ExternalLink, ChevronRight, ChevronDown,
-  Link2, Unlink, FolderOpen, ArrowUp, ArrowDown,
+  Link2, Unlink, FolderOpen, ArrowUp, ArrowDown, Crown,
 } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import Modal from '../components/shared/Modal';
@@ -233,6 +233,16 @@ export default function Equipment() {
     }
   };
 
+  // Fer un fill el nou principal del grup
+  const handleMakeParent = async (childId) => {
+    try {
+      await mutate('patch', `/equipment/${childId}/make-parent`);
+      refetch();
+    } catch (err) {
+      alert(err.response?.data?.error || err.message);
+    }
+  };
+
   // Treure fill del grup
   const handleUngroup = async (childId) => {
     try {
@@ -343,9 +353,14 @@ export default function Equipment() {
         <td className="p-3 text-right">
           <div className="flex items-center justify-end gap-1">
             {isChild && (
-              <button onClick={() => handleUngroup(item.id)} className="p-1.5 rounded hover:bg-muted text-muted-foreground" title="Treure del grup">
-                <Unlink size={14} />
-              </button>
+              <>
+                <button onClick={() => handleMakeParent(item.id)} className="p-1.5 rounded hover:bg-amber-50 text-amber-600" title="Fer principal del grup">
+                  <Crown size={14} />
+                </button>
+                <button onClick={() => handleUngroup(item.id)} className="p-1.5 rounded hover:bg-muted text-muted-foreground" title="Treure del grup">
+                  <Unlink size={14} />
+                </button>
+              </>
             )}
             {hasChildren && (
               <button onClick={() => handleDisband(item.id)} className="p-1.5 rounded hover:bg-muted text-muted-foreground" title="Desfer grup">

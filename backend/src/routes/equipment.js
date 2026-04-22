@@ -387,4 +387,40 @@ router.patch('/:id/disband', authorize('ADMIN', 'EDITOR'), async (req, res, next
   }
 });
 
+/**
+ * PATCH /api/equipment/:id/make-parent — Convertir un fill en el nou pare del grup
+ * L'antic pare passa a ser fill, i tots els fills apunten al nou pare
+ */
+router.patch('/:id/make-parent', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const item = await prisma.equipment.findUnique({ where: { id: req.params.id } });
+    if (!item) return res.status(404).json({ error: 'Equip no trobat' });
+
+    const oldParentId = item.parentId;
+    if (!oldParentId) return res.status(400).json({ error: 'Aquest equip ja és el principal del grup' });
+
+    // 1. Tots els fills de l'antic pare → apunten al nou pare
+    await prisma.equipment.updateMany({
+      where: { parentId: oldParentId },
+      data: { parentId: req.params.id },
+    });
+
+    // 2. L'antic pare → passa a ser fill del nou pare
+    await prisma.equipment.update({
+      where: { id: oldParentId },
+      data: { parentId: req.params.id },
+    });
+
+    // 3. El nou pare → parentId = null
+    await prisma.equipment.update({
+      where: { id: req.params.id },
+      data: { parentId: null },
+    });
+
+    res.json({ message: `"${item.name}" ara és el principal del grup` });
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;
