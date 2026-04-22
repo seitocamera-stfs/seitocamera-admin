@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Zap, Check, X as XIcon, Search, FileText, Eye, ChevronLeft, ChevronRight, ArrowDownCircle, ArrowUpCircle, Brain, Loader2 } from 'lucide-react';
+import { Zap, Check, X as XIcon, Search, FileText, Eye, ChevronLeft, ChevronRight, ArrowDownCircle, ArrowUpCircle, Brain, Loader2, Undo2 } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import { StatusBadge } from '../components/shared/StatusBadge';
 import { formatCurrency, formatDate } from '../lib/utils';
@@ -27,6 +27,7 @@ export default function Conciliation() {
   const [selectedForAI, setSelectedForAI] = useState([]); // Moviments seleccionats per IA
   const [aiSelectMode, setAiSelectMode] = useState(false);
   const [movementSearch, setMovementSearch] = useState('');
+  const [conciliationSearch, setConciliationSearch] = useState('');
   const { mutate, loading: mutating } = useApiMutation();
 
   // Carregar detalls complets d'una factura emesa (per popup)
@@ -41,7 +42,7 @@ export default function Conciliation() {
 
   // Dades segons la pestanya
   const pendingQuery = useApiGet('/bank', { conciliated: 'false', page, limit: 15, ...(movementSearch.trim() ? { search: movementSearch.trim() } : {}) });
-  const matchedQuery = useApiGet('/conciliation', { status: tab === 'confirmed' ? 'CONFIRMED' : 'AUTO_MATCHED', page, limit: 15 });
+  const matchedQuery = useApiGet('/conciliation', { status: tab === 'confirmed' ? 'CONFIRMED' : 'AUTO_MATCHED', page, limit: 15, ...(conciliationSearch.trim() && !isPending ? { search: conciliationSearch.trim() } : {}) });
 
   const isPending = tab === 'pending';
   const activeQuery = isPending ? pendingQuery : matchedQuery;
@@ -273,6 +274,19 @@ export default function Conciliation() {
       setAiResult({ error: msg });
     }
     setAiRunning(false);
+  };
+
+  // Desfer conciliació confirmada
+  const handleUndo = async (id) => {
+    if (!confirm('Segur que vols desfer aquesta conciliació? El moviment i la factura tornaran a pendents.')) return;
+    try {
+      await mutate('patch', `/conciliation/${id}/undo`);
+      matchedQuery.refetch();
+      pendingQuery.refetch();
+      statsQuery.refetch();
+    } catch (err) {
+      alert(err.response?.data?.error || err.message || 'Error desfent la conciliació');
+    }
   };
 
   // Confirmar conciliació
@@ -669,6 +683,26 @@ export default function Conciliation() {
 
       {/* TAB: Per confirmar / Confirmades */}
       {!isPending && (
+        <div>
+          {/* Buscador de conciliacions */}
+          <div className="relative mb-3">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              value={conciliationSearch}
+              onChange={(e) => { setConciliationSearch(e.target.value); setPage(1); }}
+              placeholder="Cercar conciliació (moviment, factura, proveïdor, client)..."
+              className="w-full pl-8 pr-8 py-1.5 rounded-md border bg-background text-xs"
+            />
+            {conciliationSearch && (
+              <button
+                onClick={() => { setConciliationSearch(''); setPage(1); }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <XIcon size={14} />
+              </button>
+            )}
+          </div>
         <div className="bg-card border rounded-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-muted/50">
@@ -738,7 +772,14 @@ export default function Conciliation() {
                             </>
                           )}
                           {c.status === 'CONFIRMED' && (
-                            <span className="text-xs text-green-600 font-medium flex items-center gap-1"><Check size={12} /> Confirmada</span>
+                            <button
+                              onClick={() => handleUndo(c.id)}
+                              disabled={mutating}
+                              className="px-2 py-1 rounded bg-amber-100 text-amber-700 text-xs font-medium hover:bg-amber-200 disabled:opacity-50 flex items-center gap-1"
+                              title="Desfer conciliació"
+                            >
+                              <Undo2 size={12} /> Desfer
+                            </button>
                           )}
                         </div>
                       </td>
@@ -748,6 +789,7 @@ export default function Conciliation() {
               )}
             </tbody>
           </table>
+        </div>
         </div>
       )}
 

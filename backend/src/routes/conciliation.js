@@ -35,11 +35,23 @@ const multiMatchSchema = z.object({
 // ===========================================
 router.get('/', async (req, res, next) => {
   try {
-    const { status, page = 1, limit = 50 } = req.query;
+    const { status, search, page = 1, limit = 50 } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const where = {};
     if (status) where.status = status;
+
+    // Cerca per descripció del moviment, número de factura o nom proveïdor/client
+    if (search) {
+      where.OR = [
+        { bankMovement: { description: { contains: search, mode: 'insensitive' } } },
+        { bankMovement: { counterparty: { contains: search, mode: 'insensitive' } } },
+        { receivedInvoice: { invoiceNumber: { contains: search, mode: 'insensitive' } } },
+        { receivedInvoice: { supplier: { name: { contains: search, mode: 'insensitive' } } } },
+        { issuedInvoice: { invoiceNumber: { contains: search, mode: 'insensitive' } } },
+        { issuedInvoice: { client: { name: { contains: search, mode: 'insensitive' } } } },
+      ];
+    }
 
     const [conciliations, total] = await Promise.all([
       prisma.conciliation.findMany({
@@ -48,7 +60,7 @@ router.get('/', async (req, res, next) => {
         take: parseInt(limit),
         orderBy: { bankMovement: { date: 'desc' } },
         include: {
-          bankMovement: { select: { id: true, date: true, description: true, amount: true, type: true } },
+          bankMovement: { select: { id: true, date: true, description: true, amount: true, type: true, counterparty: true } },
           receivedInvoice: { select: { id: true, invoiceNumber: true, totalAmount: true, gdriveFileId: true, filePath: true, supplier: { select: { name: true } } } },
           issuedInvoice: { select: { id: true, invoiceNumber: true, totalAmount: true, filePath: true, client: { select: { name: true } } } },
         },
@@ -638,6 +650,57 @@ router.patch('/:id/confirm', authorize('ADMIN', 'EDITOR'), async (req, res, next
     if (error.code === 'P2025') {
       return res.status(404).json({ error: 'Conciliació no trobada' });
     }
+    next(error);
+  }
+});
+
+// ===========================================
+// PATCH /api/conciliation/:id/undo — Desfer conciliació confirmada
+// Elimina la conciliació, marca el moviment com no conciliat,
+// i reverteix l'estat de la factura de PAID a PENDING.
+// ===========================================
+router.patch('/:id/undo', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const conciliation = await prisma.conciliation.findUnique({
+      where: { id: req.params.id },
+    });
+
+    if (!conciliation) {
+      return res.status(404).json({ error: 'Conciliació no trobada' });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      // Revertir factura de PAID a PENDING
+      if (conciliation.receivedInvoiceId) {
+        await tx.receivedInvoice.updateMany({
+          where: { id: conciliation.receivedInvoiceId, status: 'PAID' },
+          data: { status: 'PENDING' },
+        });
+      }
+      if (conciliation.issuedInvoiceId) {
+        await tx.issuedInvoice.updateMany({
+          where: { id: conciliation.issuedInvoiceId, status: 'PAID' },
+          data: { status: 'PENDING' },
+        });
+      }
+
+      // Eliminar la conciliació
+      await tx.conciliation.delete({ where: { id: req.params.id } });
+
+      // Marcar moviment com no conciliat
+      await tx.bankMovement.update({
+        where: { id: conciliation.bankMovementId },
+        data: { isConciliated: false },
+      });
+    });
+
+    logger.info(`Conciliació desfeta: ${req.params.id} per usuari ${req.user.id}`);
+
+    res.json({
+      message: 'Conciliació desfeta — moviment i factura tornats a pendents',
+      bankMovementId: conciliation.bankMovementId,
+    });
+  } catch (error) {
     next(error);
   }
 });
