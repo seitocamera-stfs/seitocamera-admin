@@ -13,6 +13,88 @@ router.use(authenticate);
 router.use(requireSection('conciliation'));
 
 // ===========================================
+// Helper: Auto-poblar memòria de contraparts
+// Quan es confirma una conciliació, guardem la relació contrapart→proveïdor/client
+// ===========================================
+async function updateCounterpartyMemory(tx, bankMovementId, receivedInvoiceId, issuedInvoiceId) {
+  try {
+    const movement = await tx.bankMovement.findUnique({ where: { id: bankMovementId }, select: { counterparty: true } });
+    if (!movement?.counterparty) return;
+
+    const counterparty = movement.counterparty.trim();
+    if (counterparty.length < 3) return;
+
+    if (receivedInvoiceId) {
+      const invoice = await tx.receivedInvoice.findUnique({ where: { id: receivedInvoiceId }, select: { supplierId: true } });
+      if (invoice?.supplierId) {
+        await tx.counterpartyMap.upsert({
+          where: { counterparty_supplierId: { counterparty, supplierId: invoice.supplierId } },
+          create: { counterparty, supplierId: invoice.supplierId, matchCount: 1, lastUsed: new Date() },
+          update: { matchCount: { increment: 1 }, lastUsed: new Date() },
+        });
+      }
+    }
+
+    if (issuedInvoiceId) {
+      const invoice = await tx.issuedInvoice.findUnique({ where: { id: issuedInvoiceId }, select: { clientId: true } });
+      if (invoice?.clientId) {
+        await tx.counterpartyMap.upsert({
+          where: { counterparty_clientId: { counterparty, clientId: invoice.clientId } },
+          create: { counterparty, clientId: invoice.clientId, matchCount: 1, lastUsed: new Date() },
+          update: { matchCount: { increment: 1 }, lastUsed: new Date() },
+        });
+      }
+    }
+  } catch (err) {
+    // No fallar la conciliació si la memòria falla
+    logger.warn('Error actualitzant counterparty memory:', err.message);
+  }
+}
+
+// ===========================================
+// Helper: Actualitzar paidAmount i status de la factura
+// Suporta pagaments parcials: si paidAmount < totalAmount → PARTIALLY_PAID
+// ===========================================
+async function updateInvoicePayment(tx, { receivedInvoiceId, issuedInvoiceId, paymentAmount }) {
+  if (receivedInvoiceId) {
+    const invoice = await tx.receivedInvoice.findUnique({
+      where: { id: receivedInvoiceId },
+      select: { totalAmount: true, paidAmount: true },
+    });
+    if (invoice) {
+      const total = parseFloat(invoice.totalAmount);
+      const newPaid = parseFloat(invoice.paidAmount) + (paymentAmount || total);
+      const fullyPaid = newPaid >= total - 0.02; // tolerància de 2 cèntims
+      await tx.receivedInvoice.update({
+        where: { id: receivedInvoiceId },
+        data: {
+          paidAmount: Math.min(newPaid, total),
+          status: fullyPaid ? 'PAID' : 'PARTIALLY_PAID',
+        },
+      });
+    }
+  }
+  if (issuedInvoiceId) {
+    const invoice = await tx.issuedInvoice.findUnique({
+      where: { id: issuedInvoiceId },
+      select: { totalAmount: true, paidAmount: true },
+    });
+    if (invoice) {
+      const total = parseFloat(invoice.totalAmount);
+      const newPaid = parseFloat(invoice.paidAmount) + (paymentAmount || total);
+      const fullyPaid = newPaid >= total - 0.02;
+      await tx.issuedInvoice.update({
+        where: { id: issuedInvoiceId },
+        data: {
+          paidAmount: Math.min(newPaid, total),
+          status: fullyPaid ? 'PAID' : 'PARTIALLY_PAID',
+        },
+      });
+    }
+  }
+}
+
+// ===========================================
 // Schemas
 // ===========================================
 
@@ -28,6 +110,45 @@ const multiMatchSchema = z.object({
     id: z.string().min(1),
     type: z.enum(['received', 'issued']),
   })).min(1).max(20),
+});
+
+// ===========================================
+// GET /api/conciliation/counterparty-suggestions — Suggeriments basats en memòria
+// Donat un counterparty, retorna els proveïdors/clients més freqüents
+// ===========================================
+router.get('/counterparty-suggestions', async (req, res, next) => {
+  try {
+    const { counterparty } = req.query;
+    if (!counterparty || counterparty.trim().length < 3) {
+      return res.json({ suppliers: [], clients: [] });
+    }
+
+    const cp = counterparty.trim();
+
+    // Buscar coincidències exactes i parcials
+    const maps = await prisma.counterpartyMap.findMany({
+      where: {
+        counterparty: { contains: cp, mode: 'insensitive' },
+      },
+      include: {
+        supplier: { select: { id: true, name: true } },
+        client: { select: { id: true, name: true } },
+      },
+      orderBy: { matchCount: 'desc' },
+      take: 10,
+    });
+
+    const suppliers = maps
+      .filter(m => m.supplier)
+      .map(m => ({ id: m.supplier.id, name: m.supplier.name, matchCount: m.matchCount, lastUsed: m.lastUsed }));
+    const clients = maps
+      .filter(m => m.client)
+      .map(m => ({ id: m.client.id, name: m.client.name, matchCount: m.matchCount, lastUsed: m.lastUsed }));
+
+    res.json({ suppliers, clients });
+  } catch (error) {
+    next(error);
+  }
 });
 
 // ===========================================
@@ -359,6 +480,90 @@ router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
 });
 
 // ===========================================
+// POST /api/conciliation/recalculate — Esborrar AUTO_MATCHED i re-conciliar
+// Esborra tots els suggeriments automàtics no confirmats, allibera moviments, i re-llança
+// ===========================================
+router.post('/recalculate', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    // 1. Trobar totes les AUTO_MATCHED (suggeriments pendents de revisió)
+    const autoMatched = await prisma.conciliation.findMany({
+      where: { status: 'AUTO_MATCHED' },
+      select: { id: true, bankMovementId: true, receivedInvoiceId: true, issuedInvoiceId: true },
+    });
+
+    if (autoMatched.length === 0) {
+      // No hi ha res a recalcular, llançar directament auto-conciliació
+      logger.info('Recalculate: cap AUTO_MATCHED trobada, llançant auto directament');
+    } else {
+      // 2. Esborrar totes les AUTO_MATCHED i alliberar moviments
+      const movementIds = [...new Set(autoMatched.map(c => c.bankMovementId))];
+
+      await prisma.$transaction(async (tx) => {
+        // Esborrar conciliacions
+        await tx.conciliation.deleteMany({ where: { status: 'AUTO_MATCHED' } });
+
+        // Alliberar moviments (marcar com no conciliats)
+        // Però NOMÉS si no tenen cap altra conciliació CONFIRMED/MANUAL_MATCHED
+        for (const movId of movementIds) {
+          const remaining = await tx.conciliation.count({
+            where: { bankMovementId: movId, status: { in: ['CONFIRMED', 'MANUAL_MATCHED'] } },
+          });
+          if (remaining === 0) {
+            await tx.bankMovement.update({
+              where: { id: movId },
+              data: { isConciliated: false },
+            });
+          }
+        }
+
+        // Revertir factures que havien quedat PAID per auto-match (sense manual/confirmed)
+        const receivedIds = autoMatched.filter(c => c.receivedInvoiceId).map(c => c.receivedInvoiceId);
+        const issuedIds = autoMatched.filter(c => c.issuedInvoiceId).map(c => c.issuedInvoiceId);
+
+        if (receivedIds.length > 0) {
+          // Només revertir les que NO tenen cap altra conciliació activa
+          for (const invId of receivedIds) {
+            const otherConc = await tx.conciliation.count({
+              where: { receivedInvoiceId: invId, status: { in: ['CONFIRMED', 'MANUAL_MATCHED'] } },
+            });
+            if (otherConc === 0) {
+              await tx.receivedInvoice.update({
+                where: { id: invId },
+                data: { status: 'PENDING', paidAmount: 0 },
+              });
+            }
+          }
+        }
+        if (issuedIds.length > 0) {
+          for (const invId of issuedIds) {
+            const otherConc = await tx.conciliation.count({
+              where: { issuedInvoiceId: invId, status: { in: ['CONFIRMED', 'MANUAL_MATCHED'] } },
+            });
+            if (otherConc === 0) {
+              await tx.issuedInvoice.update({
+                where: { id: invId },
+                data: { status: 'PENDING', paidAmount: 0 },
+              });
+            }
+          }
+        }
+      });
+
+      logger.info(`Recalculate: ${autoMatched.length} AUTO_MATCHED esborrades, ${movementIds.length} moviments alliberats`);
+    }
+
+    // 3. Retornar resultat — el frontend farà la crida a /auto després
+    res.json({
+      message: `${autoMatched.length} suggeriments anteriors esborrats. Llança auto-conciliació per generar nous resultats.`,
+      cleared: autoMatched.length,
+    });
+  } catch (error) {
+    logger.error(`Recalculate error: ${error.message}`);
+    next(error);
+  }
+});
+
+// ===========================================
 // POST /api/conciliation/ai-auto — Conciliació amb IA (Claude)
 // ===========================================
 router.post('/ai-auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
@@ -537,19 +742,13 @@ router.post('/manual', authorize('ADMIN', 'EDITOR'), validate(manualMatchSchema)
         data: { isConciliated: true },
       });
 
-      // Marcar la factura com a PAID
-      if (receivedInvoiceId) {
-        await tx.receivedInvoice.update({
-          where: { id: receivedInvoiceId },
-          data: { status: 'PAID' },
-        });
-      }
-      if (issuedInvoiceId) {
-        await tx.issuedInvoice.update({
-          where: { id: issuedInvoiceId },
-          data: { status: 'PAID' },
-        });
-      }
+      // Actualitzar paidAmount i status (suporta parcials)
+      const movement = await tx.bankMovement.findUnique({ where: { id: bankMovementId }, select: { amount: true } });
+      const paymentAmount = Math.abs(parseFloat(movement?.amount || 0));
+      await updateInvoicePayment(tx, { receivedInvoiceId, issuedInvoiceId, paymentAmount });
+
+      // Actualitzar memòria de contraparts
+      await updateCounterpartyMemory(tx, bankMovementId, receivedInvoiceId, issuedInvoiceId);
 
       return conc;
     });
@@ -588,18 +787,26 @@ router.post('/multi', authorize('ADMIN', 'EDITOR'), validate(multiMatchSchema), 
         });
         results.push(conc);
 
-        // Marcar la factura com a PAID
-        if (inv.type === 'received') {
-          await tx.receivedInvoice.update({ where: { id: inv.id }, data: { status: 'PAID' } });
-        } else if (inv.type === 'issued') {
-          await tx.issuedInvoice.update({ where: { id: inv.id }, data: { status: 'PAID' } });
-        }
+        // Actualitzar paidAmount i status de cada factura (pagament total per defecte)
+        await updateInvoicePayment(tx, {
+          receivedInvoiceId: inv.type === 'received' ? inv.id : null,
+          issuedInvoiceId: inv.type === 'issued' ? inv.id : null,
+        });
       }
 
       await tx.bankMovement.update({
         where: { id: bankMovementId },
         data: { isConciliated: true },
       });
+
+      // Actualitzar memòria de contraparts per cada factura
+      for (const inv of invoices) {
+        await updateCounterpartyMemory(
+          tx, bankMovementId,
+          inv.type === 'received' ? inv.id : null,
+          inv.type === 'issued' ? inv.id : null
+        );
+      }
 
       return results;
     });
@@ -628,19 +835,17 @@ router.patch('/:id/confirm', authorize('ADMIN', 'EDITOR'), async (req, res, next
         },
       });
 
-      // Marcar la factura com a PAID si encara no ho està
-      if (conc.receivedInvoiceId) {
-        await tx.receivedInvoice.updateMany({
-          where: { id: conc.receivedInvoiceId, status: { not: 'PAID' } },
-          data: { status: 'PAID' },
-        });
-      }
-      if (conc.issuedInvoiceId) {
-        await tx.issuedInvoice.updateMany({
-          where: { id: conc.issuedInvoiceId, status: { not: 'PAID' } },
-          data: { status: 'PAID' },
-        });
-      }
+      // Actualitzar paidAmount i status
+      const movement = await tx.bankMovement.findUnique({ where: { id: conc.bankMovementId }, select: { amount: true } });
+      const paymentAmount = Math.abs(parseFloat(movement?.amount || 0));
+      await updateInvoicePayment(tx, {
+        receivedInvoiceId: conc.receivedInvoiceId,
+        issuedInvoiceId: conc.issuedInvoiceId,
+        paymentAmount,
+      });
+
+      // Actualitzar memòria de contraparts
+      await updateCounterpartyMemory(tx, conc.bankMovementId, conc.receivedInvoiceId, conc.issuedInvoiceId);
 
       return conc;
     });
@@ -670,18 +875,42 @@ router.patch('/:id/undo', authorize('ADMIN', 'EDITOR'), async (req, res, next) =
     }
 
     await prisma.$transaction(async (tx) => {
-      // Revertir factura de PAID a PENDING
+      // Obtenir import del moviment per revertir paidAmount
+      const movement = await tx.bankMovement.findUnique({ where: { id: conciliation.bankMovementId }, select: { amount: true } });
+      const paymentAmount = Math.abs(parseFloat(movement?.amount || 0));
+
+      // Revertir paidAmount i status de la factura
       if (conciliation.receivedInvoiceId) {
-        await tx.receivedInvoice.updateMany({
-          where: { id: conciliation.receivedInvoiceId, status: 'PAID' },
-          data: { status: 'PENDING' },
+        const invoice = await tx.receivedInvoice.findUnique({
+          where: { id: conciliation.receivedInvoiceId },
+          select: { paidAmount: true },
         });
+        if (invoice) {
+          const newPaid = Math.max(0, parseFloat(invoice.paidAmount) - paymentAmount);
+          await tx.receivedInvoice.update({
+            where: { id: conciliation.receivedInvoiceId },
+            data: {
+              paidAmount: newPaid,
+              status: newPaid > 0.02 ? 'PARTIALLY_PAID' : 'PENDING',
+            },
+          });
+        }
       }
       if (conciliation.issuedInvoiceId) {
-        await tx.issuedInvoice.updateMany({
-          where: { id: conciliation.issuedInvoiceId, status: 'PAID' },
-          data: { status: 'PENDING' },
+        const invoice = await tx.issuedInvoice.findUnique({
+          where: { id: conciliation.issuedInvoiceId },
+          select: { paidAmount: true },
         });
+        if (invoice) {
+          const newPaid = Math.max(0, parseFloat(invoice.paidAmount) - paymentAmount);
+          await tx.issuedInvoice.update({
+            where: { id: conciliation.issuedInvoiceId },
+            data: {
+              paidAmount: newPaid,
+              status: newPaid > 0.02 ? 'PARTIALLY_PAID' : 'PENDING',
+            },
+          });
+        }
       }
 
       // Eliminar la conciliació

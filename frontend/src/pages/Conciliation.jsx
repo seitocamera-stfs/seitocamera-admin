@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Zap, Check, X as XIcon, Search, FileText, Eye, ChevronLeft, ChevronRight, ArrowDownCircle, ArrowUpCircle, Brain, Loader2, Undo2, Ban, RotateCcw, EyeOff } from 'lucide-react';
+import { Zap, Check, X as XIcon, Search, FileText, Eye, ChevronLeft, ChevronRight, ArrowDownCircle, ArrowUpCircle, Brain, Loader2, Undo2, Ban, RotateCcw, EyeOff, RefreshCw } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import { StatusBadge } from '../components/shared/StatusBadge';
 import { formatCurrency, formatDate } from '../lib/utils';
@@ -82,18 +82,88 @@ export default function Conciliation() {
       .map(w => w.replace(/[^a-zA-ZÀ-ÿ0-9]/g, ''))
       .filter(w => w.length > 2 && !/^\d+$/.test(w) && !stopWords.includes(w.toLowerCase()));
 
+    // Normalitzar nom: treure sufixos legals (SL, SA, SLU, SCP, SARL, GMBH, LTD, etc.)
+    const normalizeName = (name) => {
+      if (!name) return '';
+      return name.toLowerCase()
+        .replace(/\b(s\.?l\.?u?\.?|s\.?a\.?|s\.?c\.?p\.?|s\.?c\.?a\.?|s\.?a\.?r\.?l\.?|gmbh|ltd\.?|inc\.?|limited|b\.?v\.?|n\.?v\.?|plc|co\.?)\b/gi, '')
+        .replace(/[,.\-\/()]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    };
+
     // Funció per comprovar si el nom de proveïdor coincideix amb el contrapart del moviment
     const matchesSupplier = (supplierName) => {
       if (!supplierName || !rawText) return false;
-      const sLower = supplierName.toLowerCase();
-      const rLower = rawText.toLowerCase();
-      // Coincidència directa
-      if (rLower.includes(sLower) || sLower.includes(rLower)) return true;
+      const sNorm = normalizeName(supplierName);
+      const rNorm = normalizeName(rawText);
+      // Coincidència directa (amb noms normalitzats)
+      if (rNorm.includes(sNorm) || sNorm.includes(rNorm)) return true;
       // Coincidència per paraules: almenys 1 paraula significativa del proveïdor apareix al moviment
-      const supplierWords = sLower.split(/[\s,.\-/]+/).filter(w => w.length > 2);
-      const movementLower = rLower;
-      return supplierWords.some(w => movementLower.includes(w));
+      const supplierWords = sNorm.split(/\s+/).filter(w => w.length > 2);
+      return supplierWords.some(w => rNorm.includes(w));
     };
+
+    // Referència del moviment bancari (pot contenir número de factura)
+    const reference = movement.reference || '';
+    const description = movement.description || '';
+    // Extreure possibles números de factura de la referència i descripció
+    const refTokens = `${reference} ${description}`
+      .split(/[\s,.\-/]+/)
+      .filter(t => t.length > 3 && /[0-9]/.test(t));
+
+    // Funció per comprovar si la referència del moviment conté el número de factura
+    const matchesReference = (invoiceNumber) => {
+      if (!invoiceNumber) return false;
+      const invNum = invoiceNumber.toLowerCase().replace(/[\s\-/]/g, '');
+      const fullText = `${reference} ${description}`.toLowerCase();
+      const fullTextClean = fullText.replace(/[\s\-/]/g, '');
+      // 1. Coincidència directa (netejant separadors)
+      if (fullTextClean.includes(invNum)) return true;
+      // 2. Regex per patrons típics de factura dins el text bancari
+      const invoicePatterns = [
+        /\b[A-Z]{1,4}[\-\/]?\d{2,4}[\-\/]\d{3,6}\b/gi,   // F2024-0001, INV-9928, FRA/24/089
+        /\b#\d{4,}\b/g,                                     // #4521, #12345
+        /\bFACT?\.?\s*\d{3,}\b/gi,                          // FACT 1234, FAC.567
+        /\b\d{4,}[\-\/]\d{2,}\b/g,                          // 2024-0156, 2024/089
+      ];
+      for (const pattern of invoicePatterns) {
+        const matches = fullText.match(pattern) || [];
+        for (const m of matches) {
+          const mClean = m.toLowerCase().replace(/[\s\-/#.]/g, '');
+          if (mClean.includes(invNum) || invNum.includes(mClean)) return true;
+        }
+      }
+      // 3. Token matching (fallback)
+      return refTokens.some(t => {
+        const tLower = t.toLowerCase();
+        return tLower.includes(invNum) || invNum.includes(tLower);
+      });
+    };
+
+    // Finestra temporal: ±15 dies respecte la data del moviment
+    const movDate = movement.valueDate || movement.date;
+    let dateFrom, dateTo;
+    if (movDate) {
+      const d = new Date(movDate);
+      const from = new Date(d); from.setDate(from.getDate() - 15);
+      const to = new Date(d); to.setDate(to.getDate() + 15);
+      dateFrom = from.toISOString().split('T')[0];
+      dateTo = to.toISOString().split('T')[0];
+    }
+
+    // Consultar memòria de contraparts (IBAN Memory)
+    let knownSupplierIds = new Set();
+    let knownClientIds = new Set();
+    if (rawText.trim().length >= 3) {
+      try {
+        const { data: suggestions } = await api.get('/conciliation/counterparty-suggestions', {
+          params: { counterparty: rawText.trim() }
+        });
+        (suggestions.suppliers || []).forEach(s => knownSupplierIds.add(s.id));
+        (suggestions.clients || []).forEach(c => knownClientIds.add(c.id));
+      } catch {}
+    }
 
     try {
       const allResults = new Map();
@@ -102,22 +172,34 @@ export default function Conciliation() {
         allResults.set(inv.id, { ...inv, _type: type });
       };
 
-      // Fer dues cerques en paral·lel: per import i per nom proveïdor
+      const baseParams = { conciliated: 'false' };
+      if (dateFrom) baseParams.dateFrom = dateFrom;
+      if (dateTo) baseParams.dateTo = dateTo;
+
       const searches = [];
 
-      // Cerca 1: per import (busca factures amb import similar)
+      // Cerca 1: per import (dins finestra temporal)
       if (absAmount > 0) {
         searches.push(
-          api.get(endpoint, { params: { search: absAmount.toFixed(2), conciliated: 'false', limit: 30 } })
+          api.get(endpoint, { params: { ...baseParams, search: absAmount.toFixed(2), limit: 30 } })
             .then(({ data }) => (data.data || []).forEach(inv => addResult(inv, isExpense ? 'received' : 'issued')))
             .catch(() => {})
         );
       }
 
-      // Cerca 2: per nom del contrapart (per trobar factures del mateix proveïdor)
+      // Cerca 2: per nom del contrapart (dins finestra temporal)
       for (const word of words.slice(0, 2)) {
         searches.push(
-          api.get(endpoint, { params: { search: word, conciliated: 'false', limit: 20 } })
+          api.get(endpoint, { params: { ...baseParams, search: word, limit: 20 } })
+            .then(({ data }) => (data.data || []).forEach(inv => addResult(inv, isExpense ? 'received' : 'issued')))
+            .catch(() => {})
+        );
+      }
+
+      // Cerca 3: per referència (sense filtre temporal — la ref és prou forta per si sola)
+      for (const token of refTokens.slice(0, 2)) {
+        searches.push(
+          api.get(endpoint, { params: { search: token, conciliated: 'false', limit: 10 } })
             .then(({ data }) => (data.data || []).forEach(inv => addResult(inv, isExpense ? 'received' : 'issued')))
             .catch(() => {})
         );
@@ -131,38 +213,65 @@ export default function Conciliation() {
         const invAmount = parseFloat(inv.totalAmount);
         const amountDiff = Math.abs(invAmount - absAmount);
         const amountMatch = amountDiff < 0.03;
-        const amountClose = amountDiff < 1;
+        // Tolerància dinàmica: <1% de l'import O <3€ (el més generós)
+        const tolerancePercent = absAmount * 0.01;
+        const toleranceMax = 3;
+        const amountClose = amountDiff <= Math.max(tolerancePercent, toleranceMax);
         const supplierName = isExpense ? inv.supplier?.name : inv.client?.name;
         const nameMatch = matchesSupplier(supplierName);
+        const refMatch = matchesReference(inv.invoiceNumber);
+        // Memòria de contraparts: aquest proveïdor/client ja s'ha conciliat amb aquest contrapart abans?
+        const entityId = isExpense ? inv.supplier?.id : inv.client?.id;
+        const counterpartyMatch = entityId && (knownSupplierIds.has(entityId) || knownClientIds.has(entityId));
 
         // Score basat en regles clares:
-        // Import exacte + nom coincident = match perfecte (100)
+        // ref + import exacte = certesa total (120)
+        // ref + nom/memòria = molt segur (110)
+        // ref + import proper = segur (95)
+        // ref sol = indicador fort (80)
+        // Import exacte + nom/memòria = match perfecte (100)
         // Import exacte sense nom = probable match (50)
-        // Import proper (<1€) + nom = molt probable (45)
-        // Nom coincident + import < 20% diferència = possible multi-factura (30)
-        // Nom coincident + import molt diferent = només per referència (10)
-        // Ni import ni nom = no mostrar (0)
+        // Import proper + nom/memòria = molt probable (45)
+        // Memòria + import proper = historial confirmat (60)
+        // Nom/memòria + import < 20% = possible (30)
+        // Nom/memòria sol = per revisar (10)
         let score = 0;
         const reasons = [];
 
-        if (amountMatch && nameMatch) {
+        // La memòria de contraparts reforça el nameMatch
+        const entityMatch = nameMatch || counterpartyMatch;
+        const entityLabel = counterpartyMatch && !nameMatch ? 'Historial conciliació' : 'Proveïdor';
+
+        if (refMatch && amountMatch) {
+          score = 120;
+          reasons.push('Referència + import exacte');
+        } else if (refMatch && entityMatch) {
+          score = 110;
+          reasons.push(`Referència + ${entityLabel}`);
+        } else if (refMatch && amountClose) {
+          score = 95;
+          reasons.push('Referència + import proper');
+        } else if (refMatch) {
+          score = 80;
+          reasons.push('Referència bancària coincident');
+        } else if (amountMatch && entityMatch) {
           score = 100;
-          reasons.push('Import i proveïdor coincidents');
+          reasons.push(`Import exacte + ${entityLabel}`);
+        } else if (counterpartyMatch && amountClose) {
+          score = 60;
+          reasons.push('Historial conciliació + import proper');
         } else if (amountMatch) {
           score = 50;
           reasons.push('Import exacte');
-        } else if (amountClose && nameMatch) {
+        } else if (amountClose && entityMatch) {
           score = 45;
-          reasons.push('Import proper + proveïdor');
-        } else if (nameMatch && amountDiff / absAmount < 0.2) {
+          reasons.push(`Import proper + ${entityLabel}`);
+        } else if (entityMatch && amountDiff / absAmount < 0.2) {
           score = 30;
-          reasons.push('Proveïdor + import similar');
-        } else if (nameMatch) {
+          reasons.push(`${entityLabel} + import similar`);
+        } else if (entityMatch) {
           score = 10;
-          reasons.push('Mateix proveïdor');
-        } else if (amountMatch) {
-          score = 50;
-          reasons.push('Import exacte');
+          reasons.push(counterpartyMatch ? 'Historial conciliació previ' : 'Mateix proveïdor');
         } else {
           score = 0;
         }
@@ -174,13 +283,85 @@ export default function Conciliation() {
       // Filtrar: no mostrar resultats amb score 0
       results = results.filter(inv => inv._score > 0);
 
+      // ======================================
+      // SUBSET-SUM: Buscar combinacions de factures del mateix proveïdor que sumin l'import
+      // ======================================
+      const combos = [];
+      // Agrupar factures per proveïdor/client (només les que no fan match exacte per si soles)
+      const byEntity = {};
+      for (const inv of results) {
+        const eid = isExpense ? inv.supplier?.id : inv.client?.id;
+        if (!eid) continue;
+        const invAmt = parseFloat(inv.remainingAmount ?? inv.totalAmount);
+        if (invAmt >= absAmount - 0.03) continue; // Si ja cobreix sola, no cal combinar
+        if (!byEntity[eid]) byEntity[eid] = [];
+        byEntity[eid].push(inv);
+      }
+
+      // Per cada proveïdor, buscar combinacions (max 6 factures, max 100 iteracions)
+      for (const [eid, invoices] of Object.entries(byEntity)) {
+        if (invoices.length < 2) continue;
+        const sorted = invoices.slice(0, 8).sort((a, b) =>
+          parseFloat(b.remainingAmount ?? b.totalAmount) - parseFloat(a.remainingAmount ?? a.totalAmount)
+        );
+
+        // Algorisme de backtracking limitat
+        const findCombos = (idx, remaining, current, iterations) => {
+          if (iterations.count > 100) return;
+          if (Math.abs(remaining) < 0.03) {
+            if (current.length >= 2) combos.push([...current]);
+            return;
+          }
+          if (remaining < -0.03 || idx >= sorted.length || current.length >= 6) return;
+          for (let i = idx; i < sorted.length; i++) {
+            iterations.count++;
+            if (iterations.count > 100) return;
+            const amt = parseFloat(sorted[i].remainingAmount ?? sorted[i].totalAmount);
+            if (amt > remaining + 0.03) continue;
+            current.push(sorted[i]);
+            findCombos(i + 1, remaining - amt, current, iterations);
+            current.pop();
+          }
+        };
+        findCombos(0, absAmount, [], { count: 0 });
+      }
+
+      // Afegir suggeriments de combinació com a entrada especial al principi
+      const comboSuggestions = combos.slice(0, 3).map((combo, i) => {
+        const total = combo.reduce((s, inv) => s + parseFloat(inv.remainingAmount ?? inv.totalAmount), 0);
+        const entityName = isExpense ? combo[0].supplier?.name : combo[0].client?.name;
+        return {
+          id: `combo-${i}`,
+          _isCombo: true,
+          _comboInvoices: combo,
+          _comboTotal: total,
+          _score: 105,
+          _matchReasons: [`${combo.length} factures de ${entityName || '?'} sumen ${total.toFixed(2)}€`],
+          _type: isExpense ? 'received' : 'issued',
+          invoiceNumber: `${combo.length} factures combinades`,
+          totalAmount: total,
+          supplier: combo[0].supplier,
+          client: combo[0].client,
+          issueDate: combo[0].issueDate,
+        };
+      });
+
       // Ordenar: score descendent, desempat per diferència d'import
       results.sort((a, b) => {
         if (b._score !== a._score) return b._score - a._score;
         return Math.abs(parseFloat(a.totalAmount) - absAmount) - Math.abs(parseFloat(b.totalAmount) - absAmount);
       });
 
-      setCandidates(results);
+      // Inserir combos al principi (després dels 120-110 però abans de la resta)
+      const finalResults = [...comboSuggestions, ...results];
+
+      // Re-ordenar tot per score
+      finalResults.sort((a, b) => {
+        if (b._score !== a._score) return b._score - a._score;
+        return Math.abs(parseFloat(a.totalAmount) - absAmount) - Math.abs(parseFloat(b.totalAmount) - absAmount);
+      });
+
+      setCandidates(finalResults);
     } catch (err) {
       console.error(err);
     }
@@ -730,6 +911,43 @@ export default function Conciliation() {
                         const amountMatch = Math.abs(invAmount - absMovAmount) < 0.02;
                         const entityName = inv._type === 'received' ? inv.supplier?.name : inv.client?.name;
                         const isSelected = selectedCandidates.some((s) => s.id === inv.id);
+                        const remaining = inv.remainingAmount != null ? parseFloat(inv.remainingAmount) : null;
+                        const isPartial = remaining != null && remaining > 0.02 && remaining < invAmount - 0.02;
+
+                        // Renderitzar suggeriment de combinació
+                        if (inv._isCombo) {
+                          return (
+                            <div key={inv.id} className="bg-violet-50/40 border-2 border-violet-300 rounded-lg p-3">
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full font-semibold">Combinació suggerida</span>
+                                <span className="text-xs text-muted-foreground">{inv._matchReasons?.[0]}</span>
+                              </div>
+                              <div className="space-y-1 ml-2">
+                                {inv._comboInvoices.map((ci) => (
+                                  <div key={ci.id} className="flex items-center justify-between text-xs">
+                                    <span className="text-muted-foreground">{ci.invoiceNumber}</span>
+                                    <span className="font-medium">{formatCurrency(ci.remainingAmount ?? ci.totalAmount)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                              <div className="flex items-center justify-between mt-2 pt-2 border-t border-violet-200">
+                                <span className="text-sm font-semibold">Total: {formatCurrency(inv._comboTotal)}</span>
+                                <button
+                                  onClick={() => {
+                                    // Seleccionar totes les factures del combo
+                                    const comboItems = inv._comboInvoices.map(ci => ({
+                                      id: ci.id, type: inv._type, totalAmount: parseFloat(ci.remainingAmount ?? ci.totalAmount)
+                                    }));
+                                    setSelectedCandidates(comboItems);
+                                  }}
+                                  className="px-4 py-1.5 rounded-md bg-violet-600 text-white text-xs font-semibold hover:bg-violet-700"
+                                >
+                                  Seleccionar combinació
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        }
 
                         return (
                           <div key={inv.id} className={`bg-card border rounded-lg p-3 transition-colors ${amountMatch ? 'border-green-300 bg-green-50/30' : ''} ${isSelected ? 'border-teal-400 bg-teal-50/40 ring-1 ring-teal-300' : ''}`}>
@@ -754,6 +972,11 @@ export default function Conciliation() {
                                           {inv._matchReasons.filter(r => r !== 'import').join(', ')}
                                         </span>
                                       )}
+                                      {isPartial && (
+                                        <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
+                                          Parcialment pagada ({formatCurrency(remaining)} pendent)
+                                        </span>
+                                      )}
                                       {inv._type === 'received' && <span className="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded">Rebuda</span>}
                                       {inv._type === 'issued' && <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Emesa</span>}
                                     </div>
@@ -763,6 +986,9 @@ export default function Conciliation() {
                                   </div>
                                   <div className="text-right">
                                     <div className="font-semibold text-sm">{formatCurrency(inv.totalAmount)}</div>
+                                    {isPartial && (
+                                      <div className="text-xs text-amber-600">Pendent: {formatCurrency(remaining)}</div>
+                                    )}
                                   </div>
                                 </div>
                                 <div className="flex items-center justify-end gap-2 mt-2 pt-2 border-t">
@@ -808,6 +1034,35 @@ export default function Conciliation() {
       {/* TAB: Per confirmar / Confirmades */}
       {!isPending && tab !== 'dismissed' && (
         <div>
+          {/* Botó recalcular (només a Per confirmar) */}
+          {tab === 'matched' && (
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs text-muted-foreground">
+                Suggeriments automàtics pendents de revisió
+              </p>
+              <button
+                onClick={async () => {
+                  if (!confirm(`Vols esborrar ${conciliations.length} suggeriments i re-llançar la conciliació automàtica amb el motor millorat?`)) return;
+                  try {
+                    // 1. Esborrar AUTO_MATCHED
+                    const clearResult = await mutate('post', '/conciliation/recalculate');
+                    // 2. Re-llançar auto-conciliació
+                    const autoResult = await mutate('post', '/conciliation/auto');
+                    alert(`Recalculat!\n${clearResult.cleared} suggeriments anteriors esborrats.\n${autoResult.matched || 0} nous matches trobats (${autoResult.autoConfirmed || 0} auto-confirmats).`);
+                    matchedQuery.refetch();
+                    pendingQuery.refetch();
+                    statsQuery.refetch();
+                  } catch (err) {
+                    alert(err.response?.data?.error || 'Error recalculant');
+                  }
+                }}
+                disabled={mutating || conciliations.length === 0}
+                className="flex items-center gap-2 bg-amber-600 text-white px-3 py-1.5 rounded-md text-xs font-medium hover:bg-amber-700 disabled:opacity-50"
+              >
+                <RefreshCw size={14} /> Recalcular amb motor millorat
+              </button>
+            </div>
+          )}
           {/* Buscador de conciliacions */}
           <div className="relative mb-3">
             <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />

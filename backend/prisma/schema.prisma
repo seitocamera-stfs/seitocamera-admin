@@ -78,6 +78,7 @@ model Supplier {
   receivedInvoices  ReceivedInvoice[]
   template          SupplierTemplate?
   equipment         Equipment[]
+  counterpartyMaps  CounterpartyMap[]
 
   @@map("suppliers")
 }
@@ -142,7 +143,8 @@ model Client {
   updatedAt   DateTime @updatedAt
 
   // Relacions
-  issuedInvoices  IssuedInvoice[]
+  issuedInvoices    IssuedInvoice[]
+  counterpartyMaps  CounterpartyMap[]
 
   @@map("clients")
 }
@@ -219,6 +221,9 @@ model ReceivedInvoice {
   origin                String   @default("SEITO")   // SEITO, LOGISTIK, SHARED
   paidBy                String   @default("NONE")     // NONE, SEITO, LOGISTIK
 
+  // Pagaments parcials
+  paidAmount            Decimal  @default(0) @db.Decimal(12, 2) // Import ja cobrat (per pagaments parcials)
+
   // Relacions
   supplier         Supplier?          @relation(fields: [supplierId], references: [id])
   conciliations    Conciliation[]
@@ -260,6 +265,7 @@ model IssuedInvoice {
   rentmanInvoiceId  String?       // ID original de la factura a Rentman (per resync / backfill)
   rentmanProjectId  String?       // ID del projecte a Rentman
   filePath          String?
+  paidAmount        Decimal       @default(0) @db.Decimal(12, 2) // Import ja cobrat (per pagaments parcials)
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 
@@ -349,6 +355,30 @@ model Conciliation {
   @@index([receivedInvoiceId])
   @@index([issuedInvoiceId])
   @@map("conciliations")
+}
+
+// ===========================================
+// Memòria de contraparts (IBAN Memory)
+// ===========================================
+
+model CounterpartyMap {
+  id              String    @id @default(cuid())
+  counterparty    String                           // Nom del contrapart (de Qonto/banc)
+  supplierId      String?                          // Proveïdor associat
+  clientId        String?                          // Client associat
+  matchCount      Int       @default(1)            // Vegades que s'ha conciliat
+  lastUsed        DateTime  @default(now())        // Última conciliació
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relacions
+  supplier  Supplier? @relation(fields: [supplierId], references: [id])
+  client    Client?   @relation(fields: [clientId], references: [id])
+
+  @@unique([counterparty, supplierId])
+  @@unique([counterparty, clientId])
+  @@index([counterparty])
+  @@map("counterparty_map")
 }
 
 // ===========================================

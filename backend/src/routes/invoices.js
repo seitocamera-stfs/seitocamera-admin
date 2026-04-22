@@ -239,10 +239,16 @@ router.get('/received', async (req, res, next) => {
       if (inv.status === 'AMOUNT_PENDING') alertReasons.push('Import pendent');
       if (inv.isDuplicate) alertReasons.push('Marcat duplicat');
 
+      // Calcular remaining per pagaments parcials
+      const paidAmt = parseFloat(inv.paidAmount || 0);
+      const totalAmt = parseFloat(inv.totalAmount);
+      const remainingAmount = Math.max(0, totalAmt - paidAmt);
+
       return {
         ...inv,
         conciliation,
         isPaid,
+        remainingAmount,
         hasPdf: !!inv.filePath || !!inv.gdriveFileId,
         alerts: alertReasons,
       };
