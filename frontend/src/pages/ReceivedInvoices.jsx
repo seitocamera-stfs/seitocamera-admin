@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import {
   Plus, Search, Trash2, Check, X as XIcon, CheckCircle,
-  FileText, Upload, Eye, Link2, AlertTriangle, Ban,
+  FileText, Upload, Eye, Link2, AlertTriangle, Ban, Package,
   ChevronRight, Paperclip, Pencil, RefreshCw, GitMerge,
 } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
@@ -860,6 +860,11 @@ export default function ReceivedInvoices() {
                     <td className="p-3">
                       <div className="flex items-center gap-1">
                         <span className="font-medium">{inv.invoiceNumber}</span>
+                        {inv._count?.equipment > 0 && (
+                          <span title={`${inv._count.equipment} equip${inv._count.equipment > 1 ? 's' : ''} a inventari`} className="text-violet-500">
+                            <Package size={14} />
+                          </span>
+                        )}
                         {inv.isDuplicate && (
                           <AlertTriangle size={14} className="text-amber-500" title="Possible duplicat" />
                         )}

@@ -201,6 +201,7 @@ router.get('/received', async (req, res, next) => {
               },
             },
           },
+          _count: { select: { equipment: true } },
         },
       }),
       prisma.receivedInvoice.count({ where }),
