@@ -32,6 +32,11 @@ router.get('/', async (req, res, next) => {
       ];
     }
 
+    // Per defecte, només mostrar items arrel (sense pare), tret que busquem
+    if (!search && !req.query.includeChildren) {
+      where.parentId = null;
+    }
+
     const [items, total] = await Promise.all([
       prisma.equipment.findMany({
         where,
@@ -41,6 +46,14 @@ router.get('/', async (req, res, next) => {
         include: {
           supplier: { select: { id: true, name: true } },
           receivedInvoice: { select: { id: true, invoiceNumber: true, totalAmount: true, issueDate: true, gdriveFileId: true } },
+          parent: { select: { id: true, name: true } },
+          children: {
+            orderBy: { name: 'asc' },
+            include: {
+              supplier: { select: { id: true, name: true } },
+              receivedInvoice: { select: { id: true, invoiceNumber: true, totalAmount: true, issueDate: true, gdriveFileId: true } },
+            },
+          },
         },
       }),
       prisma.equipment.count({ where }),
@@ -82,6 +95,68 @@ router.get('/stats', async (req, res, next) => {
       byCategory: byCategory.map((c) => ({ category: c.category || 'other', count: c._count })),
       byStatus: byStatus.map((s) => ({ status: s.status, count: s._count })),
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================
+// ACCIONS MASSIVES (ha d'anar ABANS de /:id)
+// ===========================================
+
+/**
+ * PATCH /api/equipment/bulk-update — Actualitzar categoria/estat de múltiples equips
+ */
+router.patch('/bulk-update', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const { ids, category, status } = req.body;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'Cal enviar un array d\'IDs' });
+    }
+
+    const data = {};
+    if (category !== undefined) data.category = category;
+    if (status !== undefined) data.status = status;
+
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ error: 'Cal especificar category o status' });
+    }
+
+    const result = await prisma.equipment.updateMany({
+      where: { id: { in: ids } },
+      data,
+    });
+
+    res.json({ message: `${result.count} equips actualitzats`, count: result.count });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/equipment/group — Crear grup: primer ID = pare, resta = fills
+ */
+router.post('/group', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const { parentId, childIds } = req.body;
+
+    if (!parentId || !Array.isArray(childIds) || childIds.length === 0) {
+      return res.status(400).json({ error: 'Cal un parentId i un array de childIds' });
+    }
+
+    // Verificar que el pare existeix i no és fill d'un altre
+    const parent = await prisma.equipment.findUnique({ where: { id: parentId } });
+    if (!parent) return res.status(404).json({ error: 'Equip pare no trobat' });
+    if (parent.parentId) return res.status(400).json({ error: 'L\'equip pare ja és fill d\'un altre grup' });
+
+    // Assignar parentId als fills
+    const result = await prisma.equipment.updateMany({
+      where: { id: { in: childIds.filter(id => id !== parentId) } },
+      data: { parentId },
+    });
+
+    res.json({ message: `${result.count} equips afegits al grup de "${parent.name}"`, count: result.count });
   } catch (error) {
     next(error);
   }
@@ -214,6 +289,37 @@ router.post('/extract-batch', authorize('ADMIN'), async (req, res, next) => {
       message: `${success.length} factures processades, ${totalItems} equips extrets`,
       results,
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * PATCH /api/equipment/:id/ungroup — Treure un item del grup (posar parentId a null)
+ */
+router.patch('/:id/ungroup', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const updated = await prisma.equipment.update({
+      where: { id: req.params.id },
+      data: { parentId: null },
+    });
+    res.json(updated);
+  } catch (error) {
+    if (error.code === 'P2025') return res.status(404).json({ error: 'Equip no trobat' });
+    next(error);
+  }
+});
+
+/**
+ * PATCH /api/equipment/:id/disband — Desfer grup sencer (alliberar tots els fills)
+ */
+router.patch('/:id/disband', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const result = await prisma.equipment.updateMany({
+      where: { parentId: req.params.id },
+      data: { parentId: null },
+    });
+    res.json({ message: `Grup desfet, ${result.count} items alliberats`, count: result.count });
   } catch (error) {
     next(error);
   }

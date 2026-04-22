@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import {
-  Search, Plus, Camera, Pencil, Trash2, Package,
-  Sparkles, RefreshCw, ExternalLink,
+  Search, Plus, Pencil, Trash2, Package,
+  Sparkles, ExternalLink, ChevronRight, ChevronDown,
+  Link2, Unlink, FolderOpen, CheckSquare, Square,
 } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import Modal from '../components/shared/Modal';
@@ -44,6 +45,17 @@ export default function Equipment() {
     purchasePrice: '', status: 'ACTIVE', notes: '',
   });
 
+  // Selecció massiva
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [bulkCategory, setBulkCategory] = useState('');
+  const [bulkStatus, setBulkStatus] = useState('');
+
+  // Grups expandits
+  const [expandedGroups, setExpandedGroups] = useState({});
+
+  // Mode agrupació
+  const [groupMode, setGroupMode] = useState(false);
+
   const { data, loading, refetch } = useApiGet('/equipment', {
     search: search || undefined,
     category: categoryFilter || undefined,
@@ -53,6 +65,41 @@ export default function Equipment() {
   });
   const { data: stats } = useApiGet('/equipment/stats');
   const { mutate } = useApiMutation();
+
+  const items = data?.data || [];
+
+  // Recollir tots els IDs visibles (inclosos fills expandits)
+  const getAllVisibleIds = () => {
+    const ids = [];
+    for (const item of items) {
+      ids.push(item.id);
+      if (item.children?.length > 0) {
+        for (const child of item.children) {
+          ids.push(child.id);
+        }
+      }
+    }
+    return ids;
+  };
+
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAll = () => {
+    const allIds = getAllVisibleIds();
+    if (selectedIds.length === allIds.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(allIds);
+    }
+  };
+
+  const toggleGroup = (id) => {
+    setExpandedGroups((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
 
   const handleSave = async (e) => {
     e.preventDefault();
@@ -108,6 +155,158 @@ export default function Equipment() {
     } finally {
       setExtracting(false);
     }
+  };
+
+  // Acció massiva: canviar categoria/estat
+  const handleBulkUpdate = async () => {
+    if (selectedIds.length === 0) return;
+    const updates = {};
+    if (bulkCategory) updates.category = bulkCategory;
+    if (bulkStatus) updates.status = bulkStatus;
+    if (Object.keys(updates).length === 0) {
+      alert('Selecciona una categoria o estat per aplicar');
+      return;
+    }
+    try {
+      await mutate('patch', '/equipment/bulk-update', { ids: selectedIds, ...updates });
+      setSelectedIds([]);
+      setBulkCategory('');
+      setBulkStatus('');
+      refetch();
+    } catch (err) {
+      alert(err.response?.data?.error || err.message);
+    }
+  };
+
+  // Agrupar seleccionats: primer = pare, resta = fills
+  const handleGroupSelected = async () => {
+    if (selectedIds.length < 2) {
+      alert('Selecciona almenys 2 equips per agrupar');
+      return;
+    }
+    const parentId = selectedIds[0];
+    const childIds = selectedIds.slice(1);
+    const parentItem = items.find((i) => i.id === parentId);
+    if (!confirm(`"${parentItem?.name || 'Item seleccionat'}" serà l'equip principal del grup. Correcte?`)) return;
+    try {
+      await mutate('post', '/equipment/group', { parentId, childIds });
+      setSelectedIds([]);
+      setGroupMode(false);
+      refetch();
+    } catch (err) {
+      alert(err.response?.data?.error || err.message);
+    }
+  };
+
+  // Treure fill del grup
+  const handleUngroup = async (childId) => {
+    try {
+      await mutate('patch', `/equipment/${childId}/ungroup`);
+      refetch();
+    } catch (err) {
+      alert(err.response?.data?.error || err.message);
+    }
+  };
+
+  // Desfer grup sencer
+  const handleDisband = async (parentId) => {
+    if (!confirm('Desfer el grup? Tots els subitems tornaran a ser independents.')) return;
+    try {
+      await mutate('patch', `/equipment/${parentId}/disband`);
+      refetch();
+    } catch (err) {
+      alert(err.response?.data?.error || err.message);
+    }
+  };
+
+  // Renderitzar fila d'un item (reutilitzable per pare i fill)
+  const renderRow = (item, isChild = false) => {
+    const cat = CATEGORY_LABELS[item.category] || CATEGORY_LABELS.other;
+    const st = STATUS_LABELS[item.status] || STATUS_LABELS.ACTIVE;
+    const hasChildren = item.children?.length > 0;
+    const isExpanded = expandedGroups[item.id];
+    const isSelected = selectedIds.includes(item.id);
+
+    return (
+      <tr key={item.id} className={`border-t hover:bg-muted/30 ${isChild ? 'bg-muted/10' : ''} ${isSelected ? 'bg-primary/5' : ''}`}>
+        {/* Checkbox */}
+        <td className="p-3 w-10">
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={() => toggleSelect(item.id)}
+            className="rounded border-gray-300 text-primary focus:ring-primary"
+          />
+        </td>
+        {/* Equip */}
+        <td className="p-3">
+          <div className="flex items-center gap-1.5">
+            {isChild && <span className="text-muted-foreground ml-4">└</span>}
+            {hasChildren && (
+              <button onClick={() => toggleGroup(item.id)} className="p-0.5 rounded hover:bg-muted text-muted-foreground">
+                {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              </button>
+            )}
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="font-medium">{item.name}</span>
+                {hasChildren && (
+                  <span className="text-xs bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full">
+                    Pack · {item.children.length} items
+                  </span>
+                )}
+                {isChild && (
+                  <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full">subitem</span>
+                )}
+              </div>
+              {(item.brand || item.model) && (
+                <div className="text-xs text-muted-foreground">{[item.brand, item.model].filter(Boolean).join(' ')}</div>
+              )}
+            </div>
+          </div>
+        </td>
+        <td className="p-3 font-mono text-xs">{item.serialNumber || '—'}</td>
+        <td className="p-3 text-center">
+          <span className={`inline-block px-2 py-0.5 rounded-full text-xs ${cat.color}`}>{cat.label}</span>
+        </td>
+        <td className="p-3 text-muted-foreground text-xs">{item.supplier?.name || '—'}</td>
+        <td className="p-3 text-xs">
+          {item.receivedInvoice ? (
+            <div className="flex items-center gap-1.5">
+              <div>
+                <span className="text-muted-foreground">{item.receivedInvoice.invoiceNumber}</span>
+                <span className="ml-1 text-muted-foreground/60">{formatDate(item.receivedInvoice.issueDate)}</span>
+              </div>
+              {item.receivedInvoice.gdriveFileId && (
+                <a href={`https://drive.google.com/file/d/${item.receivedInvoice.gdriveFileId}/view`} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-700 shrink-0" title="Obrir factura al Drive">
+                  <ExternalLink size={13} />
+                </a>
+              )}
+            </div>
+          ) : '—'}
+        </td>
+        <td className="p-3 text-right font-medium">{item.purchasePrice ? formatCurrency(item.purchasePrice) : '—'}</td>
+        <td className="p-3 text-center">
+          <span className={`inline-block px-2 py-0.5 rounded-full text-xs ${st.color}`}>{st.label}</span>
+        </td>
+        <td className="p-3 text-right">
+          <div className="flex items-center justify-end gap-1">
+            {isChild && (
+              <button onClick={() => handleUngroup(item.id)} className="p-1.5 rounded hover:bg-muted text-muted-foreground" title="Treure del grup">
+                <Unlink size={14} />
+              </button>
+            )}
+            {hasChildren && (
+              <button onClick={() => handleDisband(item.id)} className="p-1.5 rounded hover:bg-muted text-muted-foreground" title="Desfer grup">
+                <FolderOpen size={14} />
+              </button>
+            )}
+            <button onClick={() => openEdit(item)} className="p-1.5 rounded hover:bg-muted text-muted-foreground"><Pencil size={14} /></button>
+            <button onClick={() => handleDelete(item.id)} className="p-1.5 rounded hover:bg-destructive/10 text-destructive"><Trash2 size={14} /></button>
+          </div>
+        </td>
+      </tr>
+    );
   };
 
   return (
@@ -180,11 +379,84 @@ export default function Equipment() {
         </select>
       </div>
 
+      {/* Barra d'accions massives */}
+      {selectedIds.length > 0 && (
+        <div className="bg-primary/5 border border-primary/20 rounded-lg p-3 mb-4 flex items-center gap-3 flex-wrap">
+          <span className="text-sm font-medium">{selectedIds.length} seleccionat{selectedIds.length > 1 ? 's' : ''}</span>
+          <div className="h-5 w-px bg-border" />
+
+          {/* Canviar categoria */}
+          <div className="flex items-center gap-1.5">
+            <label className="text-xs text-muted-foreground">Categoria:</label>
+            <select
+              value={bulkCategory}
+              onChange={(e) => setBulkCategory(e.target.value)}
+              className="rounded-md border bg-background px-2 py-1 text-xs"
+            >
+              <option value="">—</option>
+              {Object.entries(CATEGORY_LABELS).map(([key, { label }]) => (
+                <option key={key} value={key}>{label}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Canviar estat */}
+          <div className="flex items-center gap-1.5">
+            <label className="text-xs text-muted-foreground">Estat:</label>
+            <select
+              value={bulkStatus}
+              onChange={(e) => setBulkStatus(e.target.value)}
+              className="rounded-md border bg-background px-2 py-1 text-xs"
+            >
+              <option value="">—</option>
+              {Object.entries(STATUS_LABELS).map(([key, { label }]) => (
+                <option key={key} value={key}>{label}</option>
+              ))}
+            </select>
+          </div>
+
+          <button
+            onClick={handleBulkUpdate}
+            disabled={!bulkCategory && !bulkStatus}
+            className="px-3 py-1 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 disabled:opacity-50"
+          >
+            Aplicar
+          </button>
+
+          <div className="h-5 w-px bg-border" />
+
+          {/* Agrupar */}
+          <button
+            onClick={handleGroupSelected}
+            disabled={selectedIds.length < 2}
+            className="flex items-center gap-1 px-3 py-1 rounded-md bg-violet-600 text-white text-xs font-medium hover:bg-violet-700 disabled:opacity-50"
+            title="El primer seleccionat serà l'equip principal"
+          >
+            <Link2 size={12} /> Agrupar com a pack
+          </button>
+
+          <button
+            onClick={() => { setSelectedIds([]); setBulkCategory(''); setBulkStatus(''); }}
+            className="ml-auto text-xs text-muted-foreground hover:text-foreground"
+          >
+            Deseleccionar tot
+          </button>
+        </div>
+      )}
+
       {/* Taula */}
       <div className="bg-card border rounded-lg overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-muted/50">
             <tr>
+              <th className="p-3 w-10">
+                <input
+                  type="checkbox"
+                  checked={items.length > 0 && selectedIds.length === getAllVisibleIds().length}
+                  onChange={toggleSelectAll}
+                  className="rounded border-gray-300 text-primary focus:ring-primary"
+                />
+              </th>
               <th className="text-left p-3 font-medium">Equip</th>
               <th className="text-left p-3 font-medium">S/N</th>
               <th className="text-center p-3 font-medium">Categoria</th>
@@ -197,60 +469,18 @@ export default function Equipment() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
-            ) : !data?.data?.length ? (
-              <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">Cap equip trobat</td></tr>
+              <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
+            ) : !items.length ? (
+              <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">Cap equip trobat</td></tr>
             ) : (
-              data.data.map((item) => {
-                const cat = CATEGORY_LABELS[item.category] || CATEGORY_LABELS.other;
-                const st = STATUS_LABELS[item.status] || STATUS_LABELS.ACTIVE;
-                return (
-                  <tr key={item.id} className="border-t hover:bg-muted/30">
-                    <td className="p-3">
-                      <div className="font-medium">{item.name}</div>
-                      {(item.brand || item.model) && (
-                        <div className="text-xs text-muted-foreground">{[item.brand, item.model].filter(Boolean).join(' ')}</div>
-                      )}
-                    </td>
-                    <td className="p-3 font-mono text-xs">{item.serialNumber || '—'}</td>
-                    <td className="p-3 text-center">
-                      <span className={`inline-block px-2 py-0.5 rounded-full text-xs ${cat.color}`}>{cat.label}</span>
-                    </td>
-                    <td className="p-3 text-muted-foreground text-xs">{item.supplier?.name || '—'}</td>
-                    <td className="p-3 text-xs">
-                      {item.receivedInvoice ? (
-                        <div className="flex items-center gap-1.5">
-                          <div>
-                            <span className="text-muted-foreground">{item.receivedInvoice.invoiceNumber}</span>
-                            <span className="ml-1 text-muted-foreground/60">{formatDate(item.receivedInvoice.issueDate)}</span>
-                          </div>
-                          {item.receivedInvoice.gdriveFileId && (
-                            <a
-                              href={`https://drive.google.com/file/d/${item.receivedInvoice.gdriveFileId}/view`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-500 hover:text-blue-700 shrink-0"
-                              title="Obrir factura al Drive"
-                            >
-                              <ExternalLink size={13} />
-                            </a>
-                          )}
-                        </div>
-                      ) : '—'}
-                    </td>
-                    <td className="p-3 text-right font-medium">{item.purchasePrice ? formatCurrency(item.purchasePrice) : '—'}</td>
-                    <td className="p-3 text-center">
-                      <span className={`inline-block px-2 py-0.5 rounded-full text-xs ${st.color}`}>{st.label}</span>
-                    </td>
-                    <td className="p-3 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button onClick={() => openEdit(item)} className="p-1.5 rounded hover:bg-muted text-muted-foreground"><Pencil size={14} /></button>
-                        <button onClick={() => handleDelete(item.id)} className="p-1.5 rounded hover:bg-destructive/10 text-destructive"><Trash2 size={14} /></button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })
+              items.map((item) => (
+                <>
+                  {renderRow(item, false)}
+                  {item.children?.length > 0 && expandedGroups[item.id] && (
+                    item.children.map((child) => renderRow(child, true))
+                  )}
+                </>
+              ))
             )}
           </tbody>
         </table>

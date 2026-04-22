@@ -540,6 +540,11 @@ model Equipment {
   extractedBy         String   @default("MANUAL")   // MANUAL, AGENT_AUTO, AGENT_MANUAL
   rawExtractedData    Json?            // Dades brutes de l'extracció (línia original del PDF)
 
+  // Agrupació (pack/kit) — relació pare-fill
+  parentId            String?          // Si és subitem, apunta al pare
+  parent              Equipment?       @relation("EquipmentGroup", fields: [parentId], references: [id])
+  children            Equipment[]      @relation("EquipmentGroup")
+
   // Relacions
   receivedInvoiceId   String?
   supplierId          String?
@@ -549,6 +554,7 @@ model Equipment {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
+  @@index([parentId])
   @@index([receivedInvoiceId])
   @@index([supplierId])
   @@index([serialNumber])
