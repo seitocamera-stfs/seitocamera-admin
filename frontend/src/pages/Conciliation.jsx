@@ -26,6 +26,7 @@ export default function Conciliation() {
   const [aiResult, setAiResult] = useState(null);
   const [selectedForAI, setSelectedForAI] = useState([]); // Moviments seleccionats per IA
   const [aiSelectMode, setAiSelectMode] = useState(false);
+  const [movementSearch, setMovementSearch] = useState('');
   const { mutate, loading: mutating } = useApiMutation();
 
   // Carregar detalls complets d'una factura emesa (per popup)
@@ -39,7 +40,7 @@ export default function Conciliation() {
   };
 
   // Dades segons la pestanya
-  const pendingQuery = useApiGet('/bank', { conciliated: 'false', page, limit: 15 });
+  const pendingQuery = useApiGet('/bank', { conciliated: 'false', page, limit: 15, ...(movementSearch.trim() ? { search: movementSearch.trim() } : {}) });
   const matchedQuery = useApiGet('/conciliation', { status: tab === 'confirmed' ? 'CONFIRMED' : 'AUTO_MATCHED', page, limit: 15 });
 
   const isPending = tab === 'pending';
@@ -431,6 +432,25 @@ export default function Conciliation() {
               {aiSelectMode && movements.length > 0 && (
                 <button onClick={toggleAllForAI} className="text-xs text-violet-600 hover:text-violet-800 font-medium">
                   {selectedForAI.length === movements.length ? 'Deseleccionar tots' : 'Seleccionar tots'}
+                </button>
+              )}
+            </div>
+            {/* Buscador de moviments */}
+            <div className="relative mb-2">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <input
+                type="text"
+                value={movementSearch}
+                onChange={(e) => { setMovementSearch(e.target.value); setPage(1); }}
+                placeholder="Cercar moviment (nom, concepte, referència)..."
+                className="w-full pl-8 pr-8 py-1.5 rounded-md border bg-background text-xs"
+              />
+              {movementSearch && (
+                <button
+                  onClick={() => { setMovementSearch(''); setPage(1); }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <XIcon size={14} />
                 </button>
               )}
             </div>
