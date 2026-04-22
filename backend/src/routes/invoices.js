@@ -843,6 +843,73 @@ router.post('/received/bulk-rescan', authorize('ADMIN', 'EDITOR'), async (req, r
 });
 
 // =============================================
+// BULK EXTRACT EQUIPMENT — Extreure equips de múltiples factures
+// =============================================
+router.post('/received/bulk-extract-equipment', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'Cal enviar un array d\'IDs' });
+    }
+    if (ids.length > 50) {
+      return res.status(400).json({ error: 'Màxim 50 factures per extracció' });
+    }
+
+    const equipmentService = require('../services/equipmentExtractService');
+    const results = { processed: 0, extracted: 0, skipped: 0, errors: 0, totalItems: 0, details: [] };
+
+    for (const id of ids) {
+      try {
+        results.processed++;
+        const result = await equipmentService.extractEquipmentFromInvoice(id, { force: true, manual: true });
+        if (result.skipped) {
+          results.skipped++;
+          results.details.push({ id, status: 'skipped', reason: result.reason });
+        } else {
+          results.extracted++;
+          results.totalItems += result.items.length;
+          results.details.push({ id, status: 'ok', items: result.items.length });
+        }
+        // Pausa entre crides API
+        await new Promise((r) => setTimeout(r, 1500));
+      } catch (err) {
+        results.errors++;
+        results.details.push({ id, status: 'error', reason: err.message });
+      }
+    }
+
+    res.json(results);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// =============================================
+// BULK MARK PAID — Marcar múltiples factures com a pagades
+// =============================================
+router.patch('/received/bulk-mark-paid', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'Cal enviar un array d\'IDs' });
+    }
+
+    const result = await prisma.receivedInvoice.updateMany({
+      where: {
+        id: { in: ids },
+        deletedAt: null,
+        status: { not: 'PAID' },
+      },
+      data: { status: 'PAID' },
+    });
+
+    res.json({ message: `${result.count} factures marcades com a pagades`, count: result.count });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// =============================================
 // RESCAN individual
 // =============================================
 router.post('/received/:id/rescan', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {

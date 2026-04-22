@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import {
   Plus, Search, Trash2, Check, X as XIcon, CheckCircle,
-  FileText, Upload, Eye, Link2, AlertTriangle, Ban, Package,
+  FileText, Upload, Eye, Link2, AlertTriangle, Ban, Package, Sparkles, CreditCard,
   ChevronRight, Paperclip, Pencil, RefreshCw, GitMerge,
 } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
@@ -653,6 +653,36 @@ export default function ReceivedInvoices() {
     }
   };
 
+  // Extreure equips de múltiples factures
+  const [bulkExtractRunning, setBulkExtractRunning] = useState(false);
+  const handleBulkExtractEquipment = async () => {
+    if (!confirm(`Extreure equips de ${selectedIds.length} factures amb IA? Pot trigar uns segons per factura.`)) return;
+    setBulkExtractRunning(true);
+    try {
+      const { data: result } = await api.post('/invoices/received/bulk-extract-equipment', { ids: selectedIds });
+      alert(`Extracció completada: ${result.extracted} factures processades, ${result.totalItems} equips extrets, ${result.skipped} sense text, ${result.errors} errors`);
+      setSelectedIds([]);
+      refetch();
+    } catch (err) {
+      alert(err.response?.data?.error || err.message);
+    } finally {
+      setBulkExtractRunning(false);
+    }
+  };
+
+  // Marcar múltiples factures com a pagades
+  const handleBulkMarkPaid = async () => {
+    if (!confirm(`Marcar ${selectedIds.length} factures com a pagades?`)) return;
+    try {
+      const { data: result } = await api.patch('/invoices/received/bulk-mark-paid', { ids: selectedIds });
+      alert(result.message);
+      setSelectedIds([]);
+      refetch();
+    } catch (err) {
+      alert(err.response?.data?.error || err.message);
+    }
+  };
+
   const handleRestore = async (id) => {
     await mutate('post', `/invoices/received/${id}/restore`);
     refetch();
@@ -745,6 +775,20 @@ export default function ReceivedInvoices() {
                 >
                   <RefreshCw size={13} className={bulkRescanRunning ? 'animate-spin' : ''} />
                   {bulkRescanRunning ? 'Re-escanejant...' : 'Re-escanejar'}
+                </button>
+                <button
+                  onClick={handleBulkExtractEquipment}
+                  disabled={bulkExtractRunning}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-violet-600 text-white text-xs font-medium hover:bg-violet-700 disabled:opacity-50"
+                >
+                  <Sparkles size={13} className={bulkExtractRunning ? 'animate-spin' : ''} />
+                  {bulkExtractRunning ? 'Extraient...' : 'Extreure equips'}
+                </button>
+                <button
+                  onClick={handleBulkMarkPaid}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-green-600 text-white text-xs font-medium hover:bg-green-700"
+                >
+                  <CreditCard size={13} /> Marcar pagada
                 </button>
                 <button
                   onClick={handleBulkDelete}
