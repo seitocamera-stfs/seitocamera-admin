@@ -2,7 +2,7 @@ import { useState } from 'react';
 import {
   Search, Plus, Pencil, Trash2, Package,
   Sparkles, ExternalLink, ChevronRight, ChevronDown,
-  Link2, Unlink, FolderOpen, CheckSquare, Square,
+  Link2, Unlink, FolderOpen, ArrowUp, ArrowDown,
 } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import Modal from '../components/shared/Modal';
@@ -50,6 +50,10 @@ export default function Equipment() {
   const [bulkCategory, setBulkCategory] = useState('');
   const [bulkStatus, setBulkStatus] = useState('');
 
+  // Ordenació
+  const [sortBy, setSortBy] = useState('');
+  const [sortOrder, setSortOrder] = useState('asc');
+
   // Grups expandits
   const [expandedGroups, setExpandedGroups] = useState({});
 
@@ -60,6 +64,8 @@ export default function Equipment() {
     search: search || undefined,
     category: categoryFilter || undefined,
     status: statusFilter || undefined,
+    sortBy: sortBy || undefined,
+    sortOrder: sortBy ? sortOrder : undefined,
     page,
     limit: 50,
   });
@@ -99,6 +105,35 @@ export default function Equipment() {
 
   const toggleGroup = (id) => {
     setExpandedGroups((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const handleSort = (field) => {
+    if (sortBy === field) {
+      setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortBy(field);
+      setSortOrder('asc');
+    }
+    setPage(1);
+  };
+
+  const SortHeader = ({ field, label, align = 'left' }) => {
+    const active = sortBy === field;
+    return (
+      <th
+        className={`p-3 font-medium cursor-pointer hover:bg-muted/80 select-none transition-colors text-${align}`}
+        onClick={() => handleSort(field)}
+      >
+        <div className={`flex items-center gap-1 ${align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : ''}`}>
+          <span>{label}</span>
+          {active ? (
+            sortOrder === 'asc' ? <ArrowUp size={13} className="text-primary" /> : <ArrowDown size={13} className="text-primary" />
+          ) : (
+            <ArrowUp size={13} className="text-transparent" />
+          )}
+        </div>
+      </th>
+    );
   };
 
   const handleSave = async (e) => {
@@ -457,13 +492,13 @@ export default function Equipment() {
                   className="rounded border-gray-300 text-primary focus:ring-primary"
                 />
               </th>
-              <th className="text-left p-3 font-medium">Equip</th>
+              <SortHeader field="name" label="Equip" />
               <th className="text-left p-3 font-medium">S/N</th>
-              <th className="text-center p-3 font-medium">Categoria</th>
-              <th className="text-left p-3 font-medium">Proveïdor</th>
-              <th className="text-left p-3 font-medium">Factura</th>
-              <th className="text-right p-3 font-medium">Preu</th>
-              <th className="text-center p-3 font-medium">Estat</th>
+              <SortHeader field="category" label="Categoria" align="center" />
+              <SortHeader field="supplier" label="Proveïdor" />
+              <SortHeader field="invoice" label="Factura" />
+              <SortHeader field="price" label="Preu" align="right" />
+              <SortHeader field="status" label="Estat" align="center" />
               <th className="text-right p-3 font-medium">Accions</th>
             </tr>
           </thead>

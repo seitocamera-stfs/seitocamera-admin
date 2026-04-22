@@ -14,7 +14,7 @@ router.use(requireSection('equipment'));
 // ===========================================
 router.get('/', async (req, res, next) => {
   try {
-    const { search, category, status, supplierId, invoiceId, page = 1, limit = 50 } = req.query;
+    const { search, category, status, supplierId, invoiceId, sortBy, sortOrder = 'asc', page = 1, limit = 50 } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const where = {};
@@ -37,12 +37,25 @@ router.get('/', async (req, res, next) => {
       where.parentId = null;
     }
 
+    // Ordenació
+    const dir = sortOrder === 'desc' ? 'desc' : 'asc';
+    const orderByMap = {
+      name: { name: dir },
+      category: { category: dir },
+      supplier: { supplier: { name: dir } },
+      invoice: { receivedInvoice: { invoiceNumber: dir } },
+      price: { purchasePrice: dir },
+      status: { status: dir },
+      date: { purchaseDate: dir },
+    };
+    const orderBy = orderByMap[sortBy] || { createdAt: 'desc' };
+
     const [items, total] = await Promise.all([
       prisma.equipment.findMany({
         where,
         skip,
         take: parseInt(limit),
-        orderBy: { createdAt: 'desc' },
+        orderBy,
         include: {
           supplier: { select: { id: true, name: true } },
           receivedInvoice: { select: { id: true, invoiceNumber: true, totalAmount: true, issueDate: true, gdriveFileId: true } },
