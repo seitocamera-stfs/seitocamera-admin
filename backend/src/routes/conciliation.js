@@ -492,64 +492,72 @@ router.post('/recalculate', authorize('ADMIN', 'EDITOR'), async (req, res, next)
     });
 
     if (autoMatched.length === 0) {
-      // No hi ha res a recalcular, llançar directament auto-conciliació
       logger.info('Recalculate: cap AUTO_MATCHED trobada, llançant auto directament');
     } else {
-      // 2. Esborrar totes les AUTO_MATCHED i alliberar moviments
       const movementIds = [...new Set(autoMatched.map(c => c.bankMovementId))];
+      const receivedIds = [...new Set(autoMatched.filter(c => c.receivedInvoiceId).map(c => c.receivedInvoiceId))];
+      const issuedIds = [...new Set(autoMatched.filter(c => c.issuedInvoiceId).map(c => c.issuedInvoiceId))];
 
-      await prisma.$transaction(async (tx) => {
-        // Esborrar conciliacions
-        await tx.conciliation.deleteMany({ where: { status: 'AUTO_MATCHED' } });
+      // Pas 1: Esborrar totes les AUTO_MATCHED d'un cop
+      await prisma.conciliation.deleteMany({ where: { status: 'AUTO_MATCHED' } });
 
-        // Alliberar moviments (marcar com no conciliats)
-        // Però NOMÉS si no tenen cap altra conciliació CONFIRMED/MANUAL_MATCHED
-        for (const movId of movementIds) {
-          const remaining = await tx.conciliation.count({
-            where: { bankMovementId: movId, status: { in: ['CONFIRMED', 'MANUAL_MATCHED'] } },
-          });
-          if (remaining === 0) {
-            await tx.bankMovement.update({
-              where: { id: movId },
-              data: { isConciliated: false },
-            });
-          }
-        }
-
-        // Revertir factures que havien quedat PAID per auto-match (sense manual/confirmed)
-        const receivedIds = autoMatched.filter(c => c.receivedInvoiceId).map(c => c.receivedInvoiceId);
-        const issuedIds = autoMatched.filter(c => c.issuedInvoiceId).map(c => c.issuedInvoiceId);
-
-        if (receivedIds.length > 0) {
-          // Només revertir les que NO tenen cap altra conciliació activa
-          for (const invId of receivedIds) {
-            const otherConc = await tx.conciliation.count({
-              where: { receivedInvoiceId: invId, status: { in: ['CONFIRMED', 'MANUAL_MATCHED'] } },
-            });
-            if (otherConc === 0) {
-              await tx.receivedInvoice.update({
-                where: { id: invId },
-                data: { status: 'PENDING', paidAmount: 0 },
-              });
-            }
-          }
-        }
-        if (issuedIds.length > 0) {
-          for (const invId of issuedIds) {
-            const otherConc = await tx.conciliation.count({
-              where: { issuedInvoiceId: invId, status: { in: ['CONFIRMED', 'MANUAL_MATCHED'] } },
-            });
-            if (otherConc === 0) {
-              await tx.issuedInvoice.update({
-                where: { id: invId },
-                data: { status: 'PENDING', paidAmount: 0 },
-              });
-            }
-          }
-        }
+      // Pas 2: Trobar moviments que encara tenen conciliació confirmed (no alliberar)
+      const movementsWithConfirmed = await prisma.conciliation.findMany({
+        where: {
+          bankMovementId: { in: movementIds },
+          status: { in: ['CONFIRMED', 'MANUAL_MATCHED'] },
+        },
+        select: { bankMovementId: true },
       });
+      const keepConciliatedIds = new Set(movementsWithConfirmed.map(c => c.bankMovementId));
+      const toFreeIds = movementIds.filter(id => !keepConciliatedIds.has(id));
 
-      logger.info(`Recalculate: ${autoMatched.length} AUTO_MATCHED esborrades, ${movementIds.length} moviments alliberats`);
+      // Pas 3: Alliberar moviments en bloc
+      if (toFreeIds.length > 0) {
+        await prisma.bankMovement.updateMany({
+          where: { id: { in: toFreeIds } },
+          data: { isConciliated: false },
+        });
+      }
+
+      // Pas 4: Trobar factures que encara tenen conciliació confirmed (no revertir)
+      if (receivedIds.length > 0) {
+        const receivedWithConfirmed = await prisma.conciliation.findMany({
+          where: {
+            receivedInvoiceId: { in: receivedIds },
+            status: { in: ['CONFIRMED', 'MANUAL_MATCHED'] },
+          },
+          select: { receivedInvoiceId: true },
+        });
+        const keepReceivedIds = new Set(receivedWithConfirmed.map(c => c.receivedInvoiceId));
+        const toRevertReceived = receivedIds.filter(id => !keepReceivedIds.has(id));
+        if (toRevertReceived.length > 0) {
+          await prisma.receivedInvoice.updateMany({
+            where: { id: { in: toRevertReceived } },
+            data: { status: 'PENDING', paidAmount: 0 },
+          });
+        }
+      }
+
+      if (issuedIds.length > 0) {
+        const issuedWithConfirmed = await prisma.conciliation.findMany({
+          where: {
+            issuedInvoiceId: { in: issuedIds },
+            status: { in: ['CONFIRMED', 'MANUAL_MATCHED'] },
+          },
+          select: { issuedInvoiceId: true },
+        });
+        const keepIssuedIds = new Set(issuedWithConfirmed.map(c => c.issuedInvoiceId));
+        const toRevertIssued = issuedIds.filter(id => !keepIssuedIds.has(id));
+        if (toRevertIssued.length > 0) {
+          await prisma.issuedInvoice.updateMany({
+            where: { id: { in: toRevertIssued } },
+            data: { status: 'PENDING', paidAmount: 0 },
+          });
+        }
+      }
+
+      logger.info(`Recalculate: ${autoMatched.length} AUTO_MATCHED esborrades, ${toFreeIds.length} moviments alliberats`);
     }
 
     // 3. Retornar resultat — el frontend farà la crida a /auto després
