@@ -301,6 +301,8 @@ model BankMovement {
   qontoSlug       String?    @unique   // ID únic de Qonto per evitar duplicats
   rawData         Json?
   isConciliated   Boolean      @default(false)
+  isDismissed     Boolean      @default(false)   // Descartat manualment (no cal conciliar)
+  dismissReason   String?                         // Motiu: "transferència interna", "impost", etc.
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
@@ -309,6 +311,7 @@ model BankMovement {
 
   @@index([date])
   @@index([isConciliated])
+  @@index([isDismissed])
   @@index([accountName])
   @@map("bank_movements")
 }

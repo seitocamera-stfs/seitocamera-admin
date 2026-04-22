@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Zap, Check, X as XIcon, Search, FileText, Eye, ChevronLeft, ChevronRight, ArrowDownCircle, ArrowUpCircle, Brain, Loader2, Undo2 } from 'lucide-react';
+import { Zap, Check, X as XIcon, Search, FileText, Eye, ChevronLeft, ChevronRight, ArrowDownCircle, ArrowUpCircle, Brain, Loader2, Undo2, Ban, RotateCcw, EyeOff } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import { StatusBadge } from '../components/shared/StatusBadge';
 import { formatCurrency, formatDate } from '../lib/utils';
@@ -28,7 +28,12 @@ export default function Conciliation() {
   const [aiSelectMode, setAiSelectMode] = useState(false);
   const [movementSearch, setMovementSearch] = useState('');
   const [conciliationSearch, setConciliationSearch] = useState('');
+  const [showDismissed, setShowDismissed] = useState(false);
+  const [dismissingId, setDismissingId] = useState(null);
+  const [dismissReason, setDismissReason] = useState('');
   const { mutate, loading: mutating } = useApiMutation();
+
+  const isPending = tab === 'pending';
 
   // Carregar detalls complets d'una factura emesa (per popup)
   const handleViewIssuedDetails = async (id) => {
@@ -43,9 +48,8 @@ export default function Conciliation() {
   // Dades segons la pestanya
   const pendingQuery = useApiGet('/bank', { conciliated: 'false', page, limit: 15, ...(movementSearch.trim() ? { search: movementSearch.trim() } : {}) });
   const matchedQuery = useApiGet('/conciliation', { status: tab === 'confirmed' ? 'CONFIRMED' : 'AUTO_MATCHED', page, limit: 15, ...(conciliationSearch.trim() && !isPending ? { search: conciliationSearch.trim() } : {}) });
-
-  const isPending = tab === 'pending';
-  const activeQuery = isPending ? pendingQuery : matchedQuery;
+  const dismissedQuery = useApiGet('/bank/dismissed/list', { page: showDismissed ? page : 1, limit: 15 });
+  const activeQuery = isPending ? pendingQuery : tab === 'dismissed' ? dismissedQuery : matchedQuery;
   const movements = isPending ? (activeQuery.data?.data || []) : [];
   const conciliations = !isPending ? (activeQuery.data?.data || []) : [];
 
@@ -289,6 +293,36 @@ export default function Conciliation() {
     }
   };
 
+  // Descartar moviment bancari
+  const handleDismiss = async (movementId) => {
+    try {
+      await mutate('patch', `/bank/${movementId}/dismiss`, {
+        reason: dismissReason.trim() || null,
+      });
+      setDismissingId(null);
+      setDismissReason('');
+      setSelectedMovement(null);
+      setCandidates([]);
+      pendingQuery.refetch();
+      dismissedQuery.refetch();
+      statsQuery.refetch();
+    } catch (err) {
+      alert(err.response?.data?.error || err.message || 'Error descartant moviment');
+    }
+  };
+
+  // Recuperar moviment descartat
+  const handleUndismiss = async (movementId) => {
+    try {
+      await mutate('patch', `/bank/${movementId}/undismiss`);
+      pendingQuery.refetch();
+      dismissedQuery.refetch();
+      statsQuery.refetch();
+    } catch (err) {
+      alert(err.response?.data?.error || err.message || 'Error recuperant moviment');
+    }
+  };
+
   // Confirmar conciliació
   const handleConfirm = async (id) => {
     await mutate('patch', `/conciliation/${id}/confirm`);
@@ -434,6 +468,9 @@ export default function Conciliation() {
         <button onClick={() => { setTab('confirmed'); setPage(1); }} className={`px-4 py-2 text-sm font-medium border-b-2 ${tab === 'confirmed' ? 'border-teal-600 text-teal-600' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
           Confirmades
         </button>
+        <button onClick={() => { setTab('dismissed'); setPage(1); setShowDismissed(true); }} className={`px-4 py-2 text-sm font-medium border-b-2 flex items-center gap-1.5 ${tab === 'dismissed' ? 'border-gray-600 text-gray-600' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
+          <EyeOff size={14} /> Descartats {dismissedQuery.data?.pagination?.total ? `(${dismissedQuery.data.pagination.total})` : ''}
+        </button>
       </div>
 
       {/* TAB: Per conciliar — Layout Xero */}
@@ -517,10 +554,56 @@ export default function Conciliation() {
                                 {formatDate(m.date)} {m.reference ? `· ${m.reference}` : ''} {m.accountName ? `· ${m.accountName}` : ''}
                               </div>
                             </div>
-                            <div className={`font-semibold text-sm ${isExpense ? 'text-red-600' : 'text-green-600'}`}>
-                              {isExpense ? '-' : '+'}{formatCurrency(Math.abs(parseFloat(m.amount)))}
+                            <div className="flex items-center gap-2">
+                              <div className={`font-semibold text-sm ${isExpense ? 'text-red-600' : 'text-green-600'}`}>
+                                {isExpense ? '-' : '+'}{formatCurrency(Math.abs(parseFloat(m.amount)))}
+                              </div>
+                              {!aiSelectMode && (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setDismissingId(dismissingId === m.id ? null : m.id); }}
+                                  className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600"
+                                  title="Descartar moviment"
+                                >
+                                  <Ban size={14} />
+                                </button>
+                              )}
                             </div>
                           </div>
+                          {/* Mini formulari descartar */}
+                          {dismissingId === m.id && (
+                            <div className="mt-2 pt-2 border-t" onClick={(e) => e.stopPropagation()}>
+                              <div className="flex gap-2 items-end">
+                                <div className="flex-1">
+                                  <label className="text-xs text-muted-foreground block mb-1">Motiu (opcional)</label>
+                                  <select
+                                    value={dismissReason}
+                                    onChange={(e) => setDismissReason(e.target.value)}
+                                    className="w-full rounded-md border bg-background px-2 py-1 text-xs"
+                                  >
+                                    <option value="">Sense motiu</option>
+                                    <option value="Transferència interna">Transferència interna</option>
+                                    <option value="Pagament Hisenda / impostos">Pagament Hisenda / impostos</option>
+                                    <option value="Comissió bancària">Comissió bancària</option>
+                                    <option value="Pagament nòmina">Pagament nòmina</option>
+                                    <option value="Altre">Altre</option>
+                                  </select>
+                                </div>
+                                <button
+                                  onClick={() => handleDismiss(m.id)}
+                                  disabled={mutating}
+                                  className="px-3 py-1 rounded bg-gray-700 text-white text-xs font-medium hover:bg-gray-800 disabled:opacity-50"
+                                >
+                                  Descartar
+                                </button>
+                                <button
+                                  onClick={() => { setDismissingId(null); setDismissReason(''); }}
+                                  className="px-2 py-1 rounded border text-xs font-medium hover:bg-muted"
+                                >
+                                  Cancel·lar
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -682,7 +765,7 @@ export default function Conciliation() {
       )}
 
       {/* TAB: Per confirmar / Confirmades */}
-      {!isPending && (
+      {!isPending && tab !== 'dismissed' && (
         <div>
           {/* Buscador de conciliacions */}
           <div className="relative mb-3">
@@ -790,6 +873,57 @@ export default function Conciliation() {
             </tbody>
           </table>
         </div>
+        </div>
+      )}
+
+      {/* TAB: Descartats */}
+      {tab === 'dismissed' && (
+        <div>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-3 text-sm text-gray-600">
+            Moviments bancaris descartats manualment. No apareixen a la llista de pendents de conciliar.
+          </div>
+          <div className="space-y-2">
+            {dismissedQuery.loading ? (
+              <div className="bg-card border rounded-lg p-8 text-center text-muted-foreground">Carregant...</div>
+            ) : (dismissedQuery.data?.data || []).length === 0 ? (
+              <div className="bg-card border rounded-lg p-8 text-center text-muted-foreground">Cap moviment descartat.</div>
+            ) : (
+              (dismissedQuery.data?.data || []).map((m) => {
+                const isExpense = parseFloat(m.amount) < 0;
+                return (
+                  <div key={m.id} className="bg-card border rounded-lg p-3">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          {isExpense ? <ArrowUpCircle size={14} className="text-red-400 opacity-60" /> : <ArrowDownCircle size={14} className="text-green-400 opacity-60" />}
+                          <span className="font-medium text-sm text-muted-foreground">{m.counterparty || m.description}</span>
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-1 ml-6">
+                          {formatDate(m.date)} {m.reference ? `· ${m.reference}` : ''}
+                          {m.dismissReason && (
+                            <span className="ml-2 bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">{m.dismissReason}</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className={`font-semibold text-sm opacity-60 ${isExpense ? 'text-red-600' : 'text-green-600'}`}>
+                          {isExpense ? '-' : '+'}{formatCurrency(Math.abs(parseFloat(m.amount)))}
+                        </div>
+                        <button
+                          onClick={() => handleUndismiss(m.id)}
+                          disabled={mutating}
+                          className="px-2 py-1 rounded bg-teal-100 text-teal-700 text-xs font-medium hover:bg-teal-200 disabled:opacity-50 flex items-center gap-1"
+                          title="Recuperar moviment"
+                        >
+                          <RotateCcw size={12} /> Recuperar
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
         </div>
       )}
 
