@@ -73,67 +73,108 @@ export default function Conciliation() {
     const rawText = movement.counterparty || movement.description || '';
     const endpoint = isExpense ? '/invoices/received' : '/invoices/issued';
 
-    // Extreure paraules significatives (>2 chars, sense números purs ni stopwords)
-    const stopWords = ['s.c.a', 'sca', 'bv', 'nv', 'sa', 'sl', 'slu', 'slne', 'europe', 'international', 'payments', 'mktp', 'amzn'];
+    // Extreure paraules significatives del contrapart per comparar amb noms de proveïdor
+    const stopWords = ['s.c.a', 'sca', 'bv', 'nv', 'sa', 'sl', 'slu', 'slne', 'europe', 'international',
+      'payments', 'mktp', 'amzn', 'sucursal', 'espana', 'españa', 'domiciliacions', 'targetes',
+      'transferencia', 'transfer', 'the', 'and', 'for', 'ltd', 'gmbh', 'inc', 'limited'];
     const words = rawText
       .split(/[\s,.\-/]+/)
       .map(w => w.replace(/[^a-zA-ZÀ-ÿ0-9]/g, ''))
       .filter(w => w.length > 2 && !/^\d+$/.test(w) && !stopWords.includes(w.toLowerCase()));
 
+    // Funció per comprovar si el nom de proveïdor coincideix amb el contrapart del moviment
+    const matchesSupplier = (supplierName) => {
+      if (!supplierName || !rawText) return false;
+      const sLower = supplierName.toLowerCase();
+      const rLower = rawText.toLowerCase();
+      // Coincidència directa
+      if (rLower.includes(sLower) || sLower.includes(rLower)) return true;
+      // Coincidència per paraules: almenys 1 paraula significativa del proveïdor apareix al moviment
+      const supplierWords = sLower.split(/[\s,.\-/]+/).filter(w => w.length > 2);
+      const movementLower = rLower;
+      return supplierWords.some(w => movementLower.includes(w));
+    };
+
     try {
-      const allResults = new Map(); // clau: invoice.id → objecte amb score
-      const addResults = (items, scoreBonus, reason) => {
-        for (const inv of items) {
-          const existing = allResults.get(inv.id);
-          if (existing) {
-            existing._score += scoreBonus;
-            if (!existing._matchReasons.includes(reason)) existing._matchReasons.push(reason);
-          } else {
-            allResults.set(inv.id, { ...inv, _type: isExpense ? 'received' : 'issued', _score: scoreBonus, _matchReasons: [reason] });
-          }
-        }
+      const allResults = new Map();
+      const addResult = (inv, type) => {
+        if (allResults.has(inv.id)) return;
+        allResults.set(inv.id, { ...inv, _type: type });
       };
 
-      // Estratègia 1: Buscar per import (sempre, no només com a fallback)
+      // Fer dues cerques en paral·lel: per import i per nom proveïdor
       const searches = [];
+
+      // Cerca 1: per import (busca factures amb import similar)
       if (absAmount > 0) {
         searches.push(
-          api.get(endpoint, { params: { search: absAmount.toFixed(2), conciliated: 'false', limit: 20 } })
-            .then(({ data }) => addResults(data.data || [], 5, 'import'))
+          api.get(endpoint, { params: { search: absAmount.toFixed(2), conciliated: 'false', limit: 30 } })
+            .then(({ data }) => (data.data || []).forEach(inv => addResult(inv, isExpense ? 'received' : 'issued')))
             .catch(() => {})
         );
       }
 
-      // Estratègia 2: Buscar per nom complet del contrapart
-      if (rawText.trim()) {
+      // Cerca 2: per nom del contrapart (per trobar factures del mateix proveïdor)
+      for (const word of words.slice(0, 2)) {
         searches.push(
-          api.get(endpoint, { params: { search: rawText.trim(), conciliated: 'false', limit: 20 } })
-            .then(({ data }) => addResults(data.data || [], 3, 'nom complet'))
-            .catch(() => {})
-        );
-      }
-
-      // Estratègia 3: Buscar per cada paraula significativa individualment
-      for (const word of words.slice(0, 3)) { // max 3 paraules per no fer masses requests
-        searches.push(
-          api.get(endpoint, { params: { search: word, conciliated: 'false', limit: 10 } })
-            .then(({ data }) => addResults(data.data || [], 2, `paraula: ${word}`))
+          api.get(endpoint, { params: { search: word, conciliated: 'false', limit: 20 } })
+            .then(({ data }) => (data.data || []).forEach(inv => addResult(inv, isExpense ? 'received' : 'issued')))
             .catch(() => {})
         );
       }
 
       await Promise.all(searches);
 
-      // Calcular score final: bonus per coincidència d'import
+      // Classificar cada resultat
       let results = Array.from(allResults.values());
       for (const inv of results) {
-        const diff = Math.abs(parseFloat(inv.totalAmount) - absAmount);
-        if (diff < 0.03) inv._score += 10;       // match exacte
-        else if (diff < 1) inv._score += 5;       // quasi exacte
-        else if (diff < 5) inv._score += 2;       // proper
+        const invAmount = parseFloat(inv.totalAmount);
+        const amountDiff = Math.abs(invAmount - absAmount);
+        const amountMatch = amountDiff < 0.03;
+        const amountClose = amountDiff < 1;
+        const supplierName = isExpense ? inv.supplier?.name : inv.client?.name;
+        const nameMatch = matchesSupplier(supplierName);
+
+        // Score basat en regles clares:
+        // Import exacte + nom coincident = match perfecte (100)
+        // Import exacte sense nom = probable match (50)
+        // Import proper (<1€) + nom = molt probable (45)
+        // Nom coincident + import < 20% diferència = possible multi-factura (30)
+        // Nom coincident + import molt diferent = només per referència (10)
+        // Ni import ni nom = no mostrar (0)
+        let score = 0;
+        const reasons = [];
+
+        if (amountMatch && nameMatch) {
+          score = 100;
+          reasons.push('Import i proveïdor coincidents');
+        } else if (amountMatch) {
+          score = 50;
+          reasons.push('Import exacte');
+        } else if (amountClose && nameMatch) {
+          score = 45;
+          reasons.push('Import proper + proveïdor');
+        } else if (nameMatch && amountDiff / absAmount < 0.2) {
+          score = 30;
+          reasons.push('Proveïdor + import similar');
+        } else if (nameMatch) {
+          score = 10;
+          reasons.push('Mateix proveïdor');
+        } else if (amountMatch) {
+          score = 50;
+          reasons.push('Import exacte');
+        } else {
+          score = 0;
+        }
+
+        inv._score = score;
+        inv._matchReasons = reasons;
       }
 
-      // Ordenar per score (major primer), desempat per diferència d'import
+      // Filtrar: no mostrar resultats amb score 0
+      results = results.filter(inv => inv._score > 0);
+
+      // Ordenar: score descendent, desempat per diferència d'import
       results.sort((a, b) => {
         if (b._score !== a._score) return b._score - a._score;
         return Math.abs(parseFloat(a.totalAmount) - absAmount) - Math.abs(parseFloat(b.totalAmount) - absAmount);
