@@ -234,6 +234,24 @@ ${text.substring(0, 8000)}`;
     }
   }
 
+  // Auto-agrupar si hi ha >1 equip: el més car és el pare, la resta fills
+  if (created.length > 1) {
+    const sorted = [...created].sort((a, b) => {
+      const pa = parseFloat(a.purchasePrice || 0);
+      const pb = parseFloat(b.purchasePrice || 0);
+      return pb - pa; // El més car primer
+    });
+    const parentId = sorted[0].id;
+    const childIds = sorted.slice(1).map((c) => c.id);
+
+    await prisma.equipment.updateMany({
+      where: { id: { in: childIds } },
+      data: { parentId },
+    });
+
+    logger.info(`Equipment: auto-agrupats ${childIds.length} subitems sota "${sorted[0].name}" (factura ${invoice.invoiceNumber})`);
+  }
+
   // Marcar factura com a extreta
   await prisma.receivedInvoice.update({
     where: { id: invoiceId },

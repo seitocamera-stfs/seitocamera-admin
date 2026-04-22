@@ -175,6 +175,55 @@ router.post('/group', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
   }
 });
 
+/**
+ * POST /api/equipment/auto-group — Agrupar retroactivament equips per factura
+ * Equips de la mateixa factura sense parentId → el més car és pare, resta fills
+ */
+router.post('/auto-group', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    // Trobar factures amb >1 equip no agrupat
+    const invoices = await prisma.receivedInvoice.findMany({
+      where: {
+        equipment: {
+          some: { parentId: null },
+        },
+      },
+      select: { id: true, invoiceNumber: true },
+    });
+
+    let grouped = 0;
+    let groupCount = 0;
+
+    for (const inv of invoices) {
+      const items = await prisma.equipment.findMany({
+        where: { receivedInvoiceId: inv.id, parentId: null },
+        orderBy: { purchasePrice: 'desc' },
+      });
+
+      if (items.length < 2) continue;
+
+      const parentId = items[0].id;
+      const childIds = items.slice(1).map((c) => c.id);
+
+      await prisma.equipment.updateMany({
+        where: { id: { in: childIds } },
+        data: { parentId },
+      });
+
+      grouped += childIds.length;
+      groupCount++;
+    }
+
+    res.json({
+      message: `${groupCount} grups creats, ${grouped} equips agrupats`,
+      groupCount,
+      grouped,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // ===========================================
 // GET /api/equipment/:id — Detall equip
 // ===========================================

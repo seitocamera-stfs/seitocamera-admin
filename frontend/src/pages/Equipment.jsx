@@ -243,6 +243,22 @@ export default function Equipment() {
     }
   };
 
+  // Auto-agrupar per factura (retroactiu)
+  const [autoGrouping, setAutoGrouping] = useState(false);
+  const handleAutoGroup = async () => {
+    if (!confirm('Agrupar automàticament els equips de la mateixa factura? El més car de cada factura serà l\'equip principal. Podràs revisar i modificar després.')) return;
+    setAutoGrouping(true);
+    try {
+      const { data: result } = await api.post('/equipment/auto-group');
+      alert(result.message);
+      refetch();
+    } catch (err) {
+      alert(err.response?.data?.error || err.message);
+    } finally {
+      setAutoGrouping(false);
+    }
+  };
+
   // Desfer grup sencer
   const handleDisband = async (parentId) => {
     if (!confirm('Desfer el grup? Tots els subitems tornaran a ser independents.')) return;
@@ -356,6 +372,15 @@ export default function Equipment() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={handleAutoGroup}
+            disabled={autoGrouping}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-md border text-sm hover:bg-muted disabled:opacity-50"
+            title="Agrupa equips de la mateixa factura automàticament"
+          >
+            <Link2 size={14} />
+            {autoGrouping ? 'Agrupant...' : 'Auto-agrupar per factura'}
+          </button>
           <button
             onClick={handleExtractBatch}
             disabled={extracting}
