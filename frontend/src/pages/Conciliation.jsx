@@ -152,18 +152,41 @@ export default function Conciliation() {
       dateTo = to.toISOString().split('T')[0];
     }
 
-    // Consultar memòria de contraparts (IBAN Memory)
+    // Consultes prèvies en paral·lel: memòria contraparts + comissions + recurrència
     let knownSupplierIds = new Set();
     let knownClientIds = new Set();
+    let commissionRules = [];
+    let recurringPattern = null;
+
+    const preQueries = [];
+
     if (rawText.trim().length >= 3) {
-      try {
-        const { data: suggestions } = await api.get('/conciliation/counterparty-suggestions', {
-          params: { counterparty: rawText.trim() }
-        });
-        (suggestions.suppliers || []).forEach(s => knownSupplierIds.add(s.id));
-        (suggestions.clients || []).forEach(c => knownClientIds.add(c.id));
-      } catch {}
+      preQueries.push(
+        api.get('/conciliation/counterparty-suggestions', { params: { counterparty: rawText.trim() } })
+          .then(({ data }) => {
+            (data.suppliers || []).forEach(s => knownSupplierIds.add(s.id));
+            (data.clients || []).forEach(c => knownClientIds.add(c.id));
+          }).catch(() => {})
+      );
+      preQueries.push(
+        api.get('/conciliation/recurring-patterns', { params: { counterparty: rawText.trim() } })
+          .then(({ data }) => {
+            // Buscar si hi ha un patró recurrent amb import similar al moviment
+            const match = (data.patterns || []).find(p =>
+              Math.abs(p.amount - absAmount) / absAmount < 0.02
+            );
+            if (match) recurringPattern = match;
+          }).catch(() => {})
+      );
     }
+
+    preQueries.push(
+      api.get('/conciliation/commission-rules')
+        .then(({ data }) => { commissionRules = data || []; })
+        .catch(() => {})
+    );
+
+    await Promise.all(preQueries);
 
     try {
       const allResults = new Map();
@@ -224,17 +247,21 @@ export default function Conciliation() {
         const entityId = isExpense ? inv.supplier?.id : inv.client?.id;
         const counterpartyMatch = entityId && (knownSupplierIds.has(entityId) || knownClientIds.has(entityId));
 
+        // Detecció de comissions: import_moviment = import_factura - comissió?
+        let commissionMatch = null;
+        if (invAmount > absAmount && commissionRules.length > 0) {
+          for (const rule of commissionRules) {
+            const pct = parseFloat(rule.percentage) / 100;
+            const fix = parseFloat(rule.fixedFee);
+            const expectedNet = invAmount - (invAmount * pct + fix);
+            if (Math.abs(expectedNet - absAmount) < 0.05) {
+              commissionMatch = { rule: rule.name, commission: invAmount - absAmount };
+              break;
+            }
+          }
+        }
+
         // Score basat en regles clares:
-        // ref + import exacte = certesa total (120)
-        // ref + nom/memòria = molt segur (110)
-        // ref + import proper = segur (95)
-        // ref sol = indicador fort (80)
-        // Import exacte + nom/memòria = match perfecte (100)
-        // Import exacte sense nom = probable match (50)
-        // Import proper + nom/memòria = molt probable (45)
-        // Memòria + import proper = historial confirmat (60)
-        // Nom/memòria + import < 20% = possible (30)
-        // Nom/memòria sol = per revisar (10)
         let score = 0;
         const reasons = [];
 
@@ -254,6 +281,12 @@ export default function Conciliation() {
         } else if (refMatch) {
           score = 80;
           reasons.push('Referència bancària coincident');
+        } else if (commissionMatch && entityMatch) {
+          score = 98;
+          reasons.push(`${entityLabel} + comissió ${commissionMatch.rule} (${commissionMatch.commission.toFixed(2)}€)`);
+        } else if (commissionMatch) {
+          score = 55;
+          reasons.push(`Possible comissió ${commissionMatch.rule} (${commissionMatch.commission.toFixed(2)}€)`);
         } else if (amountMatch && entityMatch) {
           score = 100;
           reasons.push(`Import exacte + ${entityLabel}`);
@@ -276,8 +309,15 @@ export default function Conciliation() {
           score = 0;
         }
 
+        // Bonus recurrència: si el moviment encaixa amb un patró recurrent detectat
+        if (recurringPattern && entityMatch && score > 0) {
+          score += 10;
+          reasons.push(`Pagament recurrent (dia ~${recurringPattern.avgDayOfMonth} cada mes)`);
+        }
+
         inv._score = score;
         inv._matchReasons = reasons;
+        inv._commissionMatch = commissionMatch;
       }
 
       // Filtrar: no mostrar resultats amb score 0
@@ -975,6 +1015,11 @@ export default function Conciliation() {
                                       {isPartial && (
                                         <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
                                           Parcialment pagada ({formatCurrency(remaining)} pendent)
+                                        </span>
+                                      )}
+                                      {inv._commissionMatch && (
+                                        <span className="text-xs bg-pink-100 text-pink-700 px-1.5 py-0.5 rounded">
+                                          Comissió {inv._commissionMatch.rule}: -{formatCurrency(inv._commissionMatch.commission)}
                                         </span>
                                       )}
                                       {inv._type === 'received' && <span className="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded">Rebuda</span>}

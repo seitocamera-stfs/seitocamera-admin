@@ -358,6 +358,23 @@ model Conciliation {
 }
 
 // ===========================================
+// Regles de comissions (gateways de pagament)
+// ===========================================
+
+model CommissionRule {
+  id              String    @id @default(cuid())
+  name            String    @unique                // Nom del gateway: "Stripe", "PayPal", "TPV BBVA"
+  percentage      Decimal   @default(0) @db.Decimal(5, 3)  // % comissió (ex: 1.400 = 1.4%)
+  fixedFee        Decimal   @default(0) @db.Decimal(8, 2)  // Import fix per transacció (ex: 0.25€)
+  isActive        Boolean   @default(true)
+  keywords        String[]  @default([])           // Paraules clau per detectar al moviment: ["stripe", "paypal"]
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("commission_rules")
+}
+
+// ===========================================
 // Memòria de contraparts (IBAN Memory)
 // ===========================================
 

@@ -152,6 +152,94 @@ router.get('/counterparty-suggestions', async (req, res, next) => {
 });
 
 // ===========================================
+// GET /api/conciliation/commission-rules — Regles de comissions actives
+// ===========================================
+router.get('/commission-rules', async (req, res, next) => {
+  try {
+    const rules = await prisma.commissionRule.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+    });
+    res.json(rules);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================
+// GET /api/conciliation/recurring-patterns — Patrons de pagaments recurrents
+// Analitza moviments conciliats per trobar patrons: mateix counterparty + import similar + mensual
+// ===========================================
+router.get('/recurring-patterns', async (req, res, next) => {
+  try {
+    const { counterparty } = req.query;
+    if (!counterparty || counterparty.trim().length < 3) {
+      return res.json({ patterns: [] });
+    }
+
+    // Buscar moviments conciliats amb aquest contrapart
+    const movements = await prisma.bankMovement.findMany({
+      where: {
+        isConciliated: true,
+        counterparty: { contains: counterparty.trim(), mode: 'insensitive' },
+      },
+      select: { id: true, amount: true, date: true, counterparty: true },
+      orderBy: { date: 'desc' },
+      take: 24, // Últims 2 anys de moviments
+    });
+
+    if (movements.length < 3) {
+      return res.json({ patterns: [] });
+    }
+
+    // Agrupar per import similar (±2%)
+    const patterns = [];
+    const used = new Set();
+
+    for (let i = 0; i < movements.length; i++) {
+      if (used.has(i)) continue;
+      const baseAmt = Math.abs(parseFloat(movements[i].amount));
+      const group = [movements[i]];
+      used.add(i);
+
+      for (let j = i + 1; j < movements.length; j++) {
+        if (used.has(j)) continue;
+        const amt = Math.abs(parseFloat(movements[j].amount));
+        if (Math.abs(amt - baseAmt) / baseAmt < 0.02) {
+          group.push(movements[j]);
+          used.add(j);
+        }
+      }
+
+      if (group.length >= 3) {
+        // Comprovar si són mensuals (±5 dies de diferència entre consecutius)
+        const dates = group.map(m => new Date(m.date)).sort((a, b) => a - b);
+        let isMonthly = true;
+        for (let k = 1; k < dates.length; k++) {
+          const diffDays = (dates[k] - dates[k - 1]) / (1000 * 60 * 60 * 24);
+          if (diffDays < 20 || diffDays > 40) { isMonthly = false; break; }
+        }
+
+        if (isMonthly) {
+          const avgDay = Math.round(dates.reduce((s, d) => s + d.getDate(), 0) / dates.length);
+          patterns.push({
+            amount: baseAmt,
+            occurrences: group.length,
+            avgDayOfMonth: avgDay,
+            lastDate: dates[dates.length - 1],
+            isMonthly: true,
+          });
+        }
+      }
+    }
+
+    res.json({ patterns });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================
 // GET /api/conciliation — Llistar conciliacions
 // ===========================================
 router.get('/', async (req, res, next) => {
@@ -416,8 +504,8 @@ router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
       // Només crear conciliació si la confiança és >= 0.5 (mínim import coincident)
       if (bestMatch && bestConfidence >= 0.5) {
         try {
-          // >= 90% confiança → confirmar directament (sense supervisió)
-          const autoConfirm = bestConfidence >= 0.9;
+          // >= 80% confiança → confirmar directament (sense supervisió)
+          const autoConfirm = bestConfidence >= 0.8;
 
           await prisma.$transaction(async (tx) => {
             await tx.conciliation.create({
@@ -427,7 +515,7 @@ router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
                 issuedInvoiceId: bestType === 'issued' ? bestMatch.id : null,
                 status: autoConfirm ? 'CONFIRMED' : 'AUTO_MATCHED',
                 confidence: Math.round(bestConfidence * 100) / 100,
-                matchReason: autoConfirm ? `${matchReason} [auto-confirmat ≥90%]` : matchReason,
+                matchReason: autoConfirm ? `${matchReason} [auto-confirmat ≥80%]` : matchReason,
                 ...(autoConfirm ? { confirmedAt: new Date() } : {}),
               },
             });
@@ -643,7 +731,7 @@ router.post('/ai-auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => 
 
     for (const match of aiResult.matches) {
       try {
-        const autoConfirm = match.confidence >= 0.90;
+        const autoConfirm = match.confidence >= 0.80;
 
         await prisma.$transaction(async (tx) => {
           for (const inv of match.invoices) {
