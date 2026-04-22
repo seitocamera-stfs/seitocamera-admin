@@ -160,6 +160,8 @@ export default function ReceivedInvoices() {
     paid: paidFilter || undefined,
     deleted: showTrash ? 'true' : undefined,
     alerts: showAlerts ? 'true' : undefined,
+    sortBy: sortBy || undefined,
+    sortOrder: sortBy ? sortDir : undefined,
     page,
     limit: perPage,
   };
@@ -183,7 +185,7 @@ export default function ReceivedInvoices() {
     }
   }, [suppliersData, tempSupplier]);
 
-  // Ordenació
+  // Ordenació (server-side)
   const handleSort = (field) => {
     if (sortBy === field) {
       setSortDir(prev => prev === 'asc' ? 'desc' : 'asc');
@@ -191,6 +193,7 @@ export default function ReceivedInvoices() {
       setSortBy(field);
       setSortDir('asc');
     }
+    setPage(1);
   };
 
   // Gestió selecció
@@ -212,49 +215,8 @@ export default function ReceivedInvoices() {
 
   const clearSelection = () => setSelectedIds([]);
 
-  const sortedData = (() => {
-    if (!data?.data) return [];
-    const items = [...data.data];
-    items.sort((a, b) => {
-      let valA, valB;
-      switch (sortBy) {
-        case 'invoiceNumber':
-          valA = (a.invoiceNumber || '').toLowerCase();
-          valB = (b.invoiceNumber || '').toLowerCase();
-          break;
-        case 'supplier':
-          valA = (a.supplier?.name || '').toLowerCase();
-          valB = (b.supplier?.name || '').toLowerCase();
-          break;
-        case 'issueDate':
-          valA = new Date(a.issueDate || 0).getTime();
-          valB = new Date(b.issueDate || 0).getTime();
-          break;
-        case 'createdAt':
-          valA = new Date(a.createdAt || 0).getTime();
-          valB = new Date(b.createdAt || 0).getTime();
-          break;
-        case 'totalAmount':
-          valA = parseFloat(a.totalAmount) || 0;
-          valB = parseFloat(b.totalAmount) || 0;
-          break;
-        case 'status':
-          valA = a.status || '';
-          valB = b.status || '';
-          break;
-        case 'source':
-          valA = a.source || '';
-          valB = b.source || '';
-          break;
-        default:
-          return 0;
-      }
-      if (valA < valB) return sortDir === 'asc' ? -1 : 1;
-      if (valA > valB) return sortDir === 'asc' ? 1 : -1;
-      return 0;
-    });
-    return items;
-  })();
+  // Dades ja ordenades pel backend
+  const sortedData = data?.data || [];
 
   // Càlcul IVA automàtic
   const calcTax = (subtotal, rate) => {

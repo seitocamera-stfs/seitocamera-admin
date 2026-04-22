@@ -77,7 +77,7 @@ const statusUpdateSchema = z.object({
  */
 router.get('/received', async (req, res, next) => {
   try {
-    const { search, status, source, supplierId, conciliated, paid, dateFrom, dateTo, deleted, alerts, page = 1, limit = 25 } = req.query;
+    const { search, status, source, supplierId, conciliated, paid, dateFrom, dateTo, deleted, alerts, sortBy, sortOrder, page = 1, limit = 25 } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const where = {};
@@ -173,12 +173,25 @@ router.get('/received', async (req, res, next) => {
       }
     }
 
+    // Ordenació dinàmica
+    const dir = sortOrder === 'asc' ? 'asc' : 'desc';
+    const orderByMap = {
+      invoiceNumber: { invoiceNumber: dir },
+      supplier: { supplier: { name: dir } },
+      issueDate: { issueDate: dir },
+      createdAt: { createdAt: dir },
+      totalAmount: { totalAmount: dir },
+      status: { status: dir },
+      source: { source: dir },
+    };
+    const orderBy = orderByMap[sortBy] || { issueDate: 'desc' };
+
     const [invoices, total] = await Promise.all([
       prisma.receivedInvoice.findMany({
         where,
         skip,
         take: parseInt(limit),
-        orderBy: { issueDate: 'desc' },
+        orderBy,
         include: {
           supplier: { select: { id: true, name: true, nif: true } },
           conciliations: {
