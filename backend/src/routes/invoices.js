@@ -1937,9 +1937,21 @@ router.get('/gdrive-audit', authorize('ADMIN', 'EDITOR'), async (req, res, next)
       }
     }
 
-    // 2. Per cada factura, comprovar carpeta actual vs esperada
-    for (const inv of invoices) {
-      try {
+    // 2. Pre-calcular totes les carpetes esperades (amb cache, seran poques crides)
+    const uniqueMonths = [...new Set(invoices.map(inv => {
+      const d = new Date(inv.issueDate);
+      return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}`;
+    }))];
+    for (const key of uniqueMonths) {
+      const [y, m] = key.split('-');
+      expectedFolderCache[key] = await gdrive.getDateBasedFolderId('factures-rebudes', new Date(parseInt(y), parseInt(m) - 1, 15));
+    }
+
+    // 3. Processar en lots de 15 en paral·lel
+    const BATCH_SIZE = 15;
+    for (let i = 0; i < invoices.length; i += BATCH_SIZE) {
+      const batch = invoices.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.allSettled(batch.map(async (inv) => {
         const fileInfo = await drive.files.get({
           fileId: inv.gdriveFileId,
           fields: 'id, name, parents',
@@ -1951,37 +1963,20 @@ router.get('/gdrive-audit', authorize('ADMIN', 'EDITOR'), async (req, res, next)
         const expectedPath = getExpectedPath(inv.issueDate);
 
         if (currentParentId === expectedFolderId) {
-          results.correct.push({
-            invoiceId: inv.id,
-            invoiceNumber: inv.invoiceNumber,
-            supplier: inv.supplier?.name,
-            issueDate: inv.issueDate,
-            fileName: fileInfo.data.name,
-            expectedPath,
-          });
+          return { type: 'correct', data: { invoiceId: inv.id, invoiceNumber: inv.invoiceNumber, supplier: inv.supplier?.name, issueDate: inv.issueDate, fileName: fileInfo.data.name, expectedPath } };
         } else {
           const currentPath = await getFolderPath(currentParentId);
-          results.misplaced.push({
-            invoiceId: inv.id,
-            invoiceNumber: inv.invoiceNumber,
-            supplier: inv.supplier?.name,
-            issueDate: inv.issueDate,
-            totalAmount: inv.totalAmount,
-            fileName: fileInfo.data.name,
-            gdriveFileId: inv.gdriveFileId,
-            currentPath,
-            currentFolderId: currentParentId,
-            expectedPath,
-            expectedFolderId,
-          });
+          return { type: 'misplaced', data: { invoiceId: inv.id, invoiceNumber: inv.invoiceNumber, supplier: inv.supplier?.name, issueDate: inv.issueDate, totalAmount: inv.totalAmount, fileName: fileInfo.data.name, gdriveFileId: inv.gdriveFileId, currentPath, currentFolderId: currentParentId, expectedPath, expectedFolderId } };
         }
-      } catch (err) {
-        results.errors.push({
-          invoiceId: inv.id,
-          invoiceNumber: inv.invoiceNumber,
-          gdriveFileId: inv.gdriveFileId,
-          error: err.message,
-        });
+      }));
+
+      for (let j = 0; j < batchResults.length; j++) {
+        const r = batchResults[j];
+        if (r.status === 'fulfilled') {
+          results[r.value.type].push(r.value.data);
+        } else {
+          results.errors.push({ invoiceId: batch[j].id, invoiceNumber: batch[j].invoiceNumber, gdriveFileId: batch[j].gdriveFileId, error: r.reason?.message || 'Error desconegut' });
+        }
       }
     }
 
