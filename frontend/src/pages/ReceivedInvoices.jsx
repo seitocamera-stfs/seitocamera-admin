@@ -1744,7 +1744,7 @@ export default function ReceivedInvoices() {
       </Modal>
 
       {/* Modal Auditoria Google Drive */}
-      <Modal open={showDriveAudit} onClose={() => setShowDriveAudit(false)} title="Auditoria carpetes Google Drive" size="lg">
+      <Modal isOpen={showDriveAudit} onClose={() => setShowDriveAudit(false)} title="Auditoria carpetes Google Drive" size="lg">
         {driveAuditData && (
           <div className="space-y-4">
             {/* Resum */}
