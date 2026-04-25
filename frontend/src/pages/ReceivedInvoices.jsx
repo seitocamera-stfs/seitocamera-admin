@@ -152,6 +152,10 @@ export default function ReceivedInvoices() {
   const [driveAuditData, setDriveAuditData] = useState(null);
   const [driveAuditLoading, setDriveAuditLoading] = useState(false);
   const [driveFixRunning, setDriveFixRunning] = useState(false);
+  const [showDateAudit, setShowDateAudit] = useState(false);
+  const [dateAuditData, setDateAuditData] = useState(null);
+  const [dateAuditLoading, setDateAuditLoading] = useState(false);
+  const [dateFixRunning, setDateFixRunning] = useState(false);
   const [form, setForm] = useState({
     invoiceNumber: '', supplierId: '', issueDate: '', dueDate: '',
     subtotal: '', taxRate: '21', taxAmount: '', totalAmount: '', description: '',
@@ -729,6 +733,36 @@ export default function ReceivedInvoices() {
     }
   };
 
+  // --- Auditoria Dates BD vs PDF ---
+  const handleDateAudit = async () => {
+    setDateAuditLoading(true);
+    setDateAuditData(null);
+    try {
+      const { data } = await api.get('/invoices/date-audit');
+      setDateAuditData(data);
+      setShowDateAudit(true);
+    } catch (err) {
+      alert('Error auditant dates: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setDateAuditLoading(false);
+    }
+  };
+
+  const handleDateFix = async (fixes) => {
+    if (!confirm(`Corregir ${fixes.length} dates a la base de dades?`)) return;
+    setDateFixRunning(true);
+    try {
+      const { data } = await api.post('/invoices/date-audit/fix', { fixes });
+      alert(`Fet! ${data.updated} dates corregides, ${data.errors} errors.`);
+      handleDateAudit();
+      refetch();
+    } catch (err) {
+      alert('Error corregint dates: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setDateFixRunning(false);
+    }
+  };
+
   const resetForm = () => {
     setForm({ invoiceNumber: '', supplierId: '', issueDate: '', dueDate: '', subtotal: '', taxRate: '21', taxAmount: '', totalAmount: '', description: '' });
     setShowDuplicateWarning(null);
@@ -758,6 +792,15 @@ export default function ReceivedInvoices() {
           >
             <Package size={16} className={driveAuditLoading ? 'animate-spin' : ''} />
             {driveAuditLoading ? 'Auditant...' : 'Auditoria Drive'}
+          </button>
+          <button
+            onClick={handleDateAudit}
+            disabled={dateAuditLoading}
+            className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium border hover:bg-muted disabled:opacity-50"
+            title="Auditar dates BD vs PDF real"
+          >
+            <Sparkles size={16} className={dateAuditLoading ? 'animate-spin' : ''} />
+            {dateAuditLoading ? 'Auditant dates...' : 'Auditoria Dates'}
           </button>
           <button onClick={() => { setShowAlerts(!showAlerts); setShowTrash(false); setPage(1); }} className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium border ${showAlerts ? 'bg-amber-500 text-white' : 'hover:bg-muted'}`}>
             <AlertTriangle size={16} /> {showAlerts ? 'Tornar a factures' : 'Alertes'}
@@ -1821,6 +1864,95 @@ export default function ReceivedInvoices() {
                 <h3 className="font-semibold text-sm text-red-600 mb-2">Errors ({driveAuditData.errors})</h3>
                 <div className="space-y-1">
                   {driveAuditData.errorDetails.map((e) => (
+                    <div key={e.invoiceId} className="text-xs bg-red-50 rounded p-2">
+                      <span className="font-mono">{e.invoiceNumber}</span>: {e.error}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      {/* Modal Auditoria Dates BD vs PDF */}
+      <Modal isOpen={showDateAudit} onClose={() => setShowDateAudit(false)} title="Auditoria dates BD vs PDF real" size="xl">
+        {dateAuditData && (
+          <div className="space-y-4">
+            {/* Resum */}
+            <div className="grid grid-cols-4 gap-3">
+              <div className="bg-muted/50 rounded-lg p-3 text-center">
+                <div className="text-2xl font-bold">{dateAuditData.total}</div>
+                <div className="text-xs text-muted-foreground">Total analitzades</div>
+              </div>
+              <div className="bg-green-50 rounded-lg p-3 text-center">
+                <div className="text-2xl font-bold text-green-700">{dateAuditData.correct}</div>
+                <div className="text-xs text-green-600">Dates correctes</div>
+              </div>
+              <div className="bg-amber-50 rounded-lg p-3 text-center">
+                <div className="text-2xl font-bold text-amber-700">{dateAuditData.mismatched}</div>
+                <div className="text-xs text-amber-600">Dates incorrectes</div>
+              </div>
+              <div className="bg-red-50 rounded-lg p-3 text-center">
+                <div className="text-2xl font-bold text-red-700">{dateAuditData.errors}</div>
+                <div className="text-xs text-red-600">Errors lectura</div>
+              </div>
+            </div>
+
+            {/* Llista de discrepàncies */}
+            {dateAuditData.mismatched > 0 && (
+              <>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold text-sm">Factures amb data incorrecta a la BD</h3>
+                  <button
+                    onClick={() => handleDateFix(dateAuditData.details.map(d => ({ invoiceId: d.invoiceId, newDate: d.pdfDate })))}
+                    disabled={dateFixRunning}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 disabled:opacity-50"
+                  >
+                    <RefreshCw size={13} className={dateFixRunning ? 'animate-spin' : ''} />
+                    {dateFixRunning ? 'Corregint...' : `Corregir totes (${dateAuditData.mismatched})`}
+                  </button>
+                </div>
+                <div className="max-h-96 overflow-y-auto border rounded-lg">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/50 sticky top-0">
+                      <tr>
+                        <th className="text-left px-3 py-2 font-medium">Factura</th>
+                        <th className="text-left px-3 py-2 font-medium">Proveïdor</th>
+                        <th className="text-left px-3 py-2 font-medium">Import</th>
+                        <th className="text-left px-3 py-2 font-medium">Data BD</th>
+                        <th className="text-left px-3 py-2 font-medium">Data PDF real</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {dateAuditData.details.map((item) => (
+                        <tr key={item.invoiceId} className="hover:bg-muted/30">
+                          <td className="px-3 py-2 font-mono text-xs">{item.invoiceNumber}</td>
+                          <td className="px-3 py-2">{item.supplier || '—'}</td>
+                          <td className="px-3 py-2 text-right">{item.totalAmount ? formatCurrency(item.totalAmount) : '—'}</td>
+                          <td className="px-3 py-2 text-red-600">{new Date(item.dbDate).toLocaleDateString('ca-ES')}</td>
+                          <td className="px-3 py-2 text-green-600 font-medium">{new Date(item.pdfDate).toLocaleDateString('ca-ES')}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+
+            {dateAuditData.mismatched === 0 && (
+              <div className="text-center py-8 text-green-600">
+                <CheckCircle size={48} className="mx-auto mb-2" />
+                <p className="font-medium">Totes les dates de la BD coincideixen amb els PDFs!</p>
+              </div>
+            )}
+
+            {/* Errors */}
+            {dateAuditData.errors > 0 && (
+              <div className="mt-4">
+                <h3 className="font-semibold text-sm text-red-600 mb-2">Errors de lectura ({dateAuditData.errors})</h3>
+                <div className="space-y-1 max-h-40 overflow-y-auto">
+                  {dateAuditData.errorDetails.map((e) => (
                     <div key={e.invoiceId} className="text-xs bg-red-50 rounded p-2">
                       <span className="font-mono">{e.invoiceNumber}</span>: {e.error}
                     </div>

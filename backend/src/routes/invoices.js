@@ -2084,6 +2084,164 @@ router.post('/gdrive-audit/fix', authorize('ADMIN', 'EDITOR'), async (req, res, 
 });
 
 // =============================================
+// AUDITORIA DATES BD vs PDF — Verificar issueDate
+// =============================================
+
+/**
+ * GET /api/invoices/date-audit
+ * Per cada factura amb gdriveFileId, descarrega el PDF,
+ * n'extreu la data real d'emissió i la compara amb la BD.
+ * Retorna les discrepàncies.
+ */
+router.get('/date-audit', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const invoices = await prisma.receivedInvoice.findMany({
+      where: { gdriveFileId: { not: null }, deletedAt: null },
+      select: {
+        id: true,
+        invoiceNumber: true,
+        issueDate: true,
+        gdriveFileId: true,
+        supplier: { select: { name: true } },
+        totalAmount: true,
+      },
+      orderBy: { issueDate: 'asc' },
+    });
+
+    if (invoices.length === 0) {
+      return res.json({ total: 0, correct: 0, mismatched: 0, errors: 0, details: [], errorDetails: [] });
+    }
+
+    const results = { correct: [], mismatched: [], errors: [] };
+    const tmpDir = require('os').tmpdir();
+    const BATCH_SIZE = 5;
+
+    for (let i = 0; i < invoices.length; i += BATCH_SIZE) {
+      const batch = invoices.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.allSettled(batch.map(async (inv) => {
+        // 1. Descarregar PDF del Drive a fitxer temporal
+        const tmpPath = require('path').join(tmpDir, `audit_${inv.id}.pdf`);
+        try {
+          await gdrive.downloadFile(inv.gdriveFileId, tmpPath);
+        } catch (dlErr) {
+          throw new Error(`No es pot descarregar: ${dlErr.message}`);
+        }
+
+        // 2. Extreure text del PDF
+        let text = '';
+        try {
+          text = await pdfExtract.extractText(tmpPath);
+        } catch (e) {
+          // Intentar OCR
+          try { text = await pdfExtract.ocrPdf(tmpPath); } catch (e2) { /* ignorar */ }
+        }
+
+        // Netejar fitxer temporal
+        try { require('fs').unlinkSync(tmpPath); } catch (e) { /* ignorar */ }
+
+        if (!text || text.trim().length < 10) {
+          throw new Error('No s\'ha pogut extreure text del PDF');
+        }
+
+        // 3. Detectar data real del PDF
+        const detectedDate = pdfExtract.detectInvoiceDate(text);
+        if (!detectedDate) {
+          throw new Error('No s\'ha pogut detectar la data al PDF');
+        }
+
+        // 4. Comparar amb la BD
+        const dbDate = new Date(inv.issueDate);
+        const dbDateStr = dbDate.toISOString().split('T')[0];
+        const pdfDateStr = detectedDate.toISOString().split('T')[0];
+
+        if (dbDateStr === pdfDateStr) {
+          return { type: 'correct', invoiceId: inv.id };
+        } else {
+          return {
+            type: 'mismatched',
+            data: {
+              invoiceId: inv.id,
+              invoiceNumber: inv.invoiceNumber,
+              supplier: inv.supplier?.name,
+              totalAmount: inv.totalAmount,
+              dbDate: dbDateStr,
+              pdfDate: pdfDateStr,
+              gdriveFileId: inv.gdriveFileId,
+            },
+          };
+        }
+      }));
+
+      for (let j = 0; j < batchResults.length; j++) {
+        const r = batchResults[j];
+        if (r.status === 'fulfilled') {
+          if (r.value.type === 'correct') results.correct.push(r.value.invoiceId);
+          else results.mismatched.push(r.value.data);
+        } else {
+          results.errors.push({
+            invoiceId: batch[j].id,
+            invoiceNumber: batch[j].invoiceNumber,
+            error: r.reason?.message || 'Error desconegut',
+          });
+        }
+      }
+
+      logger.info(`Date audit: lot ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(invoices.length / BATCH_SIZE)} processat`);
+    }
+
+    logger.info(`Date audit: ${results.correct.length} correctes, ${results.mismatched.length} discrepàncies, ${results.errors.length} errors`);
+
+    res.json({
+      total: invoices.length,
+      correct: results.correct.length,
+      mismatched: results.mismatched.length,
+      errors: results.errors.length,
+      details: results.mismatched,
+      errorDetails: results.errors,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/invoices/date-audit/fix
+ * Corregeix les dates a la BD amb les dates detectades dels PDFs.
+ * Body: { fixes: [{ invoiceId, newDate }] }
+ */
+router.post('/date-audit/fix', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const { fixes } = req.body;
+    if (!fixes || !Array.isArray(fixes) || fixes.length === 0) {
+      return res.status(400).json({ error: 'Cal proporcionar un array de fixes: [{ invoiceId, newDate }]' });
+    }
+
+    const updated = [];
+    const errors = [];
+
+    for (const fix of fixes) {
+      try {
+        const newDate = new Date(fix.newDate + 'T12:00:00Z');
+        if (isNaN(newDate.getTime())) throw new Error('Data invàlida');
+
+        await prisma.receivedInvoice.update({
+          where: { id: fix.invoiceId },
+          data: { issueDate: newDate },
+        });
+
+        updated.push({ invoiceId: fix.invoiceId, newDate: fix.newDate });
+      } catch (err) {
+        errors.push({ invoiceId: fix.invoiceId, error: err.message });
+      }
+    }
+
+    res.json({ updated: updated.length, errors: errors.length, updatedDetails: updated, errorDetails: errors });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// =============================================
 // ESTADÍSTIQUES
 // =============================================
 
