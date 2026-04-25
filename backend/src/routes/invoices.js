@@ -1864,6 +1864,219 @@ router.get('/issued/:id/payment-reminder', async (req, res, next) => {
 });
 
 // =============================================
+// AUDITORIA GOOGLE DRIVE — Carpetes correctes
+// =============================================
+
+/**
+ * GET /api/invoices/gdrive-audit
+ * Llista totes les factures rebudes amb gdriveFileId i comprova
+ * si estan a la carpeta correcta (any/trimestre/mes segons issueDate).
+ * Mode dry-run: no mou res, només informa.
+ */
+router.get('/gdrive-audit', authorize('ADMIN', 'ACCOUNTANT'), async (req, res, next) => {
+  try {
+    // 1. Obtenir totes les factures amb fitxer a Drive
+    const invoices = await prisma.receivedInvoice.findMany({
+      where: { gdriveFileId: { not: null }, deletedAt: null },
+      select: {
+        id: true,
+        invoiceNumber: true,
+        issueDate: true,
+        gdriveFileId: true,
+        supplier: { select: { id: true, name: true } },
+        totalAmount: true,
+      },
+      orderBy: { issueDate: 'asc' },
+    });
+
+    if (invoices.length === 0) {
+      return res.json({ total: 0, correct: 0, misplaced: 0, errors: 0, details: [] });
+    }
+
+    const drive = gdrive.getDriveClient();
+    const results = { correct: [], misplaced: [], errors: [] };
+
+    // 2. Per cada factura, comprovar carpeta actual vs esperada
+    for (const inv of invoices) {
+      try {
+        // Obtenir info del fitxer al Drive (carpeta pare actual)
+        const fileInfo = await drive.files.get({
+          fileId: inv.gdriveFileId,
+          fields: 'id, name, parents',
+          supportsAllDrives: true,
+        });
+
+        const currentParentId = fileInfo.data.parents ? fileInfo.data.parents[0] : null;
+
+        // Calcular carpeta esperada segons issueDate
+        const issueDate = new Date(inv.issueDate);
+        const expectedFolderId = await gdrive.getDateBasedFolderId('factures-rebudes', issueDate);
+
+        const month = issueDate.getMonth() + 1;
+        const quarter = Math.ceil(month / 3);
+        const expectedPath = `factures-rebudes/${issueDate.getFullYear()}/T${quarter}/${month.toString().padStart(2, '0')}`;
+
+        if (currentParentId === expectedFolderId) {
+          results.correct.push({
+            invoiceId: inv.id,
+            invoiceNumber: inv.invoiceNumber,
+            supplier: inv.supplier?.name,
+            issueDate: inv.issueDate,
+            fileName: fileInfo.data.name,
+            expectedPath,
+          });
+        } else {
+          // Obtenir nom de la carpeta actual per context
+          let currentPath = 'desconeguda';
+          if (currentParentId) {
+            try {
+              const parentInfo = await drive.files.get({
+                fileId: currentParentId,
+                fields: 'name, parents',
+                supportsAllDrives: true,
+              });
+              // Intent de reconstruir el path (fins a 3 nivells amunt)
+              let pathParts = [parentInfo.data.name];
+              let pid = parentInfo.data.parents ? parentInfo.data.parents[0] : null;
+              for (let i = 0; i < 3 && pid; i++) {
+                const p = await drive.files.get({ fileId: pid, fields: 'name, parents', supportsAllDrives: true });
+                pathParts.unshift(p.data.name);
+                pid = p.data.parents ? p.data.parents[0] : null;
+              }
+              currentPath = pathParts.join('/');
+            } catch (e) {
+              currentPath = `folder:${currentParentId}`;
+            }
+          }
+
+          results.misplaced.push({
+            invoiceId: inv.id,
+            invoiceNumber: inv.invoiceNumber,
+            supplier: inv.supplier?.name,
+            issueDate: inv.issueDate,
+            totalAmount: inv.totalAmount,
+            fileName: fileInfo.data.name,
+            gdriveFileId: inv.gdriveFileId,
+            currentPath,
+            currentFolderId: currentParentId,
+            expectedPath,
+            expectedFolderId,
+          });
+        }
+      } catch (err) {
+        results.errors.push({
+          invoiceId: inv.id,
+          invoiceNumber: inv.invoiceNumber,
+          gdriveFileId: inv.gdriveFileId,
+          error: err.message,
+        });
+      }
+    }
+
+    logger.info(`Auditoria Drive: ${results.correct.length} correctes, ${results.misplaced.length} mal col·locades, ${results.errors.length} errors`);
+
+    res.json({
+      total: invoices.length,
+      correct: results.correct.length,
+      misplaced: results.misplaced.length,
+      errors: results.errors.length,
+      details: results.misplaced,
+      errorDetails: results.errors,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/invoices/gdrive-audit/fix
+ * Mou les factures mal col·locades a la carpeta correcta.
+ * Body opcional: { invoiceIds: [...] } per moure només les seleccionades.
+ * Si no es passa invoiceIds, mou totes les mal col·locades.
+ */
+router.post('/gdrive-audit/fix', authorize('ADMIN', 'ACCOUNTANT'), async (req, res, next) => {
+  try {
+    const { invoiceIds } = req.body || {};
+
+    // 1. Obtenir factures a processar
+    const where = { gdriveFileId: { not: null }, isDeleted: false };
+    if (invoiceIds && invoiceIds.length > 0) {
+      where.id = { in: invoiceIds };
+    }
+
+    const invoices = await prisma.receivedInvoice.findMany({
+      where,
+      select: {
+        id: true,
+        invoiceNumber: true,
+        issueDate: true,
+        gdriveFileId: true,
+        supplier: { select: { name: true } },
+      },
+    });
+
+    const drive = gdrive.getDriveClient();
+    const moved = [];
+    const skipped = [];
+    const errors = [];
+
+    for (const inv of invoices) {
+      try {
+        const fileInfo = await drive.files.get({
+          fileId: inv.gdriveFileId,
+          fields: 'id, name, parents',
+          supportsAllDrives: true,
+        });
+
+        const currentParentId = fileInfo.data.parents ? fileInfo.data.parents[0] : null;
+        const issueDate = new Date(inv.issueDate);
+        const expectedFolderId = await gdrive.getDateBasedFolderId('factures-rebudes', issueDate);
+
+        if (currentParentId === expectedFolderId) {
+          skipped.push({ invoiceId: inv.id, invoiceNumber: inv.invoiceNumber, reason: 'ja correcte' });
+          continue;
+        }
+
+        // Moure el fitxer
+        await gdrive.moveFile(inv.gdriveFileId, expectedFolderId, currentParentId);
+
+        const month = issueDate.getMonth() + 1;
+        const quarter = Math.ceil(month / 3);
+        const newPath = `factures-rebudes/${issueDate.getFullYear()}/T${quarter}/${month.toString().padStart(2, '0')}`;
+
+        moved.push({
+          invoiceId: inv.id,
+          invoiceNumber: inv.invoiceNumber,
+          supplier: inv.supplier?.name,
+          fileName: fileInfo.data.name,
+          movedTo: newPath,
+        });
+
+        logger.info(`Drive audit fix: ${inv.invoiceNumber} mogut a ${newPath}`);
+      } catch (err) {
+        errors.push({
+          invoiceId: inv.id,
+          invoiceNumber: inv.invoiceNumber,
+          error: err.message,
+        });
+        logger.error(`Drive audit fix error: ${inv.invoiceNumber} — ${err.message}`);
+      }
+    }
+
+    res.json({
+      processed: invoices.length,
+      moved: moved.length,
+      skipped: skipped.length,
+      errors: errors.length,
+      movedDetails: moved,
+      errorDetails: errors,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// =============================================
 // ESTADÍSTIQUES
 // =============================================
 

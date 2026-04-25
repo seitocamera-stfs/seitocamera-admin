@@ -148,6 +148,10 @@ export default function ReceivedInvoices() {
   const [newSupplierForm, setNewSupplierForm] = useState({ name: '', nif: '', email: '' });
   const [newSupplierLoading, setNewSupplierLoading] = useState(false);
   const [tempSupplier, setTempSupplier] = useState(null);
+  const [showDriveAudit, setShowDriveAudit] = useState(false);
+  const [driveAuditData, setDriveAuditData] = useState(null);
+  const [driveAuditLoading, setDriveAuditLoading] = useState(false);
+  const [driveFixRunning, setDriveFixRunning] = useState(false);
   const [form, setForm] = useState({
     invoiceNumber: '', supplierId: '', issueDate: '', dueDate: '',
     subtotal: '', taxRate: '21', taxAmount: '', totalAmount: '', description: '',
@@ -694,6 +698,37 @@ export default function ReceivedInvoices() {
     refetch();
   };
 
+  // --- Auditoria Google Drive ---
+  const handleDriveAudit = async () => {
+    setDriveAuditLoading(true);
+    setDriveAuditData(null);
+    try {
+      const { data } = await api.get('/invoices/gdrive-audit');
+      setDriveAuditData(data);
+      setShowDriveAudit(true);
+    } catch (err) {
+      alert('Error auditant Drive: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setDriveAuditLoading(false);
+    }
+  };
+
+  const handleDriveFix = async (invoiceIds = null) => {
+    if (!confirm(invoiceIds ? `Moure ${invoiceIds.length} fitxers a la carpeta correcta?` : 'Moure TOTS els fitxers mal col·locats a la carpeta correcta?')) return;
+    setDriveFixRunning(true);
+    try {
+      const body = invoiceIds ? { invoiceIds } : {};
+      const { data } = await api.post('/invoices/gdrive-audit/fix', body);
+      alert(`Fet! ${data.moved} fitxers moguts, ${data.skipped} ja correctes, ${data.errors} errors.`);
+      // Refrescar auditoria
+      handleDriveAudit();
+    } catch (err) {
+      alert('Error corregint: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setDriveFixRunning(false);
+    }
+  };
+
   const resetForm = () => {
     setForm({ invoiceNumber: '', supplierId: '', issueDate: '', dueDate: '', subtotal: '', taxRate: '21', taxAmount: '', totalAmount: '', description: '' });
     setShowDuplicateWarning(null);
@@ -715,6 +750,15 @@ export default function ReceivedInvoices() {
             filenameBase="factures-rebudes"
             selectedIds={selectedIds}
           />
+          <button
+            onClick={handleDriveAudit}
+            disabled={driveAuditLoading}
+            className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium border hover:bg-muted disabled:opacity-50"
+            title="Auditar carpetes Google Drive"
+          >
+            <Package size={16} className={driveAuditLoading ? 'animate-spin' : ''} />
+            {driveAuditLoading ? 'Auditant...' : 'Auditoria Drive'}
+          </button>
           <button onClick={() => { setShowAlerts(!showAlerts); setShowTrash(false); setPage(1); }} className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium border ${showAlerts ? 'bg-amber-500 text-white' : 'hover:bg-muted'}`}>
             <AlertTriangle size={16} /> {showAlerts ? 'Tornar a factures' : 'Alertes'}
           </button>
@@ -1696,6 +1740,95 @@ export default function ReceivedInvoices() {
               </div>
             </div>
           </form>
+        )}
+      </Modal>
+
+      {/* Modal Auditoria Google Drive */}
+      <Modal open={showDriveAudit} onClose={() => setShowDriveAudit(false)} title="Auditoria carpetes Google Drive" size="lg">
+        {driveAuditData && (
+          <div className="space-y-4">
+            {/* Resum */}
+            <div className="grid grid-cols-4 gap-3">
+              <div className="bg-muted/50 rounded-lg p-3 text-center">
+                <div className="text-2xl font-bold">{driveAuditData.total}</div>
+                <div className="text-xs text-muted-foreground">Total fitxers</div>
+              </div>
+              <div className="bg-green-50 rounded-lg p-3 text-center">
+                <div className="text-2xl font-bold text-green-700">{driveAuditData.correct}</div>
+                <div className="text-xs text-green-600">Correctes</div>
+              </div>
+              <div className="bg-amber-50 rounded-lg p-3 text-center">
+                <div className="text-2xl font-bold text-amber-700">{driveAuditData.misplaced}</div>
+                <div className="text-xs text-amber-600">Mal col·locades</div>
+              </div>
+              <div className="bg-red-50 rounded-lg p-3 text-center">
+                <div className="text-2xl font-bold text-red-700">{driveAuditData.errors}</div>
+                <div className="text-xs text-red-600">Errors</div>
+              </div>
+            </div>
+
+            {/* Llista de mal col·locades */}
+            {driveAuditData.misplaced > 0 && (
+              <>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold text-sm">Fitxers mal col·locats</h3>
+                  <button
+                    onClick={() => handleDriveFix()}
+                    disabled={driveFixRunning}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-700 disabled:opacity-50"
+                  >
+                    <RefreshCw size={13} className={driveFixRunning ? 'animate-spin' : ''} />
+                    {driveFixRunning ? 'Movent...' : `Corregir tots (${driveAuditData.misplaced})`}
+                  </button>
+                </div>
+                <div className="max-h-96 overflow-y-auto border rounded-lg">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/50 sticky top-0">
+                      <tr>
+                        <th className="text-left px-3 py-2 font-medium">Factura</th>
+                        <th className="text-left px-3 py-2 font-medium">Proveïdor</th>
+                        <th className="text-left px-3 py-2 font-medium">Data factura</th>
+                        <th className="text-left px-3 py-2 font-medium">Carpeta actual</th>
+                        <th className="text-left px-3 py-2 font-medium">Carpeta correcta</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {driveAuditData.details.map((item) => (
+                        <tr key={item.invoiceId} className="hover:bg-muted/30">
+                          <td className="px-3 py-2 font-mono text-xs">{item.invoiceNumber}</td>
+                          <td className="px-3 py-2">{item.supplier || '—'}</td>
+                          <td className="px-3 py-2">{new Date(item.issueDate).toLocaleDateString('ca-ES')}</td>
+                          <td className="px-3 py-2 text-red-600 text-xs">{item.currentPath}</td>
+                          <td className="px-3 py-2 text-green-600 text-xs">{item.expectedPath}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+
+            {driveAuditData.misplaced === 0 && (
+              <div className="text-center py-8 text-green-600">
+                <CheckCircle size={48} className="mx-auto mb-2" />
+                <p className="font-medium">Totes les factures estan a la carpeta correcta!</p>
+              </div>
+            )}
+
+            {/* Errors */}
+            {driveAuditData.errors > 0 && (
+              <div className="mt-4">
+                <h3 className="font-semibold text-sm text-red-600 mb-2">Errors ({driveAuditData.errors})</h3>
+                <div className="space-y-1">
+                  {driveAuditData.errorDetails.map((e) => (
+                    <div key={e.invoiceId} className="text-xs bg-red-50 rounded p-2">
+                      <span className="font-mono">{e.invoiceNumber}</span>: {e.error}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </Modal>
     </div>
