@@ -1873,7 +1873,7 @@ router.get('/issued/:id/payment-reminder', async (req, res, next) => {
  * si estan a la carpeta correcta (any/trimestre/mes segons issueDate).
  * Mode dry-run: no mou res, només informa.
  */
-router.get('/gdrive-audit', authorize('ADMIN', 'ACCOUNTANT'), async (req, res, next) => {
+router.get('/gdrive-audit', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
   try {
     // 1. Obtenir totes les factures amb fitxer a Drive
     const invoices = await prisma.receivedInvoice.findMany({
@@ -1890,16 +1890,56 @@ router.get('/gdrive-audit', authorize('ADMIN', 'ACCOUNTANT'), async (req, res, n
     });
 
     if (invoices.length === 0) {
-      return res.json({ total: 0, correct: 0, misplaced: 0, errors: 0, details: [] });
+      return res.json({ total: 0, correct: 0, misplaced: 0, errors: 0, details: [], errorDetails: [] });
     }
 
     const drive = gdrive.getDriveClient();
     const results = { correct: [], misplaced: [], errors: [] };
 
+    // Cache de carpetes esperades per mes (clau: "YYYY-MM" → folderId)
+    const expectedFolderCache = {};
+    // Cache de noms de carpetes (clau: folderId → path string)
+    const folderNameCache = {};
+
+    async function getExpectedFolderId(issueDate) {
+      const d = new Date(issueDate);
+      const key = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}`;
+      if (!expectedFolderCache[key]) {
+        expectedFolderCache[key] = await gdrive.getDateBasedFolderId('factures-rebudes', d);
+      }
+      return expectedFolderCache[key];
+    }
+
+    function getExpectedPath(issueDate) {
+      const d = new Date(issueDate);
+      const month = d.getMonth() + 1;
+      const quarter = Math.ceil(month / 3);
+      return `factures-rebudes/${d.getFullYear()}/T${quarter}/${month.toString().padStart(2, '0')}`;
+    }
+
+    async function getFolderPath(folderId) {
+      if (!folderId) return 'desconeguda';
+      if (folderNameCache[folderId]) return folderNameCache[folderId];
+      try {
+        const parentInfo = await drive.files.get({ fileId: folderId, fields: 'name, parents', supportsAllDrives: true });
+        let pathParts = [parentInfo.data.name];
+        let pid = parentInfo.data.parents ? parentInfo.data.parents[0] : null;
+        for (let i = 0; i < 3 && pid; i++) {
+          if (folderNameCache[pid]) { pathParts.unshift(folderNameCache[pid]); break; }
+          const p = await drive.files.get({ fileId: pid, fields: 'name, parents', supportsAllDrives: true });
+          pathParts.unshift(p.data.name);
+          pid = p.data.parents ? p.data.parents[0] : null;
+        }
+        folderNameCache[folderId] = pathParts.join('/');
+        return folderNameCache[folderId];
+      } catch (e) {
+        return `folder:${folderId}`;
+      }
+    }
+
     // 2. Per cada factura, comprovar carpeta actual vs esperada
     for (const inv of invoices) {
       try {
-        // Obtenir info del fitxer al Drive (carpeta pare actual)
         const fileInfo = await drive.files.get({
           fileId: inv.gdriveFileId,
           fields: 'id, name, parents',
@@ -1907,14 +1947,8 @@ router.get('/gdrive-audit', authorize('ADMIN', 'ACCOUNTANT'), async (req, res, n
         });
 
         const currentParentId = fileInfo.data.parents ? fileInfo.data.parents[0] : null;
-
-        // Calcular carpeta esperada segons issueDate
-        const issueDate = new Date(inv.issueDate);
-        const expectedFolderId = await gdrive.getDateBasedFolderId('factures-rebudes', issueDate);
-
-        const month = issueDate.getMonth() + 1;
-        const quarter = Math.ceil(month / 3);
-        const expectedPath = `factures-rebudes/${issueDate.getFullYear()}/T${quarter}/${month.toString().padStart(2, '0')}`;
+        const expectedFolderId = await getExpectedFolderId(inv.issueDate);
+        const expectedPath = getExpectedPath(inv.issueDate);
 
         if (currentParentId === expectedFolderId) {
           results.correct.push({
@@ -1926,29 +1960,7 @@ router.get('/gdrive-audit', authorize('ADMIN', 'ACCOUNTANT'), async (req, res, n
             expectedPath,
           });
         } else {
-          // Obtenir nom de la carpeta actual per context
-          let currentPath = 'desconeguda';
-          if (currentParentId) {
-            try {
-              const parentInfo = await drive.files.get({
-                fileId: currentParentId,
-                fields: 'name, parents',
-                supportsAllDrives: true,
-              });
-              // Intent de reconstruir el path (fins a 3 nivells amunt)
-              let pathParts = [parentInfo.data.name];
-              let pid = parentInfo.data.parents ? parentInfo.data.parents[0] : null;
-              for (let i = 0; i < 3 && pid; i++) {
-                const p = await drive.files.get({ fileId: pid, fields: 'name, parents', supportsAllDrives: true });
-                pathParts.unshift(p.data.name);
-                pid = p.data.parents ? p.data.parents[0] : null;
-              }
-              currentPath = pathParts.join('/');
-            } catch (e) {
-              currentPath = `folder:${currentParentId}`;
-            }
-          }
-
+          const currentPath = await getFolderPath(currentParentId);
           results.misplaced.push({
             invoiceId: inv.id,
             invoiceNumber: inv.invoiceNumber,
@@ -1994,7 +2006,7 @@ router.get('/gdrive-audit', authorize('ADMIN', 'ACCOUNTANT'), async (req, res, n
  * Body opcional: { invoiceIds: [...] } per moure només les seleccionades.
  * Si no es passa invoiceIds, mou totes les mal col·locades.
  */
-router.post('/gdrive-audit/fix', authorize('ADMIN', 'ACCOUNTANT'), async (req, res, next) => {
+router.post('/gdrive-audit/fix', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
   try {
     const { invoiceIds } = req.body || {};
 
