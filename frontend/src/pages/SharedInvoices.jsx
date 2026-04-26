@@ -188,20 +188,29 @@ export default function SharedInvoices() {
     }
   };
 
+  const [compensateAmount, setCompensateAmount] = useState('');
+
   const handleCompensate = async (group) => {
     const key = `${groupBy}:${group.key}`;
     setLockLoading(key);
     try {
-      const res = await api.post('/shared-invoices/compensate', { year, period: group.key, periodType: groupBy });
+      const payload = { year, period: group.key, periodType: groupBy };
+      if (compensateAmount !== '') {
+        payload.manualAmount = parseFloat(compensateAmount);
+      }
+      const res = await api.post('/shared-invoices/compensate', payload);
       await fetchLocks();
       const s = res.data.summary;
       let msg = `Compensació registrada: ${s.invoiceCount} factures.`;
       if (s.direction === 'LOGISTIK_PAYS_SEITO') {
-        msg += `\nLogistik ha de pagar ${formatCurrency(s.amount)} a Seito.`;
+        msg += `\nLogistik paga ${formatCurrency(s.amount)} a Seito.`;
       } else if (s.direction === 'SEITO_PAYS_LOGISTIK') {
-        msg += `\nSeito ha de pagar ${formatCurrency(s.amount)} a Logistik.`;
+        msg += `\nSeito paga ${formatCurrency(s.amount)} a Logistik.`;
       } else {
         msg += '\nBalanç equilibrat — no cal compensar.';
+      }
+      if (s.remaining > 0) {
+        msg += `\nRestant pendent: ${formatCurrency(s.remaining)}`;
       }
       alert(msg);
     } catch (err) {
@@ -209,6 +218,7 @@ export default function SharedInvoices() {
     } finally {
       setLockLoading(null);
       setConfirmAction(null);
+      setCompensateAmount('');
     }
   };
 
@@ -787,11 +797,35 @@ export default function SharedInvoices() {
                           </span>
                         </div>
                       </div>
+                      {Math.abs(seitoBalance) > 0.01 && (
+                        <div className="bg-blue-50 rounded-lg p-3 mb-4">
+                          <label className="text-xs font-medium text-blue-700 block mb-1">Import a compensar (opcional — deixa buit per l'import total)</label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              max={Math.abs(seitoBalance)}
+                              value={compensateAmount}
+                              onChange={(e) => setCompensateAmount(e.target.value)}
+                              placeholder={Math.abs(seitoBalance).toFixed(2)}
+                              className="w-full px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                            />
+                            <span className="text-sm text-muted-foreground">€</span>
+                          </div>
+                          {compensateAmount !== '' && parseFloat(compensateAmount) < Math.abs(seitoBalance) && (
+                            <p className="text-xs text-amber-600 mt-1">
+                              Restant pendent: {formatCurrency(Math.abs(seitoBalance) - parseFloat(compensateAmount || 0))}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
                       <p className="text-sm text-muted-foreground mb-4">
                         Això tancarà el període i registrarà la compensació.
                       </p>
                       <div className="flex justify-end gap-2">
-                        <button onClick={() => setConfirmAction(null)} className="px-4 py-2 rounded-md border text-sm hover:bg-muted">Cancel·lar</button>
+                        <button onClick={() => { setConfirmAction(null); setCompensateAmount(''); }} className="px-4 py-2 rounded-md border text-sm hover:bg-muted">Cancel·lar</button>
                         <button onClick={() => handleCompensate(confirmAction.group)} className="px-4 py-2 rounded-md bg-emerald-600 text-white text-sm hover:bg-emerald-700">Compensar i tancar</button>
                       </div>
                     </>

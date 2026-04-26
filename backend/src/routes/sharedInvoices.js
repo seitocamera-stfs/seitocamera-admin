@@ -563,7 +563,7 @@ router.post('/unlock', authorize('ADMIN'), async (req, res, next) => {
 // ===========================================
 router.post('/compensate', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
   try {
-    const { year, period, periodType } = req.body;
+    const { year, period, periodType, manualAmount } = req.body;
     if (!year || !period || !periodType) {
       return res.status(400).json({ error: 'Falten camps: year, period, periodType' });
     }
@@ -635,6 +635,15 @@ router.post('/compensate', authorize('ADMIN', 'EDITOR'), async (req, res, next) 
     }
     // Si seitoBalance ≈ 0, no cal compensar (direction queda null, amount 0)
 
+    // Import manual: permet compensació parcial
+    const fullAmount = amount;
+    if (manualAmount !== undefined && manualAmount !== null) {
+      const manual = parseFloat(manualAmount);
+      if (!isNaN(manual) && manual >= 0) {
+        amount = Math.round(manual * 100) / 100;
+      }
+    }
+
     const lock = await prisma.sharedPeriodLock.upsert({
       where: { year_period_periodType: { year: targetYear, period, periodType } },
       create: {
@@ -677,6 +686,8 @@ router.post('/compensate', authorize('ADMIN', 'EDITOR'), async (req, res, next) 
         logistikPaid: Math.round(logistikPaid * 100) / 100,
         direction,
         amount,
+        fullAmount,
+        remaining: Math.round((fullAmount - amount) * 100) / 100,
       },
     });
   } catch (error) {
