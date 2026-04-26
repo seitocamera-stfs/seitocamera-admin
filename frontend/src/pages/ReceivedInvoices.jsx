@@ -784,24 +784,7 @@ export default function ReceivedInvoices() {
             filenameBase="factures-rebudes"
             selectedIds={selectedIds}
           />
-          <button
-            onClick={handleDriveAudit}
-            disabled={driveAuditLoading}
-            className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium border hover:bg-muted disabled:opacity-50"
-            title="Auditar carpetes Google Drive"
-          >
-            <Package size={16} className={driveAuditLoading ? 'animate-spin' : ''} />
-            {driveAuditLoading ? 'Auditant...' : 'Auditoria Drive'}
-          </button>
-          <button
-            onClick={handleDateAudit}
-            disabled={dateAuditLoading}
-            className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium border hover:bg-muted disabled:opacity-50"
-            title="Auditar dates BD vs PDF real"
-          >
-            <Sparkles size={16} className={dateAuditLoading ? 'animate-spin' : ''} />
-            {dateAuditLoading ? 'Auditant dates...' : 'Auditoria Dates'}
-          </button>
+          {/* Botons Auditoria Drive i Dates eliminats — ja no calen */}
           <button onClick={() => { setShowAlerts(!showAlerts); setShowTrash(false); setPage(1); }} className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium border ${showAlerts ? 'bg-amber-500 text-white' : 'hover:bg-muted'}`}>
             <AlertTriangle size={16} /> {showAlerts ? 'Tornar a factures' : 'Alertes'}
           </button>
@@ -948,7 +931,7 @@ export default function ReceivedInvoices() {
               <SortableHeader label="Data factura" field="issueDate" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <SortableHeader label="Entrada" field="createdAt" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <SortableHeader label="Import" field="totalAmount" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
-              <SortableHeader label="Estat" field="status" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+              {/* Estat eliminat — redundant amb Pagament */}
               <SortableHeader label="Font" field="source" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <th className="p-3 font-medium text-xs text-muted-foreground uppercase">Ubicació GDrive</th>
               <th className="text-center p-3 font-medium text-xs text-muted-foreground uppercase">Comptabilitat</th>
@@ -1003,7 +986,7 @@ export default function ReceivedInvoices() {
                     <td className="p-3 text-muted-foreground">{formatDate(inv.issueDate)}</td>
                     <td className="p-3 text-muted-foreground text-xs">{formatDate(inv.createdAt)}</td>
                     <td className="p-3 text-right font-medium">{formatCurrency(inv.totalAmount)}</td>
-                    <td className="p-3 text-center"><StatusBadge status={inv.status} /></td>
+                    {/* Estat eliminat — redundant amb Pagament */}
                     <td className="p-3 text-center">
                       <span className={`inline-block px-2 py-0.5 rounded-full text-xs ${src.color}`}>
                         {src.label}

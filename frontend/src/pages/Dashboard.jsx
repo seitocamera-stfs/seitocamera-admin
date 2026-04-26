@@ -97,6 +97,10 @@ export default function Dashboard() {
   const [reminderModal, setReminderModal] = useState(null); // { to, subject, body, clientName, invoiceNumber, ... }
   const [reminderLoading, setReminderLoading] = useState(false);
 
+  // Estat: ordenació taules pendents
+  const [paymentSort, setPaymentSort] = useState({ field: 'dueDate', dir: 'asc' });
+  const [collectionSort, setCollectionSort] = useState({ field: 'daysPending', dir: 'desc' });
+
   // Estat: rang de dates configurable (per defecte any natural)
   const currentYear = new Date().getFullYear();
   const [dateFrom, setDateFrom] = useState(`${currentYear}-01-01`);
@@ -203,6 +207,75 @@ export default function Dashboard() {
       status: s.status,
     }));
   }, [stats?.invoiceStatusDistribution]);
+
+  // Ordenar factures pendents de pagament
+  const sortedPayments = useMemo(() => {
+    if (!stats?.pendingPayments?.invoices) return [];
+    const list = [...stats.pendingPayments.invoices];
+    const { field, dir } = paymentSort;
+    list.sort((a, b) => {
+      let va, vb;
+      if (field === 'dueDate' || field === 'issueDate') {
+        va = a[field] ? new Date(a[field]).getTime() : (dir === 'asc' ? Infinity : -Infinity);
+        vb = b[field] ? new Date(b[field]).getTime() : (dir === 'asc' ? Infinity : -Infinity);
+      } else if (field === 'totalAmount') {
+        va = parseFloat(a.totalAmount) || 0;
+        vb = parseFloat(b.totalAmount) || 0;
+      } else if (field === 'supplierName') {
+        va = (a.supplierName || '').toLowerCase();
+        vb = (b.supplierName || '').toLowerCase();
+        return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+      } else {
+        va = a[field]; vb = b[field];
+      }
+      return dir === 'asc' ? va - vb : vb - va;
+    });
+    return list;
+  }, [stats?.pendingPayments?.invoices, paymentSort]);
+
+  // Ordenar factures pendents de cobrament
+  const sortedCollections = useMemo(() => {
+    if (!stats?.overdueIssuedInvoices?.invoices) return [];
+    const list = [...stats.overdueIssuedInvoices.invoices];
+    const { field, dir } = collectionSort;
+    list.sort((a, b) => {
+      let va, vb;
+      if (field === 'dueDate' || field === 'issueDate') {
+        va = a[field] ? new Date(a[field]).getTime() : (dir === 'asc' ? Infinity : -Infinity);
+        vb = b[field] ? new Date(b[field]).getTime() : (dir === 'asc' ? Infinity : -Infinity);
+      } else if (field === 'totalAmount') {
+        va = parseFloat(a.totalAmount) || 0;
+        vb = parseFloat(b.totalAmount) || 0;
+      } else if (field === 'daysPending') {
+        va = a.daysPending || 0;
+        vb = b.daysPending || 0;
+      } else if (field === 'clientName') {
+        va = (a.clientName || '').toLowerCase();
+        vb = (b.clientName || '').toLowerCase();
+        return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+      } else {
+        va = a[field]; vb = b[field];
+      }
+      return dir === 'asc' ? va - vb : vb - va;
+    });
+    return list;
+  }, [stats?.overdueIssuedInvoices?.invoices, collectionSort]);
+
+  // Helper per capçaleres ordenables
+  const SortHeader = ({ label, field, sort, setSort, align = 'left' }) => {
+    const active = sort.field === field;
+    return (
+      <th
+        className={`p-3 font-medium cursor-pointer hover:bg-muted/80 select-none text-${align}`}
+        onClick={() => setSort({ field, dir: active && sort.dir === 'asc' ? 'desc' : 'asc' })}
+      >
+        <span className="inline-flex items-center gap-1">
+          {label}
+          {active ? (sort.dir === 'asc' ? '↑' : '↓') : <span className="text-muted-foreground/40">⇅</span>}
+        </span>
+      </th>
+    );
+  };
 
   // KPIs (preferim les dades de /dashboard/stats si hi són, per respectar el rang)
   const allStats = [
@@ -609,16 +682,16 @@ export default function Dashboard() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b bg-muted/50">
-                  <th className="text-left p-3 font-medium">Proveïdor</th>
+                  <SortHeader label="Proveïdor" field="supplierName" sort={paymentSort} setSort={setPaymentSort} />
                   <th className="text-left p-3 font-medium">Nº Factura</th>
-                  <th className="text-left p-3 font-medium">Data emissió</th>
-                  <th className="text-left p-3 font-medium">Venciment</th>
-                  <th className="text-right p-3 font-medium">Import</th>
+                  <SortHeader label="Data emissió" field="issueDate" sort={paymentSort} setSort={setPaymentSort} />
+                  <SortHeader label="Venciment" field="dueDate" sort={paymentSort} setSort={setPaymentSort} />
+                  <SortHeader label="Import" field="totalAmount" sort={paymentSort} setSort={setPaymentSort} align="right" />
                   <th className="text-center p-3 font-medium">Estat</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {stats.pendingPayments.invoices.map((inv) => {
+                {sortedPayments.map((inv) => {
                   const isOverdue = inv.isOverdue;
                   const daysUntilDue = inv.dueDate
                     ? Math.ceil((new Date(inv.dueDate) - new Date()) / (1000 * 60 * 60 * 24))
@@ -659,6 +732,13 @@ export default function Dashboard() {
                   );
                 })}
               </tbody>
+              <tfoot>
+                <tr className="border-t-2 bg-muted/30 font-semibold">
+                  <td className="p-3" colSpan={4}>Total pendent de pagament</td>
+                  <td className="p-3 text-right">{formatCurrency(stats.pendingPayments.total)}</td>
+                  <td className="p-3"></td>
+                </tr>
+              </tfoot>
             </table>
           </div>
         </div>
@@ -683,17 +763,17 @@ export default function Dashboard() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b bg-muted/50">
-                  <th className="text-left p-3 font-medium">Client</th>
+                  <SortHeader label="Client" field="clientName" sort={collectionSort} setSort={setCollectionSort} />
                   <th className="text-left p-3 font-medium">Nº Factura</th>
-                  <th className="text-left p-3 font-medium">Data emissió</th>
-                  <th className="text-left p-3 font-medium">Venciment</th>
-                  <th className="text-right p-3 font-medium">Import</th>
-                  <th className="text-center p-3 font-medium">Dies</th>
+                  <SortHeader label="Data emissió" field="issueDate" sort={collectionSort} setSort={setCollectionSort} />
+                  <SortHeader label="Venciment" field="dueDate" sort={collectionSort} setSort={setCollectionSort} />
+                  <SortHeader label="Import" field="totalAmount" sort={collectionSort} setSort={setCollectionSort} align="right" />
+                  <SortHeader label="Dies" field="daysPending" sort={collectionSort} setSort={setCollectionSort} align="center" />
                   <th className="text-center p-3 font-medium">Acció</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {stats.overdueIssuedInvoices.invoices.map((inv) => (
+                {sortedCollections.map((inv) => (
                   <tr key={inv.id} className="hover:bg-muted/30 bg-red-50/30">
                     <td className="p-3 font-medium">{inv.clientName}</td>
                     <td className="p-3 text-muted-foreground">{inv.invoiceNumber || '—'}</td>
@@ -741,6 +821,13 @@ export default function Dashboard() {
                   </tr>
                 ))}
               </tbody>
+              <tfoot>
+                <tr className="border-t-2 bg-muted/30 font-semibold">
+                  <td className="p-3" colSpan={4}>Total pendent de cobrament</td>
+                  <td className="p-3 text-right">{formatCurrency(stats.overdueIssuedInvoices.total)}</td>
+                  <td className="p-3" colSpan={2}></td>
+                </tr>
+              </tfoot>
             </table>
           </div>
         </div>
