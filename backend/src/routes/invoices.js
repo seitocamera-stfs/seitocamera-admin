@@ -2095,8 +2095,16 @@ router.post('/gdrive-audit/fix', authorize('ADMIN', 'EDITOR'), async (req, res, 
  */
 router.get('/date-audit', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
   try {
+    // Filtre: ?filter=non-ai (només les NO processades amb Claude IA)
+    //         ?filter=all (totes)  — per defecte: non-ai
+    const filter = req.query.filter || 'non-ai';
+    const where = { gdriveFileId: { not: null }, deletedAt: null };
+    if (filter === 'non-ai') {
+      where.classifiedBy = null; // Només les que NO es van extreure amb IA
+    }
+
     const invoices = await prisma.receivedInvoice.findMany({
-      where: { gdriveFileId: { not: null }, deletedAt: null },
+      where,
       select: {
         id: true,
         invoiceNumber: true,
@@ -2104,6 +2112,7 @@ router.get('/date-audit', authorize('ADMIN', 'EDITOR'), async (req, res, next) =
         gdriveFileId: true,
         supplier: { select: { name: true } },
         totalAmount: true,
+        classifiedBy: true,
       },
       orderBy: { issueDate: 'asc' },
     });
@@ -2112,9 +2121,11 @@ router.get('/date-audit', authorize('ADMIN', 'EDITOR'), async (req, res, next) =
       return res.json({ total: 0, correct: 0, mismatched: 0, errors: 0, details: [], errorDetails: [] });
     }
 
+    logger.info(`Date audit: processant ${invoices.length} factures (filtre: ${filter})`);
+
     const results = { correct: [], mismatched: [], errors: [] };
     const tmpDir = require('os').tmpdir();
-    const BATCH_SIZE = 5;
+    const BATCH_SIZE = 10;
 
     for (let i = 0; i < invoices.length; i += BATCH_SIZE) {
       const batch = invoices.slice(i, i + BATCH_SIZE);
