@@ -310,19 +310,19 @@ router.post('/:id/connect', authorize('ADMIN'), async (req, res, next) => {
       res.json({ success: true, message: `Connectat a Qonto: ${test.orgName}`, accounts: test.accounts });
 
     } else if (syncType === 'OPEN_BANKING') {
-      // Iniciar flux GoCardless
+      // Iniciar flux Yapily Open Banking
       if (!config?.institutionId) {
         return res.status(400).json({ error: 'Cal institutionId per Open Banking' });
       }
 
-      // Guardar credencials GoCardless si proporcionades
-      const currentConfig = typeof account.syncConfig === 'object' ? account.syncConfig : {};
-      if (config.secretId && config.secretKey) {
+      // Guardar credencials Yapily
+      const currentConfig = typeof account.syncConfig === 'object' && account.syncConfig ? account.syncConfig : {};
+      if (config.appId && config.appSecret) {
         await prisma.bankAccount.update({
           where: { id: req.params.id },
           data: {
             syncType: 'OPEN_BANKING',
-            syncConfig: { ...currentConfig, secretId: config.secretId, secretKey: config.secretKey },
+            syncConfig: { ...currentConfig, appId: config.appId, appSecret: config.appSecret },
           },
         });
       } else {
@@ -333,9 +333,9 @@ router.post('/:id/connect', authorize('ADMIN'), async (req, res, next) => {
       }
 
       const openBanking = require('../services/openBankingService');
-      const redirectUrl = config.redirectUrl || `${process.env.APP_BASE_URL || 'https://admin.seitocamera.com'}/bank?callback=openbanking`;
+      const redirectUrl = config.redirectUrl || `${process.env.APP_BASE_URL || 'https://admin.seitocamera.com'}/bank?callback=openbanking&accountId=${req.params.id}`;
 
-      const requisition = await openBanking.createRequisition(
+      const authRequest = await openBanking.createAuthRequest(
         req.params.id,
         config.institutionId,
         redirectUrl
@@ -344,8 +344,8 @@ router.post('/:id/connect', authorize('ADMIN'), async (req, res, next) => {
       res.json({
         success: true,
         message: 'Redirigeix l\'usuari al banc per autoritzar',
-        link: requisition.link,
-        requisitionId: requisition.requisitionId,
+        link: authRequest.authorisationUrl,
+        consentId: authRequest.consentId,
       });
 
     } else {
@@ -366,7 +366,7 @@ router.post('/:id/check-connection', authorize('ADMIN'), async (req, res, next) 
 
     if (account.syncType === 'OPEN_BANKING') {
       const openBanking = require('../services/openBankingService');
-      const status = await openBanking.checkRequisitionStatus(req.params.id);
+      const status = await openBanking.checkConsentStatus(req.params.id);
       res.json(status);
     } else if (account.syncType === 'QONTO') {
       const qontoApi = require('../services/qontoApiService');
@@ -445,13 +445,12 @@ router.get('/:id/connection-status', async (req, res, next) => {
       isConnected: account.syncType === 'QONTO'
         ? !!(config.orgSlug && config.secretKey)
         : account.syncType === 'OPEN_BANKING'
-          ? !!config.gcAccountId
+          ? !!(config.consentToken)
           : false,
-      // No exposar claus secretes
       hasCredentials: account.syncType === 'QONTO'
         ? !!(config.orgSlug)
         : account.syncType === 'OPEN_BANKING'
-          ? !!(config.secretId)
+          ? !!(config.appId)
           : false,
     });
   } catch (error) {

@@ -118,9 +118,9 @@ function BankAccountsModal({ isOpen, onClose, accounts, onRefresh }) {
         const { data } = await api.post(`/bank-accounts/${accId}/connect`, {
           syncType: 'OPEN_BANKING',
           config: {
-            institutionId: connectForm[accId]?.institutionId || 'BSABESBBXXX',
-            secretId: connectForm[accId]?.secretId,
-            secretKey: connectForm[accId]?.secretKey,
+            institutionId: connectForm[accId]?.institutionId || 'banco-sabadell',
+            appId: connectForm[accId]?.appId,
+            appSecret: connectForm[accId]?.appSecret,
             redirectUrl: `${window.location.origin}/bank?callback=openbanking&accountId=${accId}`,
           },
         });
@@ -240,21 +240,21 @@ function BankAccountsModal({ isOpen, onClose, accounts, onRefresh }) {
 
                   {acc.syncType === 'OPEN_BANKING' && (
                     <>
-                      <p className="text-xs font-medium">Connexió Open Banking (GoCardless)</p>
+                      <p className="text-xs font-medium">Connexió Open Banking (Yapily)</p>
                       <p className="text-[11px] text-muted-foreground">
-                        Registra't a <a href="https://bankaccountdata.gocardless.com" target="_blank" rel="noopener noreferrer" className="underline">GoCardless Bank Account Data</a> (gratis fins a 50 comptes).
+                        Registra't a <a href="https://dashboard.yapily.com" target="_blank" rel="noopener noreferrer" className="underline">Yapily Dashboard</a> per obtenir Application ID i Secret.
                         Seràs redirigit al teu banc per autoritzar l'accés de lectura.
                       </p>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="block text-[11px] font-medium mb-0.5">Secret ID</label>
-                          <input type="text" value={connectForm[acc.id]?.secretId || ''} onChange={(e) => setConnectForm({ ...connectForm, [acc.id]: { ...connectForm[acc.id], secretId: e.target.value } })}
+                          <label className="block text-[11px] font-medium mb-0.5">Application ID</label>
+                          <input type="text" value={connectForm[acc.id]?.appId || ''} onChange={(e) => setConnectForm({ ...connectForm, [acc.id]: { ...connectForm[acc.id], appId: e.target.value } })}
                             placeholder="xxxxxxxx-xxxx-xxxx-xxxx" className="w-full rounded border bg-background px-2 py-1.5 text-xs" />
                         </div>
                         <div>
-                          <label className="block text-[11px] font-medium mb-0.5">Secret Key</label>
+                          <label className="block text-[11px] font-medium mb-0.5">Application Secret</label>
                           <div className="relative">
-                            <input type={showSecret[acc.id] ? 'text' : 'password'} value={connectForm[acc.id]?.secretKey || ''} onChange={(e) => setConnectForm({ ...connectForm, [acc.id]: { ...connectForm[acc.id], secretKey: e.target.value } })}
+                            <input type={showSecret[acc.id] ? 'text' : 'password'} value={connectForm[acc.id]?.appSecret || ''} onChange={(e) => setConnectForm({ ...connectForm, [acc.id]: { ...connectForm[acc.id], appSecret: e.target.value } })}
                               placeholder="••••••••" className="w-full rounded border bg-background px-2 py-1.5 text-xs pr-7" />
                             <button type="button" onClick={() => setShowSecret({ ...showSecret, [acc.id]: !showSecret[acc.id] })}
                               className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
@@ -263,21 +263,21 @@ function BankAccountsModal({ isOpen, onClose, accounts, onRefresh }) {
                           </div>
                         </div>
                         <div className="col-span-2">
-                          <label className="block text-[11px] font-medium mb-0.5">Banc (Institution ID)</label>
-                          <select value={connectForm[acc.id]?.institutionId || 'BSABESBBXXX'} onChange={(e) => setConnectForm({ ...connectForm, [acc.id]: { ...connectForm[acc.id], institutionId: e.target.value } })}
+                          <label className="block text-[11px] font-medium mb-0.5">Banc</label>
+                          <select value={connectForm[acc.id]?.institutionId || 'banco-sabadell'} onChange={(e) => setConnectForm({ ...connectForm, [acc.id]: { ...connectForm[acc.id], institutionId: e.target.value } })}
                             className="w-full rounded border bg-background px-2 py-1.5 text-xs">
-                            <option value="BSABESBBXXX">Banc Sabadell</option>
-                            <option value="CAIXESBBXXX">CaixaBank</option>
-                            <option value="BBVAESMMXXX">BBVA</option>
-                            <option value="BSCHESMMXXX">Santander</option>
-                            <option value="BKBKESMMXXX">Bankinter</option>
-                            <option value="INGDESMMXXX">ING</option>
+                            <option value="banco-sabadell">Banc Sabadell</option>
+                            <option value="caixabank">CaixaBank</option>
+                            <option value="bbva">BBVA</option>
+                            <option value="santander">Santander</option>
+                            <option value="bankinter">Bankinter</option>
+                            <option value="ing-es">ING Espanya</option>
                           </select>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
                         <button onClick={() => handleConnect(acc.id, 'OPEN_BANKING')}
-                          disabled={connectStatus[acc.id]?.loading || !connectForm[acc.id]?.secretId || !connectForm[acc.id]?.secretKey}
+                          disabled={connectStatus[acc.id]?.loading || !connectForm[acc.id]?.appId || !connectForm[acc.id]?.appSecret}
                           className="px-3 py-1.5 rounded bg-primary text-primary-foreground text-xs font-medium disabled:opacity-50 flex items-center gap-1">
                           <ExternalLink size={10} />
                           {connectStatus[acc.id]?.loading ? 'Connectant...' : 'Connectar amb el banc'}

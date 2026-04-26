@@ -2,93 +2,69 @@ const { prisma } = require('../config/database');
 const { logger } = require('../config/logger');
 
 // ===========================================
-// Servei GoCardless Bank Account Data (ex-Nordigen)
+// Servei Yapily Open Banking
 // ===========================================
-// Connexió Open Banking per Banc Sabadell i altres bancs.
-// Documentació: https://bankaccountdata.gocardless.com/api/v2/
+// Connexió Open Banking per Banc Sabadell i altres bancs espanyols.
+// Documentació: https://docs.yapily.com/api/reference/
 //
 // Env vars necessàries:
-//   GOCARDLESS_SECRET_ID   — secret_id de GoCardless
-//   GOCARDLESS_SECRET_KEY  — secret_key de GoCardless
-//   APP_BASE_URL           — URL base de l'app (per redirect)
+//   YAPILY_APP_ID       — Application ID (username per Basic Auth)
+//   YAPILY_APP_SECRET   — Application Secret (password per Basic Auth)
+//   APP_BASE_URL        — URL base de l'app (per redirect)
 // ===========================================
 
-const GC_BASE_URL = 'https://bankaccountdata.gocardless.com/api/v2';
-
-// Institucions bancàries conegudes (Espanya)
-const KNOWN_INSTITUTIONS = {
-  SABADELL: 'BSABESBBXXX',
-  CAIXA: 'CAIXESBBXXX',
-  BBVA: 'BBVAESMMXXX',
-  SANTANDER: 'BSCHESMMXXX',
-  BANKINTER: 'BKBKESMMXXX',
-  ING: 'INGDESMMXXX',
-};
+const YAPILY_BASE_URL = 'https://api.yapily.com';
 
 /**
- * Obté un token JWT d'accés a GoCardless
- */
-async function getAccessToken(bankAccountId) {
-  const creds = await getCredentials(bankAccountId);
-
-  const response = await fetch(`${GC_BASE_URL}/token/new/`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      secret_id: creds.secretId,
-      secret_key: creds.secretKey,
-    }),
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`GoCardless auth error ${response.status}: ${body}`);
-  }
-
-  const data = await response.json();
-  return data.access; // JWT token
-}
-
-/**
- * Obté les credencials GoCardless des del BankAccount o env vars
+ * Obté les credencials Yapily des del BankAccount o env vars
  */
 async function getCredentials(bankAccountId) {
   if (bankAccountId) {
     const account = await prisma.bankAccount.findUnique({ where: { id: bankAccountId } });
     if (account?.syncConfig) {
       const config = typeof account.syncConfig === 'string' ? JSON.parse(account.syncConfig) : account.syncConfig;
-      if (config.secretId && config.secretKey) {
+      if (config.appId && config.appSecret) {
         return config;
       }
     }
   }
   // Fallback a env vars
-  const secretId = process.env.GOCARDLESS_SECRET_ID;
-  const secretKey = process.env.GOCARDLESS_SECRET_KEY;
-  if (!secretId || !secretKey) {
-    throw new Error('Credencials GoCardless no configurades (GOCARDLESS_SECRET_ID + GOCARDLESS_SECRET_KEY)');
+  const appId = process.env.YAPILY_APP_ID;
+  const appSecret = process.env.YAPILY_APP_SECRET;
+  if (!appId || !appSecret) {
+    throw new Error('Credencials Yapily no configurades (YAPILY_APP_ID + YAPILY_APP_SECRET)');
   }
-  return { secretId, secretKey };
+  return { appId, appSecret };
 }
 
 /**
- * Fa una petició autenticada a GoCardless
+ * Genera el header d'autenticació Basic Auth per Yapily
  */
-async function gcFetch(path, token, options = {}) {
-  const url = `${GC_BASE_URL}${path}`;
+function getAuthHeader(creds) {
+  const encoded = Buffer.from(`${creds.appId}:${creds.appSecret}`).toString('base64');
+  return `Basic ${encoded}`;
+}
+
+/**
+ * Fa una petició autenticada a Yapily
+ */
+async function yapFetch(path, creds, options = {}) {
+  const url = `${YAPILY_BASE_URL}${path}`;
+  const headers = {
+    'Authorization': getAuthHeader(creds),
+    'Content-Type': 'application/json',
+    ...options.headers,
+  };
+
   const response = await fetch(url, {
     method: options.method || 'GET',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
+    headers,
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`GoCardless API error ${response.status} (${path}): ${body}`);
+    throw new Error(`Yapily API error ${response.status} (${path}): ${body}`);
   }
 
   if (response.status === 204) return null;
@@ -99,242 +75,250 @@ async function gcFetch(path, token, options = {}) {
  * Llista institucions bancàries disponibles per un país
  */
 async function listInstitutions(bankAccountId, country = 'ES') {
-  const token = await getAccessToken(bankAccountId);
-  const data = await gcFetch(`/institutions/?country=${country}`, token);
-  return data.map(inst => ({
+  const creds = await getCredentials(bankAccountId);
+  const data = await yapFetch(`/institutions?country=${country}`, creds);
+  return (data.data || []).map(inst => ({
     id: inst.id,
     name: inst.name,
-    bic: inst.bic,
-    logo: inst.logo,
     countries: inst.countries,
-    transactionTotalDays: inst.transaction_total_days,
+    logo: inst.media?.find(m => m.type === 'logo')?.source || null,
+    features: inst.features,
   }));
 }
 
 /**
- * Crea un "end user agreement" (EUA) per consentiment
+ * Crea una sol·licitud d'autorització (redirigeix l'usuari al banc)
+ * Retorna la URL on l'usuari ha d'anar per autoritzar
  */
-async function createAgreement(bankAccountId, institutionId) {
-  const token = await getAccessToken(bankAccountId);
-  const data = await gcFetch('/agreements/enduser/', token, {
+async function createAuthRequest(bankAccountId, institutionId, redirectUrl) {
+  const creds = await getCredentials(bankAccountId);
+
+  const data = await yapFetch('/account-auth-requests', creds, {
     method: 'POST',
     body: {
-      institution_id: institutionId,
-      max_historical_days: 90,    // Màxim gratis
-      access_valid_for_days: 90,  // Validesa del consentiment
-      access_scope: ['balances', 'details', 'transactions'],
-    },
-  });
-  return {
-    agreementId: data.id,
-    institutionId: data.institution_id,
-    maxHistoricalDays: data.max_historical_days,
-    accessValidForDays: data.access_valid_for_days,
-    accepted: data.accepted,
-  };
-}
-
-/**
- * Crea una requisition (flux d'autenticació bancària)
- * L'usuari serà redirigit al banc per autoritzar l'accés
- */
-async function createRequisition(bankAccountId, institutionId, redirectUrl) {
-  const token = await getAccessToken(bankAccountId);
-
-  // Primer crear l'agreement
-  const agreement = await createAgreement(bankAccountId, institutionId);
-
-  // Crear la requisition amb el redirect
-  const data = await gcFetch('/requisitions/', token, {
-    method: 'POST',
-    body: {
-      redirect: redirectUrl,
-      institution_id: institutionId,
-      agreement: agreement.agreementId,
-      reference: `seitocamera_${bankAccountId}_${Date.now()}`,
-      user_language: 'CA', // Català
+      applicationUserId: `seitocamera_${bankAccountId}`,
+      institutionId,
+      callback: redirectUrl,
     },
   });
 
-  // Guardar el requisition ID a syncConfig
+  // Guardar consent info a syncConfig
+  const account = await prisma.bankAccount.findUnique({ where: { id: bankAccountId } });
+  const currentConfig = typeof account?.syncConfig === 'object' && account.syncConfig ? account.syncConfig : {};
+
   await prisma.bankAccount.update({
     where: { id: bankAccountId },
     data: {
       syncConfig: {
-        ...(typeof (await prisma.bankAccount.findUnique({ where: { id: bankAccountId } }))?.syncConfig === 'object'
-          ? (await prisma.bankAccount.findUnique({ where: { id: bankAccountId } }))?.syncConfig
-          : {}),
-        requisitionId: data.id,
-        agreementId: agreement.agreementId,
+        ...currentConfig,
         institutionId,
+        consentId: data.data?.id,
+        consentStatus: data.data?.status,
+        applicationUserId: `seitocamera_${bankAccountId}`,
       },
     },
   });
 
   return {
-    requisitionId: data.id,
-    link: data.link, // URL on redirigir l'usuari
-    status: data.status,
+    consentId: data.data?.id,
+    authorisationUrl: data.data?.authorisationUrl,
+    status: data.data?.status,
   };
 }
 
 /**
- * Comprova l'estat d'una requisition i obté els comptes si autoritzada
+ * Comprova l'estat del consentiment i obté el consentToken
  */
-async function checkRequisitionStatus(bankAccountId) {
+async function checkConsentStatus(bankAccountId) {
   const account = await prisma.bankAccount.findUnique({ where: { id: bankAccountId } });
   if (!account?.syncConfig) throw new Error('Compte sense configuració de sync');
 
   const config = typeof account.syncConfig === 'string' ? JSON.parse(account.syncConfig) : account.syncConfig;
-  if (!config.requisitionId) throw new Error('No hi ha requisition pendent');
+  if (!config.consentId) throw new Error('No hi ha consentiment pendent');
 
-  const token = await getAccessToken(bankAccountId);
-  const data = await gcFetch(`/requisitions/${config.requisitionId}/`, token);
+  const creds = await getCredentials(bankAccountId);
+  const data = await yapFetch(`/consents/${config.consentId}`, creds);
 
-  if (data.status === 'LN' && data.accounts && data.accounts.length > 0) {
-    // Linked! Guardar el primer account ID
-    const gcAccountId = data.accounts[0];
+  const consent = data.data || data;
 
+  if (consent.status === 'AUTHORIZED' && consent.consentToken) {
+    // Guardar el consentToken
     await prisma.bankAccount.update({
       where: { id: bankAccountId },
       data: {
         syncConfig: {
           ...config,
-          gcAccountId,
-          gcAccountIds: data.accounts,
-          status: 'linked',
-          linkedAt: new Date().toISOString(),
+          consentToken: consent.consentToken,
+          consentStatus: 'AUTHORIZED',
+          authorizedAt: new Date().toISOString(),
         },
       },
     });
 
     return {
-      status: 'linked',
-      accounts: data.accounts,
-      selectedAccountId: gcAccountId,
+      status: 'AUTHORIZED',
+      consentToken: consent.consentToken,
     };
   }
 
   return {
-    status: data.status, // CR=created, GC=giving_consent, UA=undergoing_authentication, RJ=rejected, SA=suspended, LN=linked
-    statusDescription: getStatusDescription(data.status),
+    status: consent.status,
+    statusDescription: getStatusDescription(consent.status),
   };
 }
 
 function getStatusDescription(status) {
   const descriptions = {
-    CR: 'Creada, pendent d\'autorització',
-    GC: 'Donant consentiment al banc',
-    UA: 'Autenticant-se al banc',
-    RJ: 'Rebutjada pel banc',
-    SA: 'Suspesa',
-    GA: 'Consentiment donat, processant',
-    LN: 'Connectada correctament',
-    EX: 'Expirada',
+    AWAITING_AUTHORIZATION: 'Esperant autorització de l\'usuari al banc',
+    AUTHORIZED: 'Autoritzat correctament',
+    REJECTED: 'Rebutjat per l\'usuari o el banc',
+    REVOKED: 'Revocat',
+    EXPIRED: 'Expirat — cal reautoritzar',
+    FAILED: 'Error durant l\'autorització',
+    CONSUMED: 'Consumit — cal crear un nou consentiment',
+    UNKNOWN: 'Estat desconegut',
   };
-  return descriptions[status] || `Estat desconegut: ${status}`;
+  return descriptions[status] || `Estat: ${status}`;
 }
 
 /**
- * Obté els detalls d'un compte GoCardless (IBAN, nom, etc.)
+ * Obté el consentToken guardat (necessari per totes les operacions de dades)
  */
-async function getAccountDetails(bankAccountId) {
-  const config = await getLinkedConfig(bankAccountId);
-  const token = await getAccessToken(bankAccountId);
+async function getConsentToken(bankAccountId) {
+  const account = await prisma.bankAccount.findUnique({ where: { id: bankAccountId } });
+  if (!account?.syncConfig) throw new Error('Compte sense configuració de sync');
 
-  const [details, balances] = await Promise.all([
-    gcFetch(`/accounts/${config.gcAccountId}/details/`, token),
-    gcFetch(`/accounts/${config.gcAccountId}/balances/`, token),
-  ]);
+  const config = typeof account.syncConfig === 'string' ? JSON.parse(account.syncConfig) : account.syncConfig;
+  if (!config.consentToken) {
+    throw new Error('Compte no autoritzat — cal completar el flux Open Banking primer');
+  }
 
-  return {
-    iban: details.account?.iban,
-    name: details.account?.name || details.account?.ownerName,
-    currency: details.account?.currency || 'EUR',
-    balances: (balances.balances || []).map(b => ({
-      amount: parseFloat(b.balanceAmount?.amount || 0),
-      currency: b.balanceAmount?.currency || 'EUR',
-      type: b.balanceType, // closingBooked, expected, etc.
-      date: b.referenceDate,
-    })),
-  };
+  return config.consentToken;
 }
 
 /**
- * Obté el saldo del compte via Open Banking
+ * Obté la llista de comptes bancaris de l'usuari
+ */
+async function getAccounts(bankAccountId) {
+  const creds = await getCredentials(bankAccountId);
+  const consentToken = await getConsentToken(bankAccountId);
+
+  const data = await yapFetch('/accounts', creds, {
+    headers: { 'Consent': consentToken },
+  });
+
+  return (data.data || []).map(acc => ({
+    id: acc.id,
+    type: acc.type,
+    iban: acc.identification?.find(i => i.type === 'IBAN')?.identification || acc.iban,
+    name: acc.accountNames?.[0]?.name || acc.nickname || 'Compte',
+    currency: acc.currency || 'EUR',
+    balance: acc.balance,
+  }));
+}
+
+/**
+ * Obté el saldo d'un compte via Yapily
  */
 async function getBalance(bankAccountId) {
+  const creds = await getCredentials(bankAccountId);
+  const consentToken = await getConsentToken(bankAccountId);
+
   const config = await getLinkedConfig(bankAccountId);
-  const token = await getAccessToken(bankAccountId);
+  const yapilyAccountId = config.yapilyAccountId;
 
-  const data = await gcFetch(`/accounts/${config.gcAccountId}/balances/`, token);
-  const balances = data.balances || [];
+  if (!yapilyAccountId) {
+    // Si no tenim account ID guardat, obtenir el primer compte
+    const accounts = await getAccounts(bankAccountId);
+    if (!accounts.length) return null;
 
-  // Preferir closingBooked, sinó expected
-  const booked = balances.find(b => b.balanceType === 'closingBooked');
-  const expected = balances.find(b => b.balanceType === 'expected');
-  const best = booked || expected || balances[0];
+    // Guardar el primer account ID
+    await prisma.bankAccount.update({
+      where: { id: bankAccountId },
+      data: {
+        syncConfig: { ...config, yapilyAccountId: accounts[0].id },
+      },
+    });
+
+    return {
+      balance: accounts[0].balance || 0,
+      currency: accounts[0].currency || 'EUR',
+      iban: accounts[0].iban,
+    };
+  }
+
+  const data = await yapFetch(`/accounts/${yapilyAccountId}/balances`, creds, {
+    headers: { 'Consent': consentToken },
+  });
+
+  const balances = data.data || [];
+  const best = balances.find(b => b.type === 'CLOSING_BOOKED') ||
+               balances.find(b => b.type === 'EXPECTED') ||
+               balances[0];
 
   if (!best) return null;
 
   return {
-    balance: parseFloat(best.balanceAmount?.amount || 0),
+    balance: best.balanceAmount?.amount || 0,
     currency: best.balanceAmount?.currency || 'EUR',
-    type: best.balanceType,
-    date: best.referenceDate,
+    type: best.type,
+    date: best.dateTime,
   };
 }
 
 /**
- * Obté transaccions del compte via Open Banking
+ * Obté transaccions del compte via Yapily
  */
 async function fetchTransactions(options = {}) {
   const { bankAccountId, dateFrom, dateTo } = options;
+  const creds = await getCredentials(bankAccountId);
+  const consentToken = await getConsentToken(bankAccountId);
   const config = await getLinkedConfig(bankAccountId);
-  const token = await getAccessToken(bankAccountId);
 
-  let path = `/accounts/${config.gcAccountId}/transactions/`;
+  let yapilyAccountId = config.yapilyAccountId;
+
+  // Si no tenim account ID, obtenir-lo
+  if (!yapilyAccountId) {
+    const accounts = await getAccounts(bankAccountId);
+    if (!accounts.length) throw new Error('Cap compte bancari trobat via Open Banking');
+    yapilyAccountId = accounts[0].id;
+    await prisma.bankAccount.update({
+      where: { id: bankAccountId },
+      data: { syncConfig: { ...config, yapilyAccountId } },
+    });
+  }
+
+  let path = `/accounts/${yapilyAccountId}/transactions`;
   const params = new URLSearchParams();
-  if (dateFrom) params.set('date_from', dateFrom);
-  if (dateTo) params.set('date_to', dateTo);
+  if (dateFrom) params.set('from', dateFrom);
+  if (dateTo) params.set('before', dateTo);
   if (params.toString()) path += `?${params.toString()}`;
 
-  const data = await gcFetch(path, token);
+  const data = await yapFetch(path, creds, {
+    headers: { 'Consent': consentToken },
+  });
 
   const transactions = [];
 
-  // GoCardless retorna transaccions en "booked" i "pending"
-  for (const tx of (data.transactions?.booked || [])) {
-    transactions.push(mapTransaction(tx, 'booked'));
-  }
-  // Incloure pending també
-  for (const tx of (data.transactions?.pending || [])) {
-    transactions.push(mapTransaction(tx, 'pending'));
+  for (const tx of (data.data || [])) {
+    const amount = tx.amount || 0;
+    transactions.push({
+      transactionId: tx.id || tx.reference || `yap_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+      date: new Date(tx.bookingDateTime || tx.date || new Date()),
+      settledAt: tx.bookingDateTime ? new Date(tx.bookingDateTime) : null,
+      amount,
+      currency: tx.currency || 'EUR',
+      side: amount >= 0 ? 'credit' : 'debit',
+      counterparty: tx.payeeDetails?.name || tx.payerDetails?.name || tx.description || '',
+      reference: tx.reference || '',
+      category: null,
+      note: tx.supplementaryData?.internalRef || null,
+      status: tx.status || 'booked',
+      rawData: tx,
+    });
   }
 
   return transactions;
-}
-
-/**
- * Mapeja una transacció GoCardless al format intern
- */
-function mapTransaction(tx, bookingStatus) {
-  const amount = parseFloat(tx.transactionAmount?.amount || 0);
-  return {
-    transactionId: tx.transactionId || tx.internalTransactionId || `gc_${tx.entryReference || Date.now()}`,
-    date: new Date(tx.bookingDate || tx.valueDate || new Date()),
-    settledAt: tx.bookingDate ? new Date(tx.bookingDate) : null,
-    amount,
-    currency: tx.transactionAmount?.currency || 'EUR',
-    side: amount >= 0 ? 'credit' : 'debit',
-    counterparty: tx.creditorName || tx.debtorName || '',
-    reference: tx.remittanceInformationUnstructured || tx.remittanceInformationStructured || '',
-    iban: tx.creditorAccount?.iban || tx.debtorAccount?.iban || null,
-    category: null,
-    note: tx.additionalInformation || null,
-    status: bookingStatus,
-    rawData: tx,
-  };
 }
 
 /**
@@ -353,7 +337,7 @@ async function syncTransactions(options = {}) {
     });
     if (lastMovement) {
       const d = new Date(lastMovement.date);
-      d.setDate(d.getDate() - 5); // 5 dies enrere per seguretat
+      d.setDate(d.getDate() - 5);
       dateFrom = d.toISOString().split('T')[0];
     }
   }
@@ -365,13 +349,11 @@ async function syncTransactions(options = {}) {
 
   for (const tx of transactions) {
     try {
-      // Només sincronitzar "booked" (confirmades)
       if (tx.status === 'pending') { skipped++; continue; }
 
       const slug = tx.transactionId;
       if (!slug) { skipped++; continue; }
 
-      // Buscar per qontoSlug (reutilitzem el camp per qualsevol ID extern)
       const existing = await prisma.bankMovement.findFirst({
         where: { qontoSlug: slug },
       });
@@ -408,7 +390,7 @@ async function syncTransactions(options = {}) {
           bankAccount: 'Sabadell',
           bankAccountId,
           counterparty: tx.counterparty || null,
-          qontoSlug: slug, // Reutilitzem per dedup
+          qontoSlug: slug,
           rawData: tx.rawData,
         },
       });
@@ -448,14 +430,11 @@ async function syncTransactions(options = {}) {
  */
 async function testConnection(bankAccountId) {
   try {
-    const config = await getLinkedConfig(bankAccountId);
-    const token = await getAccessToken(bankAccountId);
-    const details = await gcFetch(`/accounts/${config.gcAccountId}/`, token);
-
+    const consentToken = await getConsentToken(bankAccountId);
+    const accounts = await getAccounts(bankAccountId);
     return {
       connected: true,
-      status: details.status, // READY, PROCESSING, ERROR, EXPIRED, SUSPENDED
-      institutionId: details.institution_id,
+      accounts: accounts.map(a => ({ name: a.name, iban: a.iban, currency: a.currency })),
     };
   } catch (err) {
     return { connected: false, error: err.message };
@@ -463,27 +442,21 @@ async function testConnection(bankAccountId) {
 }
 
 /**
- * Helper: obté la config d'un compte linked
+ * Helper: obté la config d'un compte
  */
 async function getLinkedConfig(bankAccountId) {
   const account = await prisma.bankAccount.findUnique({ where: { id: bankAccountId } });
   if (!account?.syncConfig) throw new Error('Compte sense configuració de sync');
-
-  const config = typeof account.syncConfig === 'string' ? JSON.parse(account.syncConfig) : account.syncConfig;
-  if (!config.gcAccountId) throw new Error('Compte no connectat via Open Banking (falta gcAccountId)');
-
-  return config;
+  return typeof account.syncConfig === 'string' ? JSON.parse(account.syncConfig) : account.syncConfig;
 }
 
 module.exports = {
-  getAccessToken,
   listInstitutions,
-  createRequisition,
-  checkRequisitionStatus,
-  getAccountDetails,
+  createAuthRequest,
+  checkConsentStatus,
+  getAccounts,
   getBalance,
   fetchTransactions,
   syncTransactions,
   testConnection,
-  KNOWN_INSTITUTIONS,
 };
