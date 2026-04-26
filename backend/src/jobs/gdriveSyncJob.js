@@ -279,6 +279,7 @@ async function syncGdriveFiles() {
         }
         const dateFromPdf = !!pdfAnalysis.invoiceDate;
         const issueDate = pdfAnalysis.invoiceDate || (file.createdTime ? new Date(file.createdTime) : new Date());
+        const dueDate = pdfAnalysis.dueDate || null;
         const needsReview = !pdfAnalysis.invoiceNumber || !pdfAnalysis.totalAmount || !dateFromPdf;
         const needsAmount = !pdfAnalysis.totalAmount; // import 0€ no és acceptable
 
@@ -350,6 +351,7 @@ async function syncGdriveFiles() {
                       ? `PDF processat: ${file.name} (nº ${pdfAnalysis.invoiceNumber})`
                       : `PDF processat: ${file.name} (sense text, pot ser escanejat)`,
               issueDate,
+              dueDate,
               subtotal: subtotal || 0,
               taxRate,
               taxAmount: taxAmount || 0,
@@ -644,6 +646,7 @@ async function syncLogistikFiles() {
 
         const dateFromPdf = !!pdfAnalysis.invoiceDate;
         const issueDate = pdfAnalysis.invoiceDate || (file.createdTime ? new Date(file.createdTime) : new Date());
+        const dueDate = pdfAnalysis.dueDate || null;
         const needsReview = !pdfAnalysis.invoiceNumber || !pdfAnalysis.totalAmount || !dateFromPdf;
         const needsAmount = !pdfAnalysis.totalAmount;
 
@@ -675,6 +678,7 @@ async function syncLogistikFiles() {
           sharedPercentLogistik,
           description: `Factura Logistik: ${file.name}${needsReview ? ' (cal revisar)' : ''}`,
           issueDate,
+          dueDate,
           subtotal: subtotal || 0,
           taxRate,
           taxAmount: taxAmount || 0,

@@ -1418,6 +1418,7 @@ async function analyzePdf(filePathOrBuffer) {
       irpfRate: aiResult.irpfRate || 0,
       irpfAmount: aiResult.irpfAmount || 0,
       invoiceDate: aiResult.invoiceDate || regexResult.invoiceDate,
+      dueDate: aiResult.dueDate || null,
       supplierName: aiResult.supplierName || regexResult.supplierName,
       description: aiResult.description || null,
       confidence: aiResult.confidence || 0.5,

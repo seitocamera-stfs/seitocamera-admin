@@ -95,6 +95,7 @@ Format de resposta (JSON estricte):
   "supplierName": "string o null — nom de l'empresa emissora",
   "supplierNif": "string o null — NIF/CIF de l'empresa emissora (NO el de Seito Camera B09805995)",
   "issueDate": "YYYY-MM-DD o null — data d'emissió de la factura",
+  "dueDate": "YYYY-MM-DD o null — data de venciment (fecha de vencimiento, due date, payment date)",
   "totalAmount": 0.00,
   "baseAmount": 0.00,
   "taxRate": 21,
@@ -111,7 +112,8 @@ Notes sobre imports:
 - Si veus "Base imposable", "Subtotal", "Neto" → és baseAmount
 - Si veus "Total", "Total factura", "Import total", "Amount due" → és totalAmount
 - irpfRate sol ser 7% o 15% (retencions a professionals)
-- Si no hi ha IRPF, irpfRate i irpfAmount han de ser 0`;
+- Si no hi ha IRPF, irpfRate i irpfAmount han de ser 0
+- dueDate: busca "Fecha de vencimiento", "Vencimiento", "Due date", "Payment due", "Fecha de pago". Si no hi és, null.`;
 
 /**
  * Extreu dades d'una factura usant Claude API
@@ -167,6 +169,7 @@ async function extractInvoiceData(text) {
       irpfRate: typeof parsed.irpfRate === 'number' ? parsed.irpfRate : 0,
       irpfAmount: typeof parsed.irpfAmount === 'number' ? parsed.irpfAmount : 0,
       invoiceDate: parsed.issueDate ? parseISODate(parsed.issueDate) : null,
+      dueDate: parsed.dueDate ? parseISODate(parsed.dueDate) : null,
       documentType: mapDocumentType(parsed.documentType),
       confidence: parsed.confidence || 0.5,
       description: parsed.description || null,
