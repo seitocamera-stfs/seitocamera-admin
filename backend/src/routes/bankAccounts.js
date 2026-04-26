@@ -52,18 +52,23 @@ router.get('/summary', async (req, res, next) => {
       orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
     });
 
+    // Rang de dates: últims 30 dies per defecte per al resum
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+
     const summaries = await Promise.all(accounts.map(async (acc) => {
-      const [income, expense, lastMovement] = await Promise.all([
+      const [incomeMonth, expenseMonth, totalCount, lastMovement] = await Promise.all([
         prisma.bankMovement.aggregate({
-          where: { bankAccountId: acc.id, type: 'INCOME' },
+          where: { bankAccountId: acc.id, type: 'INCOME', date: { gte: thirtyDaysAgo } },
           _sum: { amount: true },
           _count: true,
         }),
         prisma.bankMovement.aggregate({
-          where: { bankAccountId: acc.id, type: 'EXPENSE' },
+          where: { bankAccountId: acc.id, type: 'EXPENSE', date: { gte: thirtyDaysAgo } },
           _sum: { amount: true },
           _count: true,
         }),
+        prisma.bankMovement.count({ where: { bankAccountId: acc.id } }),
         prisma.bankMovement.findFirst({
           where: { bankAccountId: acc.id, balance: { not: null } },
           orderBy: { date: 'desc' },
@@ -71,11 +76,8 @@ router.get('/summary', async (req, res, next) => {
         }),
       ]);
 
-      const totalIncome = parseFloat(income._sum.amount || 0);
-      const totalExpense = parseFloat(expense._sum.amount || 0);
-      // Saldo: si tenim un moviment amb camp balance, és el més fiable
-      // Si no, calculem suma ingressos + despeses (despeses ja són negatives)
-      const calculatedBalance = totalIncome + totalExpense;
+      const monthIncome = parseFloat(incomeMonth._sum.amount || 0);
+      const monthExpense = parseFloat(expenseMonth._sum.amount || 0);
       const lastBalance = lastMovement ? parseFloat(lastMovement.balance) : null;
 
       return {
@@ -85,22 +87,22 @@ router.get('/summary', async (req, res, next) => {
         color: acc.color,
         syncType: acc.syncType,
         isDefault: acc.isDefault,
-        balance: lastBalance !== null ? lastBalance : calculatedBalance,
-        balanceSource: lastBalance !== null ? 'last_movement' : 'calculated',
+        balance: lastBalance,
         balanceDate: lastMovement?.date || null,
-        income: totalIncome,
-        expense: totalExpense,
-        movementCount: income._count + expense._count,
+        incomeMonth: monthIncome,
+        expenseMonth: monthExpense,
+        movementCount: totalCount,
       };
     }));
 
     // Total global
     const totals = summaries.reduce((acc, s) => ({
-      balance: acc.balance + s.balance,
-      income: acc.income + s.income,
-      expense: acc.expense + s.expense,
+      balance: acc.balance + (s.balance || 0),
+      incomeMonth: acc.incomeMonth + s.incomeMonth,
+      expenseMonth: acc.expenseMonth + s.expenseMonth,
       movementCount: acc.movementCount + s.movementCount,
-    }), { balance: 0, income: 0, expense: 0, movementCount: 0 });
+    }), { balance: 0, incomeMonth: 0, expenseMonth: 0, movementCount: 0 });
+    totals.hasBalance = summaries.some(s => s.balance !== null);
 
     res.json({ accounts: summaries, totals });
   } catch (error) {

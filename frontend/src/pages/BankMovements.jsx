@@ -460,9 +460,9 @@ export default function BankMovements() {
         </div>
       </div>
 
-      {/* Resum saldos */}
+      {/* Resum comptes */}
       {accountSummary && (
-        <div className="grid gap-3 mb-5" style={{ gridTemplateColumns: `repeat(${Math.min(accountSummary.accounts.length + 1, 4)}, 1fr)` }}>
+        <div className="grid gap-3 mb-5" style={{ gridTemplateColumns: `repeat(${Math.min(accountSummary.accounts.length + (accountSummary.accounts.length > 1 ? 1 : 0), 4)}, 1fr)` }}>
           {accountSummary.accounts.map((acc) => (
             <button
               key={acc.id}
@@ -476,16 +476,14 @@ export default function BankMovements() {
                   <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded ml-auto">{acc.syncType}</span>
                 )}
               </div>
-              <div className="text-2xl font-bold">{formatCurrency(acc.balance)}</div>
-              <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground">
-                <span className="text-green-600">+{formatCurrency(acc.income)}</span>
-                <span className="text-red-600">{formatCurrency(acc.expense)}</span>
+              <div className="text-xs text-muted-foreground mb-1">Últims 30 dies</div>
+              <div className="flex items-center gap-3 text-sm">
+                <span className="text-green-600 font-medium">+{formatCurrency(acc.incomeMonth)}</span>
+                <span className="text-red-600 font-medium">{formatCurrency(acc.expenseMonth)}</span>
               </div>
-              {acc.balanceDate && (
-                <div className="text-[10px] text-muted-foreground mt-1">
-                  Últim mov. {formatDate(acc.balanceDate)}
-                </div>
-              )}
+              <div className="text-[10px] text-muted-foreground mt-2">
+                {acc.movementCount} moviments totals
+              </div>
             </button>
           ))}
           {accountSummary.accounts.length > 1 && (
@@ -497,13 +495,13 @@ export default function BankMovements() {
                 <Building2 size={14} className="text-muted-foreground" />
                 <span className="text-sm font-medium">Total</span>
               </div>
-              <div className="text-2xl font-bold">{formatCurrency(accountSummary.totals.balance)}</div>
-              <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground">
-                <span className="text-green-600">+{formatCurrency(accountSummary.totals.income)}</span>
-                <span className="text-red-600">{formatCurrency(accountSummary.totals.expense)}</span>
+              <div className="text-xs text-muted-foreground mb-1">Últims 30 dies</div>
+              <div className="flex items-center gap-3 text-sm">
+                <span className="text-green-600 font-medium">+{formatCurrency(accountSummary.totals.incomeMonth)}</span>
+                <span className="text-red-600 font-medium">{formatCurrency(accountSummary.totals.expenseMonth)}</span>
               </div>
-              <div className="text-[10px] text-muted-foreground mt-1">
-                {accountSummary.totals.movementCount} moviments
+              <div className="text-[10px] text-muted-foreground mt-2">
+                {accountSummary.totals.movementCount} moviments totals
               </div>
             </button>
           )}
