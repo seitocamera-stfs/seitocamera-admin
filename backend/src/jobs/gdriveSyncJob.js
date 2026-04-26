@@ -390,6 +390,20 @@ async function syncGdriveFiles() {
           // Moure a carpeta organitzada DESPRÉS de crear a BD
           await gdrive.moveFile(file.id, destFolderId, inboxId);
 
+          // Renombrar fitxer: Proveidor_NumeroFactura.pdf
+          try {
+            const supplierName = matchedSupplier?.name || pdfAnalysis.supplierName || '';
+            const invNum = invoiceNumber || '';
+            if (supplierName && invNum && !invNum.startsWith('PROV-')) {
+              const safeName = supplierName.replace(/[\/\\:*?"<>|]/g, '-').trim();
+              const safeNum = invNum.replace(/[\/\\:*?"<>|]/g, '-').trim();
+              const newFileName = `${safeName}_${safeNum}.pdf`;
+              await gdrive.renameFile(file.id, newFileName);
+            }
+          } catch (renameErr) {
+            logger.warn(`GDrive sync: Error renombrant ${file.name}: ${renameErr.message}`);
+          }
+
           // Recordatori adaptat (dins try/catch per no trencar el flux)
           try {
             if (admin) {
@@ -695,6 +709,20 @@ async function syncLogistikFiles() {
         // Moure a carpeta organitzada: Seito-logistik/{any}/{trimestre}/{mes}
         const destFolderId = await getLogistikDateFolderId(issueDate);
         await gdrive.moveFile(file.id, destFolderId, inboxId);
+
+        // Renombrar fitxer: Proveidor_NumeroFactura.pdf
+        try {
+          const supplierName = matchedSupplier?.name || pdfAnalysis.supplierName || '';
+          const invNum = invoiceNumber || '';
+          if (supplierName && invNum && !invNum.startsWith('PROV-')) {
+            const safeName = supplierName.replace(/[\/\\:*?"<>|]/g, '-').trim();
+            const safeNum = invNum.replace(/[\/\\:*?"<>|]/g, '-').trim();
+            const newFileName = `${safeName}_${safeNum}.pdf`;
+            await gdrive.renameFile(file.id, newFileName);
+          }
+        } catch (renameErr) {
+          logger.warn(`GDrive Logistik: Error renombrant ${file.name}: ${renameErr.message}`);
+        }
 
         const m = issueDate.getMonth() + 1;
         const destPath = `Seito-logistik/${issueDate.getFullYear()}/T${Math.ceil(m / 3)}/${m.toString().padStart(2, '0')}`;

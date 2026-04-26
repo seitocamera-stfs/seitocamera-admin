@@ -338,6 +338,21 @@ async function findFolderByName(folderName) {
 }
 
 /**
+ * Renombra un fitxer a Google Drive
+ * @param {string} fileId - ID del fitxer
+ * @param {string} newName - Nou nom del fitxer
+ */
+async function renameFile(fileId, newName) {
+  const drive = getDriveClient();
+  await drive.files.update({
+    fileId,
+    resource: { name: newName },
+    supportsAllDrives: true,
+  });
+  logger.info(`Fitxer renombrat a Google Drive: ${fileId} → ${newName}`);
+}
+
+/**
  * Elimina un fitxer de Google Drive (el mou a la paperera)
  */
 async function deleteFile(fileId) {
@@ -458,6 +473,7 @@ module.exports = {
   moveFile,
   copyFile,
   findFolderByName,
+  renameFile,
   deleteFile,
   getNewFiles,
   getNewFilesRecursive,

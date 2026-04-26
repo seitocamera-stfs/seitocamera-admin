@@ -151,6 +151,7 @@ router.get('/received', async (req, res, next) => {
         { status: 'PDF_PENDING' },                                        // Pendent de revisió PDF
         { status: 'AMOUNT_PENDING' },                                     // Pendent de revisió import
         { isDuplicate: true },                                             // Marcada com duplicat
+        { gdriveFileId: null },                                              // Sense PDF al Drive
       ];
     }
 
@@ -238,6 +239,7 @@ router.get('/received', async (req, res, next) => {
       if (inv.status === 'PDF_PENDING') alertReasons.push('PDF pendent');
       if (inv.status === 'AMOUNT_PENDING') alertReasons.push('Import pendent');
       if (inv.isDuplicate) alertReasons.push('Marcat duplicat');
+      if (!inv.gdriveFileId) alertReasons.push('Sense PDF');
 
       // Calcular remaining per pagaments parcials
       const paidAmt = parseFloat(inv.paidAmount || 0);
