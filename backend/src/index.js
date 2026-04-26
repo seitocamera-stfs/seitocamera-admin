@@ -122,6 +122,7 @@ app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/suppliers', require('./routes/suppliers'));
 app.use('/api/clients', require('./routes/clients'));
 app.use('/api/invoices', require('./routes/invoices'));
+app.use('/api/bank-accounts', require('./routes/bankAccounts'));
 app.use('/api/bank', require('./routes/bank'));
 app.use('/api/conciliation', require('./routes/conciliation'));
 app.use('/api/notes', require('./routes/notes'));

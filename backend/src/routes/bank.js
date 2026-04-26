@@ -31,11 +31,12 @@ const bankMovementSchema = z.object({
 // ===========================================
 router.get('/', async (req, res, next) => {
   try {
-    const { search, type, conciliated, dateFrom, dateTo, page = 1, limit = 50 } = req.query;
+    const { search, type, conciliated, dateFrom, dateTo, bankAccountId, page = 1, limit = 50 } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const where = {};
 
+    if (bankAccountId) where.bankAccountId = bankAccountId;
     if (type) where.type = type;
     if (conciliated !== undefined) where.isConciliated = conciliated === 'true';
 
@@ -77,6 +78,7 @@ router.get('/', async (req, res, next) => {
         orderBy: { date: 'desc' },
         include: {
           _count: { select: { conciliations: true } },
+          bankAccountRef: { select: { id: true, name: true, color: true, bankEntity: true } },
         },
       }),
       prisma.bankMovement.count({ where }),
@@ -151,6 +153,7 @@ router.get('/:id', async (req, res, next) => {
     const movement = await prisma.bankMovement.findUnique({
       where: { id: req.params.id },
       include: {
+        bankAccountRef: { select: { id: true, name: true, color: true, bankEntity: true } },
         conciliations: {
           include: {
             receivedInvoice: { select: { id: true, invoiceNumber: true, totalAmount: true, supplier: { select: { name: true } } } },
@@ -269,9 +272,10 @@ router.delete('/:id', requireLevel('bank', 'admin'), async (req, res, next) => {
  */
 router.get('/stats/summary', async (req, res, next) => {
   try {
-    const { dateFrom, dateTo } = req.query;
+    const { dateFrom, dateTo, bankAccountId } = req.query;
     const where = {};
 
+    if (bankAccountId) where.bankAccountId = bankAccountId;
     if (dateFrom || dateTo) {
       where.date = {};
       if (dateFrom) where.date.gte = new Date(dateFrom);

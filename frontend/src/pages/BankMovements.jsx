@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Search, ArrowUpCircle, ArrowDownCircle, Trash2, RefreshCw, CheckCircle2, AlertCircle, MessageSquare, Send, X } from 'lucide-react';
+import { Plus, Search, ArrowUpCircle, ArrowDownCircle, Trash2, RefreshCw, CheckCircle2, AlertCircle, MessageSquare, Send, X, Settings, Upload, Building2 } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import Modal from '../components/shared/Modal';
 import { formatCurrency, formatDate } from '../lib/utils';
@@ -55,21 +55,298 @@ function getTimeAgo(dateStr) {
   return `fa ${days}d`;
 }
 
+// ===========================================
+// Gestió comptes bancaris
+// ===========================================
+function BankAccountsModal({ isOpen, onClose, accounts, onRefresh }) {
+  const [form, setForm] = useState({ name: '', iban: '', bankEntity: '', syncType: 'MANUAL', color: '#2390A0' });
+  const [editing, setEditing] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  const COLORS = ['#6C5CE7', '#2390A0', '#E17055', '#00B894', '#FDCB6E', '#636E72', '#0984E3', '#D63031'];
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      if (editing) {
+        await api.put(`/bank-accounts/${editing}`, form);
+      } else {
+        await api.post('/bank-accounts', form);
+      }
+      setForm({ name: '', iban: '', bankEntity: '', syncType: 'MANUAL', color: '#2390A0' });
+      setEditing(null);
+      onRefresh();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error');
+    }
+    setSaving(false);
+  };
+
+  const handleEdit = (acc) => {
+    setEditing(acc.id);
+    setForm({ name: acc.name, iban: acc.iban || '', bankEntity: acc.bankEntity || '', syncType: acc.syncType, color: acc.color });
+  };
+
+  const handleDelete = async (id) => {
+    if (!confirm('Desactivar aquest compte bancari?')) return;
+    try {
+      await api.delete(`/bank-accounts/${id}`);
+      onRefresh();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error');
+    }
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="Gestionar comptes bancaris">
+      <div className="space-y-4">
+        {/* Llistat */}
+        <div className="space-y-2">
+          {accounts.map((acc) => (
+            <div key={acc.id} className="flex items-center gap-3 p-3 rounded-md border">
+              <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: acc.color }} />
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-sm flex items-center gap-2">
+                  {acc.name}
+                  {acc.isDefault && <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded">Per defecte</span>}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {acc.bankEntity || 'Manual'} · {acc.syncType} · {acc._count?.movements || 0} moviments
+                  {acc.iban && <span> · {acc.iban}</span>}
+                </div>
+              </div>
+              <button onClick={() => handleEdit(acc)} className="text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded hover:bg-muted">Editar</button>
+              {!acc.isDefault && (
+                <button onClick={() => handleDelete(acc.id)} className="text-xs text-destructive hover:text-destructive/80 px-2 py-1 rounded hover:bg-destructive/10">Eliminar</button>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* Formulari */}
+        <form onSubmit={handleSave} className="border-t pt-4 space-y-3">
+          <p className="text-sm font-medium">{editing ? 'Editar compte' : 'Nou compte bancari'}</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium mb-1">Nom *</label>
+              <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Sabadell Empresa" className="w-full rounded-md border bg-background px-3 py-2 text-sm" required />
+            </div>
+            <div>
+              <label className="block text-xs font-medium mb-1">Entitat bancària</label>
+              <input type="text" value={form.bankEntity} onChange={(e) => setForm({ ...form, bankEntity: e.target.value })} placeholder="Banc Sabadell" className="w-full rounded-md border bg-background px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium mb-1">IBAN</label>
+              <input type="text" value={form.iban} onChange={(e) => setForm({ ...form, iban: e.target.value })} placeholder="ES12 3456 7890 1234 5678 90" className="w-full rounded-md border bg-background px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium mb-1">Tipus sync</label>
+              <select value={form.syncType} onChange={(e) => setForm({ ...form, syncType: e.target.value })} className="w-full rounded-md border bg-background px-3 py-2 text-sm">
+                <option value="MANUAL">Manual</option>
+                <option value="CSV">CSV</option>
+                <option value="QONTO">Qonto</option>
+                <option value="OPEN_BANKING">Open Banking</option>
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="block text-xs font-medium mb-1">Color</label>
+              <div className="flex gap-2">
+                {COLORS.map((c) => (
+                  <button key={c} type="button" onClick={() => setForm({ ...form, color: c })}
+                    className={`w-7 h-7 rounded-full border-2 transition-all ${form.color === c ? 'border-foreground scale-110' : 'border-transparent'}`}
+                    style={{ backgroundColor: c }} />
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            {editing && <button type="button" onClick={() => { setEditing(null); setForm({ name: '', iban: '', bankEntity: '', syncType: 'MANUAL', color: '#2390A0' }); }} className="px-3 py-1.5 rounded border text-sm">Cancel·lar</button>}
+            <button type="submit" disabled={saving} className="px-4 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50">
+              {saving ? 'Guardant...' : editing ? 'Actualitzar' : 'Crear compte'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </Modal>
+  );
+}
+
+// ===========================================
+// Import CSV Modal
+// ===========================================
+function ImportCsvModal({ isOpen, onClose, accounts, onSuccess }) {
+  const [accountId, setAccountId] = useState('');
+  const [csvText, setCsvText] = useState('');
+  const [preview, setPreview] = useState([]);
+  const [importing, setImporting] = useState(false);
+  const [result, setResult] = useState(null);
+
+  useEffect(() => {
+    if (!isOpen) { setCsvText(''); setPreview([]); setResult(null); setAccountId(''); }
+  }, [isOpen]);
+
+  const parseCsv = (text) => {
+    const lines = text.trim().split('\n');
+    if (lines.length < 2) return [];
+
+    // Detectar separador
+    const sep = lines[0].includes(';') ? ';' : ',';
+    const headers = lines[0].split(sep).map(h => h.trim().replace(/"/g, '').toLowerCase());
+
+    const rows = [];
+    for (let i = 1; i < lines.length; i++) {
+      const vals = lines[i].split(sep).map(v => v.trim().replace(/"/g, ''));
+      const row = {};
+      headers.forEach((h, idx) => { row[h] = vals[idx] || ''; });
+
+      // Mapatge flexible de camps
+      const date = row.date || row.fecha || row.data || row['fecha operación'] || row['fecha valor'] || '';
+      const description = row.description || row.descripcion || row.concepto || row.concept || row.descripció || '';
+      const amount = row.amount || row.importe || row.import || '';
+      const balance = row.balance || row.saldo || '';
+      const reference = row.reference || row.referencia || row.referència || '';
+      const counterparty = row.counterparty || row.beneficiario || row.ordenante || '';
+
+      if (date && (description || amount)) {
+        rows.push({ date, description, amount, balance, reference, counterparty });
+      }
+    }
+    return rows;
+  };
+
+  const handleParse = () => {
+    const parsed = parseCsv(csvText);
+    setPreview(parsed.slice(0, 10));
+    setResult(null);
+  };
+
+  const handleImport = async () => {
+    if (!accountId) { alert('Selecciona un compte bancari'); return; }
+    const movements = parseCsv(csvText);
+    if (!movements.length) { alert('No s\'han trobat moviments al CSV'); return; }
+
+    setImporting(true);
+    try {
+      const { data } = await api.post(`/bank-accounts/${accountId}/import-csv`, { movements });
+      setResult(data);
+      onSuccess();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error important');
+    }
+    setImporting(false);
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="Importar moviments des de CSV">
+      <div className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium mb-1">Compte bancari *</label>
+          <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className="w-full rounded-md border bg-background px-3 py-2 text-sm">
+            <option value="">Selecciona compte...</option>
+            {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-1">Enganxa el CSV aquí</label>
+          <textarea
+            value={csvText}
+            onChange={(e) => setCsvText(e.target.value)}
+            placeholder={"date;description;amount;balance\n01/04/2026;Pagament factura;-150.00;1234.56"}
+            rows={6}
+            className="w-full rounded-md border bg-background px-3 py-2 text-xs font-mono"
+          />
+          <button onClick={handleParse} disabled={!csvText.trim()} className="mt-2 px-3 py-1.5 rounded border text-xs hover:bg-muted disabled:opacity-50">
+            Previsualitzar
+          </button>
+        </div>
+
+        {preview.length > 0 && (
+          <div className="border rounded-md overflow-auto max-h-48">
+            <table className="w-full text-xs">
+              <thead className="bg-muted/50 sticky top-0">
+                <tr>
+                  <th className="p-2 text-left">Data</th>
+                  <th className="p-2 text-left">Descripció</th>
+                  <th className="p-2 text-right">Import</th>
+                  <th className="p-2 text-right">Saldo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.map((r, i) => (
+                  <tr key={i} className="border-t">
+                    <td className="p-2">{r.date}</td>
+                    <td className="p-2 max-w-[200px] truncate">{r.description}</td>
+                    <td className="p-2 text-right">{r.amount}</td>
+                    <td className="p-2 text-right">{r.balance || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="p-2 text-xs text-muted-foreground border-t">
+              Mostrant {preview.length} de {parseCsv(csvText).length} files
+            </div>
+          </div>
+        )}
+
+        {result && (
+          <div className="bg-green-50 text-green-800 rounded-md p-3 text-sm">
+            {result.message}
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 rounded-md border text-sm">Tancar</button>
+          <button onClick={handleImport} disabled={importing || !csvText.trim() || !accountId}
+            className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50">
+            {importing ? 'Important...' : 'Importar'}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ===========================================
+// Pàgina principal
+// ===========================================
 export default function BankMovements() {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [conciliatedFilter, setConciliatedFilter] = useState('');
+  const [accountFilter, setAccountFilter] = useState('');
   const [page, setPage] = useState(1);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ date: '', description: '', amount: '', type: 'EXPENSE', reference: '' });
+  const [showAccountsModal, setShowAccountsModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [form, setForm] = useState({ date: '', description: '', amount: '', type: 'EXPENSE', reference: '', bankAccountId: '' });
   const [syncing, setSyncing] = useState(false);
   const [lastSync, setLastSync] = useState(null);
-  const [notesOpen, setNotesOpen] = useState(null); // ID del moviment amb notes obertes
+  const [notesOpen, setNotesOpen] = useState(null);
   const [notes, setNotes] = useState([]);
   const [newNote, setNewNote] = useState('');
   const [loadingNotes, setLoadingNotes] = useState(false);
 
-  const { data, loading, refetch } = useApiGet('/bank', { search, type: typeFilter || undefined, conciliated: conciliatedFilter || undefined, page, limit: 50 });
+  // Comptes bancaris
+  const [bankAccounts, setBankAccounts] = useState([]);
+  const fetchAccounts = useCallback(async () => {
+    try {
+      const { data } = await api.get('/bank-accounts');
+      setBankAccounts(data);
+    } catch {}
+  }, []);
+
+  useEffect(() => { fetchAccounts(); }, [fetchAccounts]);
+
+  const { data, loading, refetch } = useApiGet('/bank', {
+    search,
+    type: typeFilter || undefined,
+    conciliated: conciliatedFilter || undefined,
+    bankAccountId: accountFilter || undefined,
+    page,
+    limit: 50,
+  });
   const { mutate } = useApiMutation();
 
   // Carregar últim sync al muntar
@@ -132,6 +409,7 @@ export default function BankMovements() {
         ...form,
         date: new Date(form.date).toISOString(),
         amount: parseFloat(form.amount),
+        bankAccountId: form.bankAccountId || undefined,
       });
       setShowModal(false);
       refetch();
@@ -146,28 +424,46 @@ export default function BankMovements() {
     refetch();
   };
 
+  // Trobar el compte Qonto per mostrar sync només si existeix
+  const qontoAccount = bankAccounts.find(a => a.syncType === 'QONTO');
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold">Moviments bancaris</h2>
-        <div className="flex items-center gap-3">
-          <SyncStatus lastSync={lastSync} onSync={handleSync} syncing={syncing} />
+        <div className="flex items-center gap-2">
+          {qontoAccount && <SyncStatus lastSync={lastSync} onSync={handleSync} syncing={syncing} />}
           <ExportButtons
             endpoint="/export/bank-movements"
-            filters={{ search: search || undefined, type: typeFilter || undefined, conciliated: conciliatedFilter || undefined }}
+            filters={{ search: search || undefined, type: typeFilter || undefined, conciliated: conciliatedFilter || undefined, bankAccountId: accountFilter || undefined }}
             filenameBase="moviments-bancaris"
           />
-          <button onClick={() => { setForm({ date: '', description: '', amount: '', type: 'EXPENSE', reference: '' }); setShowModal(true); }} className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90">
+          <button onClick={() => setShowImportModal(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-md border text-sm hover:bg-muted" title="Importar CSV">
+            <Upload size={14} /> CSV
+          </button>
+          <button onClick={() => setShowAccountsModal(true)} className="flex items-center gap-1.5 px-3 py-2 rounded-md border text-sm hover:bg-muted" title="Gestionar comptes">
+            <Settings size={14} /> Comptes
+          </button>
+          <button onClick={() => { setForm({ date: '', description: '', amount: '', type: 'EXPENSE', reference: '', bankAccountId: '' }); setShowModal(true); }} className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90">
             <Plus size={16} /> Nou moviment
           </button>
         </div>
       </div>
 
+      {/* Filtres */}
       <div className="flex gap-3 mb-4">
         <div className="relative flex-1">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input type="text" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Cercar per descripció o referència..." className="w-full pl-10 pr-4 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
         </div>
+        {bankAccounts.length > 1 && (
+          <select value={accountFilter} onChange={(e) => { setAccountFilter(e.target.value); setPage(1); }} className="rounded-md border bg-background px-3 py-2 text-sm">
+            <option value="">Tots els comptes</option>
+            {bankAccounts.map(a => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </select>
+        )}
         <select value={typeFilter} onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }} className="rounded-md border bg-background px-3 py-2 text-sm">
           <option value="">Tots els tipus</option>
           <option value="INCOME">Ingressos</option>
@@ -181,11 +477,29 @@ export default function BankMovements() {
         </select>
       </div>
 
+      {/* Badges comptes actius */}
+      {bankAccounts.length > 1 && (
+        <div className="flex gap-2 mb-3">
+          {bankAccounts.map(a => (
+            <button
+              key={a.id}
+              onClick={() => { setAccountFilter(accountFilter === a.id ? '' : a.id); setPage(1); }}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs border transition-colors ${accountFilter === a.id ? 'bg-foreground text-background border-foreground' : 'hover:bg-muted'}`}
+            >
+              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: a.color }} />
+              {a.name}
+              <span className="text-[10px] opacity-60">{a._count?.movements || 0}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="bg-card border rounded-lg overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-muted/50">
             <tr>
               <th className="text-left p-3 font-medium">Data</th>
+              {bankAccounts.length > 1 && <th className="text-left p-3 font-medium">Compte</th>}
               <th className="text-left p-3 font-medium">Descripció</th>
               <th className="text-left p-3 font-medium">Referència</th>
               <th className="text-right p-3 font-medium">Import</th>
@@ -196,14 +510,26 @@ export default function BankMovements() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
+              <tr><td colSpan={bankAccounts.length > 1 ? 8 : 7} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
             ) : data?.data?.length === 0 ? (
-              <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">Cap moviment trobat</td></tr>
+              <tr><td colSpan={bankAccounts.length > 1 ? 8 : 7} className="p-8 text-center text-muted-foreground">Cap moviment trobat</td></tr>
             ) : (
               data?.data?.map((m) => (
                 <React.Fragment key={m.id}>
                 <tr className="border-t hover:bg-muted/30">
                   <td className="p-3 text-muted-foreground">{formatDate(m.date)}</td>
+                  {bankAccounts.length > 1 && (
+                    <td className="p-3">
+                      {m.bankAccountRef ? (
+                        <span className="inline-flex items-center gap-1 text-xs">
+                          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: m.bankAccountRef.color }} />
+                          {m.bankAccountRef.name}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </td>
+                  )}
                   <td className="p-3">
                     <div>{m.description}</div>
                     {m.counterparty && m.counterparty !== m.description && (
@@ -237,7 +563,7 @@ export default function BankMovements() {
                 </tr>
                 {notesOpen === m.id && (
                   <tr className="bg-muted/20">
-                    <td colSpan={7} className="p-3">
+                    <td colSpan={bankAccounts.length > 1 ? 8 : 7} className="p-3">
                       <div className="max-w-2xl">
                         <div className="flex items-center gap-2 mb-2">
                           <input
@@ -290,6 +616,7 @@ export default function BankMovements() {
         )}
       </div>
 
+      {/* Modal nou moviment */}
       <Modal isOpen={showModal} onClose={() => setShowModal(false)} title="Nou moviment bancari">
         <form onSubmit={handleSave} className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
@@ -303,6 +630,13 @@ export default function BankMovements() {
                 <option value="EXPENSE">Despesa</option>
                 <option value="INCOME">Ingrés</option>
                 <option value="TRANSFER">Transferència</option>
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="block text-sm font-medium mb-1">Compte bancari</label>
+              <select value={form.bankAccountId} onChange={(e) => setForm({ ...form, bankAccountId: e.target.value })} className="w-full rounded-md border bg-background px-3 py-2 text-sm">
+                <option value="">Selecciona compte...</option>
+                {bankAccounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
               </select>
             </div>
             <div className="col-span-2">
@@ -324,6 +658,22 @@ export default function BankMovements() {
           </div>
         </form>
       </Modal>
+
+      {/* Modal gestió comptes */}
+      <BankAccountsModal
+        isOpen={showAccountsModal}
+        onClose={() => setShowAccountsModal(false)}
+        accounts={bankAccounts}
+        onRefresh={fetchAccounts}
+      />
+
+      {/* Modal importar CSV */}
+      <ImportCsvModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        accounts={bankAccounts}
+        onSuccess={() => { refetch(); fetchAccounts(); }}
+      />
     </div>
   );
 }

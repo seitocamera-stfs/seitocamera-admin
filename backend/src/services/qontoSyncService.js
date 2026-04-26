@@ -105,6 +105,14 @@ async function syncQontoTransactions(options = {}) {
   const transactions = await readQontoTransactions();
   logger.info(`Qonto sync: ${transactions.length} transaccions llegides del Sheet`);
 
+  // Trobar o crear el compte bancari Qonto
+  let qontoAccount = await prisma.bankAccount.findFirst({ where: { syncType: 'QONTO' } });
+  if (!qontoAccount) {
+    qontoAccount = await prisma.bankAccount.create({
+      data: { id: 'qonto-default', name: 'Qonto Principal', bankEntity: 'Qonto', syncType: 'QONTO', color: '#6C5CE7', isDefault: true },
+    });
+  }
+
   let created = 0;
   let skipped = 0;
   let updated = 0;
@@ -174,6 +182,7 @@ async function syncQontoTransactions(options = {}) {
           type: mapMovementType(side, tx['operation type']),
           reference: reference || null,
           bankAccount: 'Qonto',
+          bankAccountId: qontoAccount.id,
           counterparty: counterparty || null,
           accountName: tx['account name'] || null,
           category: tx['category'] || null,
