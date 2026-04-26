@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import useAuthStore from '../stores/authStore';
+import useCompanyStore from '../stores/companyStore';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -9,6 +10,10 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const login = useAuthStore((s) => s.login);
   const navigate = useNavigate();
+  const companyName = useCompanyStore((s) => s.name);
+  const fetchCompany = useCompanyStore((s) => s.fetchCompany);
+
+  useEffect(() => { fetchCompany(); }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -28,7 +33,7 @@ export default function Login() {
     <div className="min-h-screen flex items-center justify-center bg-background">
       <div className="w-full max-w-sm">
         <div className="bg-card border rounded-lg p-8 shadow-sm">
-          <h1 className="text-2xl font-bold text-center mb-1">SeitoCamera</h1>
+          <h1 className="text-2xl font-bold text-center mb-1">{companyName}</h1>
           <p className="text-sm text-muted-foreground text-center mb-6">Panel d'administració</p>
 
           {error && (

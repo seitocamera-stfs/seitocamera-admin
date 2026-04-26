@@ -3,6 +3,7 @@ const { prisma } = require('../config/database');
 const { authenticate, authorize } = require('../middleware/auth');
 const exportService = require('../services/exportService');
 const { logger } = require('../config/logger');
+const company = require('../config/company');
 
 const router = express.Router();
 
@@ -64,7 +65,7 @@ router.get('/received-invoices/:format', authorize('ADMIN', 'EDITOR'), async (re
 
     const rows = invoices.map(exportService.transformReceivedInvoice);
     const columns = exportService.COLUMN_DEFS.receivedInvoices;
-    const title = 'Factures Rebudes — SeitoCamera';
+    const title = `Factures Rebudes — ${company.name}`;
 
     const filterParts = [];
     if (ids) {
@@ -131,7 +132,7 @@ router.get('/issued-invoices/:format', authorize('ADMIN', 'EDITOR'), async (req,
 
     const rows = invoices.map(exportService.transformIssuedInvoice);
     const columns = exportService.COLUMN_DEFS.issuedInvoices;
-    const title = 'Factures Emeses — SeitoCamera';
+    const title = `Factures Emeses — ${company.name}`;
 
     const filterParts = [];
     if (ids) {
@@ -185,7 +186,7 @@ router.get('/bank-movements/:format', authorize('ADMIN', 'EDITOR'), async (req, 
 
     const rows = movements.map(exportService.transformBankMovement);
     const columns = exportService.COLUMN_DEFS.bankMovements;
-    const title = 'Moviments Bancaris — SeitoCamera';
+    const title = `Moviments Bancaris — ${company.name}`;
 
     const filterParts = [];
     if (dateFrom) filterParts.push(`Des de: ${dateFrom}`);
@@ -231,7 +232,7 @@ router.get('/conciliations/:format', authorize('ADMIN', 'EDITOR'), async (req, r
 
     const rows = conciliations.map(exportService.transformConciliation);
     const columns = exportService.COLUMN_DEFS.conciliations;
-    const title = 'Conciliacions — SeitoCamera';
+    const title = `Conciliacions — ${company.name}`;
 
     const filterParts = [];
     if (status) filterParts.push(`Estat: ${status}`);

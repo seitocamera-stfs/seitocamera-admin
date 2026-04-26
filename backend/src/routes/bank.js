@@ -4,6 +4,7 @@ const { prisma } = require('../config/database');
 const { authenticate, authorize } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { requireSection, requireLevel } = require('../middleware/sectionAccess');
+const company = require('../config/company');
 
 const router = express.Router();
 
@@ -45,7 +46,7 @@ router.get('/', async (req, res, next) => {
         { operationType: { not: 'transfer' } },
         { NOT: {
           AND: [
-            { counterparty: { contains: 'SEITO CAMERA', mode: 'insensitive' } },
+            { counterparty: { contains: company.bankName, mode: 'insensitive' } },
           ]
         }},
         { NOT: {

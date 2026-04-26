@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { logger } = require('../config/logger');
+const company = require('../config/company');
 
 // ===========================================
 // Servei d'extracció de text i dades de PDFs
@@ -558,11 +559,11 @@ function isGenericWord(str) {
 
 const NIF_CIF_PATTERN = /\b([A-Z]\d{7}[A-Z0-9]|\d{8}[A-Z])\b/g;
 
-// NIF/CIF propis de Seito Camera — excloure'ls per no confondre emissor/receptor
-const OWN_NIF_LIST = ['B09805995'];
+// NIF/CIF propis de l'empresa — excloure'ls per no confondre emissor/receptor
+const OWN_NIF_LIST = company.nif ? company.nif.split(',').map(n => n.trim()) : [];
 
 /**
- * Detecta NIFs/CIFs dins del text, excloent els propis de Seito Camera
+ * Detecta NIFs/CIFs dins del text, excloent els propis de l'empresa
  * @param {string} text
  * @returns {string[]} Llista de NIFs/CIFs trobats (sense els propis)
  */

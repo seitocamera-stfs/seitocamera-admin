@@ -11,6 +11,7 @@ const gdrive = require('../services/gdriveService');
 const pdfExtract = require('../services/pdfExtractService');
 const templateLearning = require('../services/templateLearningService');
 const { logger } = require('../config/logger');
+const company = require('../config/company');
 
 const router = express.Router();
 
@@ -1846,7 +1847,7 @@ router.get('/issued/:id/payment-reminder', async (req, res, next) => {
       `Per a qualsevol dubte o aclariment, no dubteu en contactar-nos.`,
       ``,
       `Cordialment,`,
-      `Seito Camera S.L.`,
+      `${company.legalName}`,
     ].join('\n');
 
     res.json({

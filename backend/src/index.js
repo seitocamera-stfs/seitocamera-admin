@@ -116,6 +116,7 @@ app.get('/api/health', async (req, res) => {
 });
 
 // Rutes actives
+app.use('/api/config', require('./routes/config'));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/suppliers', require('./routes/suppliers'));

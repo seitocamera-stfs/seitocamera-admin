@@ -1,5 +1,6 @@
 const https = require('https');
 const { logger } = require('../config/logger');
+const company = require('../config/company');
 
 // ===========================================
 // Zoho Mail API Service
@@ -560,7 +561,7 @@ function classifyEmailByRules(analysis) {
 // Classificació per IA (Claude Haiku)
 // ===========================================
 
-const EMAIL_CLASSIFY_PROMPT = `Ets un assistent expert en classificació d'emails per a una empresa de producció audiovisual (Seito Camera).
+const EMAIL_CLASSIFY_PROMPT = `Ets un assistent expert en classificació d'emails per a una empresa de ${company.sector} (${company.name}).
 
 La teva tasca és determinar si un email conté o fa referència a una FACTURA (invoice) enviada per un proveïdor.
 

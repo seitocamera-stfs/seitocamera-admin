@@ -1,6 +1,7 @@
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 const { logger } = require('../config/logger');
+const company = require('../config/company');
 
 // ===========================================
 // Servei d'exportació: CSV, Excel, PDF
@@ -37,7 +38,7 @@ function generateCsv(rows, columns) {
  */
 async function generateExcel(rows, columns, sheetName = 'Dades') {
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = 'SeitoCamera Admin';
+  workbook.creator = company.appName;
   workbook.created = new Date();
 
   const sheet = workbook.addWorksheet(sheetName);
@@ -115,8 +116,8 @@ async function generatePdf(rows, columns, title, options = {}) {
         margins: { top: 40, bottom: 40, left: 30, right: 30 },
         info: {
           Title: title,
-          Author: 'SeitoCamera Admin',
-          Creator: 'SeitoCamera Admin',
+          Author: company.appName,
+          Creator: company.appName,
         },
       });
 

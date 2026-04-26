@@ -17,6 +17,7 @@ import {
   Calculator,
 } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
+import useCompanyStore from '../../stores/companyStore';
 import { canAccessSection } from '../../lib/permissions';
 
 const navItems = [
@@ -39,6 +40,7 @@ const navItems = [
 export default function Sidebar() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
+  const companyName = useCompanyStore((s) => s.name);
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -56,7 +58,7 @@ export default function Sidebar() {
       {/* Logo */}
       <div className="p-6 border-b">
         <h1 className="text-xl font-bold text-primary">
-          SeitoCamera
+          {companyName}
         </h1>
         <p className="text-xs text-muted-foreground mt-1">Panel d'administració</p>
       </div>

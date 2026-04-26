@@ -6,6 +6,7 @@ const { authenticate, authorize } = require('../middleware/auth');
 const { upload } = require('../config/upload');
 const gdrive = require('../services/gdriveService');
 const { logger } = require('../config/logger');
+const company = require('../config/company');
 
 const router = express.Router();
 
@@ -230,7 +231,7 @@ router.post('/extract-pdf', async (req, res, next) => {
       size: 'A4',
       layout: 'landscape',
       margins: { top: 40, bottom: 40, left: 30, right: 30 },
-      info: { Title: title || 'Extracte factures compartides', Author: 'SeitoCamera Admin' },
+      info: { Title: title || 'Extracte factures compartides', Author: company.appName },
     });
 
     const chunks = [];
@@ -249,7 +250,7 @@ router.post('/extract-pdf', async (req, res, next) => {
     doc.fontSize(16).font('Helvetica-Bold').text(title || 'Extracte factures compartides', { align: 'center' });
     doc.moveDown(0.3);
     doc.fontSize(9).font('Helvetica').fillColor('#666666').text(
-      `SEITO CAMERA · LA LOGISTIK FILM SERVICES — ${rows.length} factures — Generat: ${new Date().toLocaleDateString('ca-ES')}`,
+      `${company.name.toUpperCase()} · LA LOGISTIK FILM SERVICES — ${rows.length} factures — Generat: ${new Date().toLocaleDateString('ca-ES')}`,
       { align: 'center' }
     );
     doc.moveDown(0.8);

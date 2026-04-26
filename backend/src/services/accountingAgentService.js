@@ -12,6 +12,7 @@
 
 const { logger } = require('../config/logger');
 const { prisma } = require('../config/database');
+const company = require('../config/company');
 
 // ===========================================
 // Configuració Claude API
@@ -59,7 +60,7 @@ async function callLLM(systemPrompt, messages, options = {}) {
 // System Prompts
 // ===========================================
 
-const SYSTEM_PROMPT_CLASSIFIER = `Ets un expert comptable especialitzat en el Pla General Comptable (PGC) espanyol, treballant per una empresa de lloguer d'equips audiovisuals i fotografia (Seito Camera).
+const SYSTEM_PROMPT_CLASSIFIER = `Ets un expert comptable especialitzat en el Pla General Comptable (PGC) espanyol, treballant per una empresa de ${company.sector} (${company.name}).
 
 El teu treball és classificar factures rebudes (despeses) en:
 
@@ -116,7 +117,7 @@ Respon SEMPRE en format JSON:
   "reasoning": "Explicació breu del raonament"
 }`;
 
-const SYSTEM_PROMPT_ANOMALY = `Ets un auditor comptable expert revisant factures d'una empresa d'equips audiovisuals (Seito Camera, Barcelona).
+const SYSTEM_PROMPT_ANOMALY = `Ets un auditor comptable expert revisant factures d'una empresa de ${company.sector} (${company.name}, ${company.city}).
 
 Busca anomalies en les factures rebudes:
 
@@ -141,7 +142,7 @@ Per cada anomalia, respon en JSON:
 
 Si no trobes anomalies, respon: { "anomalies": [] }`;
 
-const SYSTEM_PROMPT_CHAT = `Ets un assessor comptable expert, treballant com a assistent intern per Seito Camera, una empresa de lloguer d'equips audiovisuals i fotografia a Barcelona.
+const SYSTEM_PROMPT_CHAT = `Ets un assessor comptable expert, treballant com a assistent intern per ${company.name}, una empresa de ${company.sector} a ${company.city}.
 
 Tens ACCÉS TOTAL i EN TEMPS REAL a TOTES les dades de l'empresa. Cada cop que l'usuari fa una pregunta, reps automàticament les dades rellevants de la base de dades.
 

@@ -6,6 +6,7 @@ const { validate } = require('../middleware/validate');
 const { requireSection, requireLevel } = require('../middleware/sectionAccess');
 const { logger } = require('../config/logger');
 const { runAIConciliation } = require('../services/aiConciliationService');
+const company = require('../config/company');
 
 const router = express.Router();
 
@@ -304,7 +305,7 @@ router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
         isConciliated: false,
         OR: [
           { description: { contains: 'Internal transfer', mode: 'insensitive' } },
-          { counterparty: { contains: 'SEITO CAMERA', mode: 'insensitive' } },
+          { counterparty: { contains: company.bankName, mode: 'insensitive' } },
         ],
       },
     });
@@ -365,7 +366,7 @@ router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
         isConciliated: false,
         NOT: [
           { description: { contains: 'Internal transfer', mode: 'insensitive' } },
-          { counterparty: { contains: 'SEITO CAMERA', mode: 'insensitive' } },
+          { counterparty: { contains: company.bankName, mode: 'insensitive' } },
         ],
       },
       orderBy: { date: 'desc' },
@@ -379,7 +380,7 @@ router.post('/auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
         conciliations: { none: {} },
         NOT: [
           { description: { contains: 'Internal transfer', mode: 'insensitive' } },
-          { counterparty: { contains: 'SEITO CAMERA', mode: 'insensitive' } },
+          { counterparty: { contains: company.bankName, mode: 'insensitive' } },
         ],
       },
       orderBy: { date: 'desc' },
@@ -671,7 +672,7 @@ router.post('/ai-auto', authorize('ADMIN', 'EDITOR'), async (req, res, next) => 
       isConciliated: false,
       NOT: [
         { description: { contains: 'Internal transfer', mode: 'insensitive' } },
-        { counterparty: { contains: 'SEITO CAMERA', mode: 'insensitive' } },
+        { counterparty: { contains: company.bankName, mode: 'insensitive' } },
       ],
     };
     if (Array.isArray(movementIds) && movementIds.length > 0) {
