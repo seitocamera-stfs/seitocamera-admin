@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import {
   Plus, Search, Trash2, Check, X as XIcon, CheckCircle,
   FileText, Upload, Eye, Link2, AlertTriangle, Ban, Package, Sparkles, CreditCard,
-  ChevronRight, Paperclip, Pencil, RefreshCw, GitMerge,
+  ChevronRight, Paperclip, Pencil, RefreshCw, GitMerge, Split,
 } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import { StatusBadge } from '../components/shared/StatusBadge';
@@ -968,6 +968,11 @@ export default function ReceivedInvoices() {
                         {inv._count?.equipment > 0 && (
                           <span title={`${inv._count.equipment} equip${inv._count.equipment > 1 ? 's' : ''} a inventari`} className="text-violet-500">
                             <Package size={14} />
+                          </span>
+                        )}
+                        {inv.isShared && (
+                          <span title={`Compartida ${inv.sharedPercentSeito || 50}/${inv.sharedPercentLogistik || 50}`} className="text-blue-500">
+                            <Split size={14} />
                           </span>
                         )}
                         {inv.isDuplicate && (
