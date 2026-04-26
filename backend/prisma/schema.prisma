@@ -306,6 +306,10 @@ model BankAccount {
   color         String       @default("#2390A0")  // Color per distingir comptes
   isActive      Boolean      @default(true)
   isDefault     Boolean      @default(false)      // Compte per defecte
+  syncConfig    Json?                              // Config connexió: { orgSlug, secretKey } (Qonto) o { requisitionId, accountId, secretId, secretKey } (GoCardless)
+  currentBalance Decimal?    @db.Decimal(12, 2)   // Saldo real obtingut via API
+  lastSyncAt    DateTime?                          // Última sincronització exitosa
+  lastSyncError String?                            // Últim error de sincronització
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 

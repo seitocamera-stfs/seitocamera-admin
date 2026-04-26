@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Search, ArrowUpCircle, ArrowDownCircle, Trash2, RefreshCw, CheckCircle2, AlertCircle, MessageSquare, Send, X, Settings, Upload, Building2 } from 'lucide-react';
+import { Plus, Search, ArrowUpCircle, ArrowDownCircle, Trash2, RefreshCw, CheckCircle2, AlertCircle, MessageSquare, Send, X, Settings, Upload, Building2, Wifi, WifiOff, Link, Unlink, ExternalLink, Eye, EyeOff } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import Modal from '../components/shared/Modal';
 import { formatCurrency, formatDate } from '../lib/utils';
@@ -10,7 +10,7 @@ function SyncStatus({ lastSync, onSync, syncing }) {
   if (!lastSync && !syncing) {
     return (
       <button onClick={onSync} className="flex items-center gap-2 px-3 py-2 rounded-md border text-sm hover:bg-muted">
-        <RefreshCw size={14} /> Sync Qonto
+        <RefreshCw size={14} /> Sincronitzar
       </button>
     );
   }
@@ -35,7 +35,7 @@ function SyncStatus({ lastSync, onSync, syncing }) {
         onClick={onSync}
         disabled={syncing}
         className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs hover:bg-muted disabled:opacity-50"
-        title="Sincronitzar moviments de Qonto"
+        title="Sincronitzar moviments bancaris"
       >
         <RefreshCw size={12} className={syncing ? 'animate-spin' : ''} />
         {syncing ? 'Sincronitzant...' : 'Sync'}
@@ -62,6 +62,10 @@ function BankAccountsModal({ isOpen, onClose, accounts, onRefresh }) {
   const [form, setForm] = useState({ name: '', iban: '', bankEntity: '', syncType: 'MANUAL', color: '#2390A0' });
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [connectingId, setConnectingId] = useState(null);
+  const [connectForm, setConnectForm] = useState({});
+  const [connectStatus, setConnectStatus] = useState({});
+  const [showSecret, setShowSecret] = useState({});
 
   const COLORS = ['#6C5CE7', '#2390A0', '#E17055', '#00B894', '#FDCB6E', '#636E72', '#0984E3', '#D63031'];
 
@@ -98,27 +102,217 @@ function BankAccountsModal({ isOpen, onClose, accounts, onRefresh }) {
     }
   };
 
+  // Connexió API
+  const handleConnect = async (accId, syncType) => {
+    try {
+      setConnectStatus((s) => ({ ...s, [accId]: { loading: true } }));
+
+      if (syncType === 'QONTO') {
+        const { data } = await api.post(`/bank-accounts/${accId}/connect`, {
+          syncType: 'QONTO',
+          config: { orgSlug: connectForm[accId]?.orgSlug, secretKey: connectForm[accId]?.secretKey },
+        });
+        setConnectStatus((s) => ({ ...s, [accId]: { success: true, message: data.message } }));
+        onRefresh();
+      } else if (syncType === 'OPEN_BANKING') {
+        const { data } = await api.post(`/bank-accounts/${accId}/connect`, {
+          syncType: 'OPEN_BANKING',
+          config: {
+            institutionId: connectForm[accId]?.institutionId || 'BSABESBBXXX',
+            secretId: connectForm[accId]?.secretId,
+            secretKey: connectForm[accId]?.secretKey,
+            redirectUrl: `${window.location.origin}/bank?callback=openbanking&accountId=${accId}`,
+          },
+        });
+        if (data.link) {
+          setConnectStatus((s) => ({ ...s, [accId]: { success: true, message: 'Redirigint al banc...', link: data.link } }));
+          // Obrir en nova finestra
+          window.open(data.link, '_blank');
+        }
+      }
+    } catch (err) {
+      setConnectStatus((s) => ({ ...s, [accId]: { error: err.response?.data?.error || err.message } }));
+    }
+  };
+
+  const handleDisconnect = async (accId) => {
+    if (!confirm('Desconnectar aquest compte de l\'API?')) return;
+    try {
+      await api.post(`/bank-accounts/${accId}/disconnect`);
+      setConnectStatus((s) => ({ ...s, [accId]: { success: true, message: 'Desconnectat' } }));
+      onRefresh();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error');
+    }
+  };
+
+  const checkConnection = async (accId) => {
+    try {
+      const { data } = await api.post(`/bank-accounts/${accId}/check-connection`);
+      setConnectStatus((s) => ({ ...s, [accId]: { info: true, ...data } }));
+    } catch (err) {
+      setConnectStatus((s) => ({ ...s, [accId]: { error: err.response?.data?.error || err.message } }));
+    }
+  };
+
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Gestionar comptes bancaris">
-      <div className="space-y-4">
+      <div className="space-y-4 max-h-[70vh] overflow-y-auto">
         {/* Llistat */}
         <div className="space-y-2">
           {accounts.map((acc) => (
-            <div key={acc.id} className="flex items-center gap-3 p-3 rounded-md border">
-              <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: acc.color }} />
-              <div className="flex-1 min-w-0">
-                <div className="font-medium text-sm flex items-center gap-2">
-                  {acc.name}
-                  {acc.isDefault && <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded">Per defecte</span>}
+            <div key={acc.id} className="rounded-md border">
+              <div className="flex items-center gap-3 p-3">
+                <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: acc.color }} />
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-sm flex items-center gap-2">
+                    {acc.name}
+                    {acc.isDefault && <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded">Per defecte</span>}
+                    {acc.syncType !== 'MANUAL' && acc.syncType !== 'CSV' && (
+                      <span className="text-[10px] bg-green-100 text-green-800 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                        <Wifi size={8} /> {acc.syncType}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {acc.bankEntity || 'Manual'} · {acc._count?.movements || 0} moviments
+                    {acc.iban && <span> · {acc.iban}</span>}
+                    {acc.currentBalance != null && (
+                      <span className="ml-2 font-medium text-foreground">Saldo: {formatCurrency(parseFloat(acc.currentBalance))}</span>
+                    )}
+                    {acc.lastSyncAt && (
+                      <span className="ml-2">· Última sync: {getTimeAgo(acc.lastSyncAt)}</span>
+                    )}
+                  </div>
                 </div>
-                <div className="text-xs text-muted-foreground">
-                  {acc.bankEntity || 'Manual'} · {acc.syncType} · {acc._count?.movements || 0} moviments
-                  {acc.iban && <span> · {acc.iban}</span>}
+                <div className="flex items-center gap-1">
+                  {(acc.syncType === 'QONTO' || acc.syncType === 'OPEN_BANKING') && (
+                    <button onClick={() => setConnectingId(connectingId === acc.id ? null : acc.id)}
+                      className="text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded hover:bg-muted flex items-center gap-1">
+                      <Link size={12} /> API
+                    </button>
+                  )}
+                  <button onClick={() => handleEdit(acc)} className="text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded hover:bg-muted">Editar</button>
+                  {!acc.isDefault && (
+                    <button onClick={() => handleDelete(acc.id)} className="text-xs text-destructive hover:text-destructive/80 px-2 py-1 rounded hover:bg-destructive/10">Eliminar</button>
+                  )}
                 </div>
               </div>
-              <button onClick={() => handleEdit(acc)} className="text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded hover:bg-muted">Editar</button>
-              {!acc.isDefault && (
-                <button onClick={() => handleDelete(acc.id)} className="text-xs text-destructive hover:text-destructive/80 px-2 py-1 rounded hover:bg-destructive/10">Eliminar</button>
+
+              {/* Panell de connexió API */}
+              {connectingId === acc.id && (
+                <div className="border-t p-3 bg-muted/30 space-y-3">
+                  {acc.syncType === 'QONTO' && (
+                    <>
+                      <p className="text-xs font-medium">Connexió API Qonto</p>
+                      <p className="text-[11px] text-muted-foreground">Ves a Qonto → Settings → API per obtenir les credencials. L'accés és només de lectura.</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[11px] font-medium mb-0.5">Organization Slug</label>
+                          <input type="text" value={connectForm[acc.id]?.orgSlug || ''} onChange={(e) => setConnectForm({ ...connectForm, [acc.id]: { ...connectForm[acc.id], orgSlug: e.target.value } })}
+                            placeholder="la-teva-org" className="w-full rounded border bg-background px-2 py-1.5 text-xs" />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-medium mb-0.5">Secret Key</label>
+                          <div className="relative">
+                            <input type={showSecret[acc.id] ? 'text' : 'password'} value={connectForm[acc.id]?.secretKey || ''} onChange={(e) => setConnectForm({ ...connectForm, [acc.id]: { ...connectForm[acc.id], secretKey: e.target.value } })}
+                              placeholder="••••••••" className="w-full rounded border bg-background px-2 py-1.5 text-xs pr-7" />
+                            <button type="button" onClick={() => setShowSecret({ ...showSecret, [acc.id]: !showSecret[acc.id] })}
+                              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                              {showSecret[acc.id] ? <EyeOff size={12} /> : <Eye size={12} />}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => handleConnect(acc.id, 'QONTO')}
+                          disabled={connectStatus[acc.id]?.loading || !connectForm[acc.id]?.orgSlug || !connectForm[acc.id]?.secretKey}
+                          className="px-3 py-1.5 rounded bg-primary text-primary-foreground text-xs font-medium disabled:opacity-50">
+                          {connectStatus[acc.id]?.loading ? 'Connectant...' : 'Connectar'}
+                        </button>
+                        <button onClick={() => checkConnection(acc.id)} className="px-3 py-1.5 rounded border text-xs hover:bg-muted">Testar</button>
+                        <button onClick={() => handleDisconnect(acc.id)} className="px-3 py-1.5 rounded border text-xs text-destructive hover:bg-destructive/10 flex items-center gap-1">
+                          <Unlink size={10} /> Desconnectar
+                        </button>
+                      </div>
+                    </>
+                  )}
+
+                  {acc.syncType === 'OPEN_BANKING' && (
+                    <>
+                      <p className="text-xs font-medium">Connexió Open Banking (GoCardless)</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        Registra't a <a href="https://bankaccountdata.gocardless.com" target="_blank" rel="noopener noreferrer" className="underline">GoCardless Bank Account Data</a> (gratis fins a 50 comptes).
+                        Seràs redirigit al teu banc per autoritzar l'accés de lectura.
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[11px] font-medium mb-0.5">Secret ID</label>
+                          <input type="text" value={connectForm[acc.id]?.secretId || ''} onChange={(e) => setConnectForm({ ...connectForm, [acc.id]: { ...connectForm[acc.id], secretId: e.target.value } })}
+                            placeholder="xxxxxxxx-xxxx-xxxx-xxxx" className="w-full rounded border bg-background px-2 py-1.5 text-xs" />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-medium mb-0.5">Secret Key</label>
+                          <div className="relative">
+                            <input type={showSecret[acc.id] ? 'text' : 'password'} value={connectForm[acc.id]?.secretKey || ''} onChange={(e) => setConnectForm({ ...connectForm, [acc.id]: { ...connectForm[acc.id], secretKey: e.target.value } })}
+                              placeholder="••••••••" className="w-full rounded border bg-background px-2 py-1.5 text-xs pr-7" />
+                            <button type="button" onClick={() => setShowSecret({ ...showSecret, [acc.id]: !showSecret[acc.id] })}
+                              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                              {showSecret[acc.id] ? <EyeOff size={12} /> : <Eye size={12} />}
+                            </button>
+                          </div>
+                        </div>
+                        <div className="col-span-2">
+                          <label className="block text-[11px] font-medium mb-0.5">Banc (Institution ID)</label>
+                          <select value={connectForm[acc.id]?.institutionId || 'BSABESBBXXX'} onChange={(e) => setConnectForm({ ...connectForm, [acc.id]: { ...connectForm[acc.id], institutionId: e.target.value } })}
+                            className="w-full rounded border bg-background px-2 py-1.5 text-xs">
+                            <option value="BSABESBBXXX">Banc Sabadell</option>
+                            <option value="CAIXESBBXXX">CaixaBank</option>
+                            <option value="BBVAESMMXXX">BBVA</option>
+                            <option value="BSCHESMMXXX">Santander</option>
+                            <option value="BKBKESMMXXX">Bankinter</option>
+                            <option value="INGDESMMXXX">ING</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => handleConnect(acc.id, 'OPEN_BANKING')}
+                          disabled={connectStatus[acc.id]?.loading || !connectForm[acc.id]?.secretId || !connectForm[acc.id]?.secretKey}
+                          className="px-3 py-1.5 rounded bg-primary text-primary-foreground text-xs font-medium disabled:opacity-50 flex items-center gap-1">
+                          <ExternalLink size={10} />
+                          {connectStatus[acc.id]?.loading ? 'Connectant...' : 'Connectar amb el banc'}
+                        </button>
+                        <button onClick={() => checkConnection(acc.id)} className="px-3 py-1.5 rounded border text-xs hover:bg-muted">Comprovar estat</button>
+                        <button onClick={() => handleDisconnect(acc.id)} className="px-3 py-1.5 rounded border text-xs text-destructive hover:bg-destructive/10 flex items-center gap-1">
+                          <Unlink size={10} /> Desconnectar
+                        </button>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Estat connexió */}
+                  {connectStatus[acc.id]?.success && (
+                    <div className="bg-green-50 text-green-800 rounded p-2 text-xs flex items-center gap-1.5">
+                      <CheckCircle2 size={12} /> {connectStatus[acc.id].message}
+                      {connectStatus[acc.id].link && (
+                        <a href={connectStatus[acc.id].link} target="_blank" rel="noopener noreferrer" className="underline ml-1">Obrir enllanç del banc</a>
+                      )}
+                    </div>
+                  )}
+                  {connectStatus[acc.id]?.error && (
+                    <div className="bg-red-50 text-red-800 rounded p-2 text-xs flex items-center gap-1.5">
+                      <AlertCircle size={12} /> {connectStatus[acc.id].error}
+                    </div>
+                  )}
+                  {connectStatus[acc.id]?.info && (
+                    <div className="bg-blue-50 text-blue-800 rounded p-2 text-xs">
+                      {connectStatus[acc.id].connected
+                        ? <span className="flex items-center gap-1"><Wifi size={10} /> Connectat correctament</span>
+                        : <span className="flex items-center gap-1"><WifiOff size={10} /> {connectStatus[acc.id].statusDescription || connectStatus[acc.id].error || 'No connectat'}</span>
+                      }
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           ))}
@@ -145,8 +339,8 @@ function BankAccountsModal({ isOpen, onClose, accounts, onRefresh }) {
               <select value={form.syncType} onChange={(e) => setForm({ ...form, syncType: e.target.value })} className="w-full rounded-md border bg-background px-3 py-2 text-sm">
                 <option value="MANUAL">Manual</option>
                 <option value="CSV">CSV</option>
-                <option value="QONTO">Qonto</option>
-                <option value="OPEN_BANKING">Open Banking</option>
+                <option value="QONTO">Qonto (API directa)</option>
+                <option value="OPEN_BANKING">Open Banking (GoCardless)</option>
               </select>
             </div>
             <div className="col-span-2">
@@ -401,10 +595,33 @@ export default function BankMovements() {
   const handleSync = async () => {
     setSyncing(true);
     try {
-      const { data: result } = await api.post('/bank/qonto/sync');
-      setLastSync({ ...result, timestamp: new Date().toISOString(), success: true });
+      // Sincronitzar tots els comptes amb sync automàtic
+      const apiAccounts = bankAccounts.filter(a => a.syncType === 'QONTO' || a.syncType === 'OPEN_BANKING');
+      const results = [];
+      for (const acc of apiAccounts) {
+        try {
+          const { data: result } = await api.post(`/bank-accounts/${acc.id}/sync`);
+          results.push({ ...result, accountName: acc.name });
+        } catch (err) {
+          results.push({ success: false, accountName: acc.name, error: err.response?.data?.error || err.message });
+        }
+      }
+      // Si no hi ha comptes API, provar sync antic
+      if (apiAccounts.length === 0) {
+        try {
+          const { data: result } = await api.post('/bank/qonto/sync');
+          results.push(result);
+        } catch (err) {
+          results.push({ success: false, error: err.response?.data?.error || err.message });
+        }
+      }
+      const totalCreated = results.reduce((s, r) => s + (r.created || 0), 0);
+      const totalSkipped = results.reduce((s, r) => s + (r.skipped || 0), 0);
+      const hasErrors = results.some(r => r.success === false);
+      setLastSync({ success: !hasErrors, created: totalCreated, skipped: totalSkipped, timestamp: new Date().toISOString(), accounts: results });
       refetch();
       fetchSummary();
+      fetchAccounts();
     } catch (err) {
       setLastSync({ success: false, error: err.response?.data?.error || err.message, timestamp: new Date().toISOString() });
     } finally {
@@ -434,15 +651,15 @@ export default function BankMovements() {
     refetch();
   };
 
-  // Trobar el compte Qonto per mostrar sync només si existeix
-  const qontoAccount = bankAccounts.find(a => a.syncType === 'QONTO');
+  // Mostrar sync si hi ha algun compte amb API
+  const hasApiAccounts = bankAccounts.some(a => a.syncType === 'QONTO' || a.syncType === 'OPEN_BANKING');
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold">Moviments bancaris</h2>
         <div className="flex items-center gap-2">
-          {qontoAccount && <SyncStatus lastSync={lastSync} onSync={handleSync} syncing={syncing} />}
+          {hasApiAccounts && <SyncStatus lastSync={lastSync} onSync={handleSync} syncing={syncing} />}
           <ExportButtons
             endpoint="/export/bank-movements"
             filters={{ search: search || undefined, type: typeFilter || undefined, conciliated: conciliatedFilter || undefined, bankAccountId: accountFilter || undefined }}
@@ -476,6 +693,9 @@ export default function BankMovements() {
                   <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded ml-auto">{acc.syncType}</span>
                 )}
               </div>
+              {acc.currentBalance != null && (
+                <div className="text-lg font-bold mb-1">{formatCurrency(parseFloat(acc.currentBalance))}</div>
+              )}
               <div className="text-xs text-muted-foreground mb-1">Últims 30 dies</div>
               <div className="flex items-center gap-3 text-sm">
                 <span className="text-green-600 font-medium">+{formatCurrency(acc.incomeMonth)}</span>
@@ -483,6 +703,7 @@ export default function BankMovements() {
               </div>
               <div className="text-[10px] text-muted-foreground mt-2">
                 {acc.movementCount} moviments totals
+                {acc.lastSyncAt && <span> · Sync {getTimeAgo(acc.lastSyncAt)}</span>}
               </div>
             </button>
           ))}
