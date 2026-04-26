@@ -330,6 +330,8 @@ export default function BankMovements() {
 
   // Comptes bancaris
   const [bankAccounts, setBankAccounts] = useState([]);
+  const [accountSummary, setAccountSummary] = useState(null);
+
   const fetchAccounts = useCallback(async () => {
     try {
       const { data } = await api.get('/bank-accounts');
@@ -337,7 +339,14 @@ export default function BankMovements() {
     } catch {}
   }, []);
 
-  useEffect(() => { fetchAccounts(); }, [fetchAccounts]);
+  const fetchSummary = useCallback(async () => {
+    try {
+      const { data } = await api.get('/bank-accounts/summary');
+      setAccountSummary(data);
+    } catch {}
+  }, []);
+
+  useEffect(() => { fetchAccounts(); fetchSummary(); }, [fetchAccounts, fetchSummary]);
 
   const { data, loading, refetch } = useApiGet('/bank', {
     search,
@@ -395,6 +404,7 @@ export default function BankMovements() {
       const { data: result } = await api.post('/bank/qonto/sync');
       setLastSync({ ...result, timestamp: new Date().toISOString(), success: true });
       refetch();
+      fetchSummary();
     } catch (err) {
       setLastSync({ success: false, error: err.response?.data?.error || err.message, timestamp: new Date().toISOString() });
     } finally {
@@ -449,6 +459,56 @@ export default function BankMovements() {
           </button>
         </div>
       </div>
+
+      {/* Resum saldos */}
+      {accountSummary && (
+        <div className="grid gap-3 mb-5" style={{ gridTemplateColumns: `repeat(${Math.min(accountSummary.accounts.length + 1, 4)}, 1fr)` }}>
+          {accountSummary.accounts.map((acc) => (
+            <button
+              key={acc.id}
+              onClick={() => { setAccountFilter(accountFilter === acc.id ? '' : acc.id); setPage(1); }}
+              className={`bg-card border rounded-lg p-4 text-left transition-all hover:shadow-sm ${accountFilter === acc.id ? 'ring-2 ring-primary' : ''}`}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <span className="w-3 h-3 rounded-full" style={{ backgroundColor: acc.color }} />
+                <span className="text-sm font-medium truncate">{acc.name}</span>
+                {acc.syncType !== 'MANUAL' && (
+                  <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded ml-auto">{acc.syncType}</span>
+                )}
+              </div>
+              <div className="text-2xl font-bold">{formatCurrency(acc.balance)}</div>
+              <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground">
+                <span className="text-green-600">+{formatCurrency(acc.income)}</span>
+                <span className="text-red-600">{formatCurrency(acc.expense)}</span>
+              </div>
+              {acc.balanceDate && (
+                <div className="text-[10px] text-muted-foreground mt-1">
+                  Últim mov. {formatDate(acc.balanceDate)}
+                </div>
+              )}
+            </button>
+          ))}
+          {accountSummary.accounts.length > 1 && (
+            <button
+              onClick={() => { setAccountFilter(''); setPage(1); }}
+              className={`bg-card border rounded-lg p-4 text-left transition-all hover:shadow-sm ${!accountFilter ? 'ring-2 ring-primary' : ''}`}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <Building2 size={14} className="text-muted-foreground" />
+                <span className="text-sm font-medium">Total</span>
+              </div>
+              <div className="text-2xl font-bold">{formatCurrency(accountSummary.totals.balance)}</div>
+              <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground">
+                <span className="text-green-600">+{formatCurrency(accountSummary.totals.income)}</span>
+                <span className="text-red-600">{formatCurrency(accountSummary.totals.expense)}</span>
+              </div>
+              <div className="text-[10px] text-muted-foreground mt-1">
+                {accountSummary.totals.movementCount} moviments
+              </div>
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Filtres */}
       <div className="flex gap-3 mb-4">
@@ -672,7 +732,7 @@ export default function BankMovements() {
         isOpen={showImportModal}
         onClose={() => setShowImportModal(false)}
         accounts={bankAccounts}
-        onSuccess={() => { refetch(); fetchAccounts(); }}
+        onSuccess={() => { refetch(); fetchAccounts(); fetchSummary(); }}
       />
     </div>
   );
