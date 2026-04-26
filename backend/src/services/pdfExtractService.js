@@ -560,7 +560,7 @@ function isGenericWord(str) {
 const NIF_CIF_PATTERN = /\b([A-Z]\d{7}[A-Z0-9]|\d{8}[A-Z])\b/g;
 
 // NIF/CIF propis de l'empresa — excloure'ls per no confondre emissor/receptor
-const OWN_NIF_LIST = company.nif ? company.nif.split(',').map(n => n.trim()) : [];
+const OWN_NIF_LIST = company.allNifs || (company.nif ? company.nif.split(',').map(n => n.trim()) : []);
 
 /**
  * Detecta NIFs/CIFs dins del text, excloent els propis de l'empresa
@@ -590,8 +590,8 @@ function detectSupplierName(text) {
 
   const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-  // Llista de noms propis de Seito Camera (per excloure)
-  const ownNames = ['seito camera', 'seitocamera'];
+  // Llista de noms propis de l'empresa (per excloure com a proveïdor)
+  const ownNames = company.allNames.map(n => n.toLowerCase());
 
   function isOwnName(name) {
     const lower = name.toLowerCase();

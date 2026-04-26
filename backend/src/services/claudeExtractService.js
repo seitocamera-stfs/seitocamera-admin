@@ -87,14 +87,15 @@ IMPORTANT:
 - Els imports han de ser números (float), NO strings.
 - La data ha de ser format ISO: "YYYY-MM-DD".
 - El NIF/CIF espanyol té format: lletra + 7 dígits + lletra/dígit (empreses: B12345678) o 8 dígits + lletra (persones: 12345678A).
-- Exclou el NIF ${company.nif} (és l'empresa receptora, ${company.name}).
+- Exclou els NIFs ${company.allNifs.join(', ')} (són l'empresa receptora, ${company.name}).
+- L'empresa receptora pot aparèixer amb noms anteriors: ${company.allNames.join(', ')}. Totes són la mateixa empresa — NO les consideris com a proveïdor.
 - Si el document NO és una factura (és un albarà, pressupost, rebut, contracte, etc.), indica-ho al camp documentType.
 
 Format de resposta (JSON estricte):
 {
   "invoiceNumber": "string o null — número de factura exacte tal com apareix",
   "supplierName": "string o null — nom de l'empresa emissora",
-  "supplierNif": "string o null — NIF/CIF de l'empresa emissora (NO el de ${company.name} ${company.nif})",
+  "supplierNif": "string o null — NIF/CIF de l'empresa emissora (NO els de ${company.allNames[0]}: ${company.allNifs.join(', ')})",
   "issueDate": "YYYY-MM-DD o null — data d'emissió de la factura",
   "dueDate": "YYYY-MM-DD o null — data de venciment (fecha de vencimiento, due date, payment date)",
   "totalAmount": 0.00,
