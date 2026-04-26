@@ -1053,8 +1053,8 @@ export default function ReceivedInvoices() {
                     <td className="p-3 text-right">
                       <div className="flex items-center justify-end gap-1">
                         <button onClick={() => openEditModal(inv)} className="p-1.5 rounded hover:bg-blue-50 text-blue-600" title="Editar"><Pencil size={14} /></button>
-                        {/* PDF_PENDING: cal revisar → marcar com a Pendent (revisada) */}
-                        {inv.status === 'PDF_PENDING' && (
+                        {/* PDF_PENDING o AMOUNT_PENDING: cal revisar → marcar com a Pendent (revisada) */}
+                        {(inv.status === 'PDF_PENDING' || inv.status === 'AMOUNT_PENDING') && (
                           <button onClick={() => handleStatusChange(inv.id, 'PENDING')} className="p-1.5 rounded hover:bg-blue-50 text-blue-600" title="Marcar com revisada"><Check size={14} /></button>
                         )}
                         {/* PENDING o REVIEWED: es pot aprovar o rebutjar */}
