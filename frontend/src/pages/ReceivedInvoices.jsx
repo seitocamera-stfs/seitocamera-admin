@@ -930,8 +930,8 @@ export default function ReceivedInvoices() {
       )}
 
       {/* Taula */}
-      <div className="bg-card border rounded-lg overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="bg-card border rounded-lg overflow-x-auto">
+        <table className="w-full text-sm min-w-[1200px]">
           <thead className="bg-muted/50">
             <tr>
               <th className="p-3 w-10">
