@@ -142,7 +142,7 @@ router.get('/received', async (req, res, next) => {
     // Filtre per alertes — factures que necessiten revisió
     if (alerts === 'true') {
       where.OR = [
-        { totalAmount: { lte: 0 } },                                      // Import 0€ o negatiu
+        { totalAmount: { equals: 0 } },                                     // Import 0€ (negatius són abonaments vàlids)
         { invoiceNumber: { startsWith: 'PROV-' } },                       // Número provisional
         { invoiceNumber: { startsWith: 'GDRIVE-' } },                     // Número provisional
         { invoiceNumber: { startsWith: 'ZOHO-' } },                       // Número provisional
@@ -231,7 +231,7 @@ router.get('/received', async (req, res, next) => {
 
       // Alertes: motius pels quals la factura necessita revisió
       const alertReasons = [];
-      if (parseFloat(inv.totalAmount) <= 0) alertReasons.push('Import 0€');
+      if (parseFloat(inv.totalAmount) === 0) alertReasons.push('Import 0€');
       if (/^(PROV-|GDRIVE-|ZOHO-)/.test(inv.invoiceNumber)) alertReasons.push('Nº provisional');
       if (inv.invoiceNumber.includes('-DUP-')) alertReasons.push('Duplicat');
       if (!inv.supplierId) alertReasons.push('Sense proveïdor');
