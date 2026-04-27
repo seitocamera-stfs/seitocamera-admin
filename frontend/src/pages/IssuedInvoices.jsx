@@ -16,6 +16,7 @@ export default function IssuedInvoices() {
   const [sortBy, setSortBy] = useState('issueDate');
   const [sortDir, setSortDir] = useState('desc');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
   const [showModal, setShowModal] = useState(false);
   const [detailInvoice, setDetailInvoice] = useState(null);
   const [backfilling, setBackfilling] = useState(false);
@@ -26,7 +27,7 @@ export default function IssuedInvoices() {
   const currentUser = useAuthStore((s) => s.user);
   const isAdmin = currentUser?.role === 'ADMIN';
 
-  const { data, loading, refetch } = useApiGet('/invoices/issued', { search, status: statusFilter || undefined, page, limit: 25 });
+  const { data, loading, refetch } = useApiGet('/invoices/issued', { search, status: statusFilter || undefined, sortBy, sortOrder: sortDir, page, limit: pageSize });
   const { data: clientsData } = useApiGet('/clients', { limit: 100 });
   const { mutate } = useApiMutation();
 
@@ -37,6 +38,7 @@ export default function IssuedInvoices() {
       setSortBy(field);
       setSortDir('asc');
     }
+    setPage(1);
   };
 
   // Gestió selecció
@@ -60,41 +62,8 @@ export default function IssuedInvoices() {
 
   const clearSelection = () => setSelectedIds([]);
 
-  const sortedData = (() => {
-    if (!data?.data) return [];
-    const items = [...data.data];
-    items.sort((a, b) => {
-      let valA, valB;
-      switch (sortBy) {
-        case 'invoiceNumber':
-          valA = (a.invoiceNumber || '').toLowerCase();
-          valB = (b.invoiceNumber || '').toLowerCase();
-          break;
-        case 'client':
-          valA = (a.client?.name || '').toLowerCase();
-          valB = (b.client?.name || '').toLowerCase();
-          break;
-        case 'issueDate':
-          valA = new Date(a.issueDate || 0).getTime();
-          valB = new Date(b.issueDate || 0).getTime();
-          break;
-        case 'totalAmount':
-          valA = parseFloat(a.totalAmount) || 0;
-          valB = parseFloat(b.totalAmount) || 0;
-          break;
-        case 'status':
-          valA = a.status || '';
-          valB = b.status || '';
-          break;
-        default:
-          return 0;
-      }
-      if (valA < valB) return sortDir === 'asc' ? -1 : 1;
-      if (valA > valB) return sortDir === 'asc' ? 1 : -1;
-      return 0;
-    });
-    return items;
-  })();
+  // L'ordenació es fa al backend — les dades ja venen ordenades
+  const sortedData = data?.data || [];
 
   const calcTax = (subtotal, rate) => {
     const s = parseFloat(subtotal) || 0;
@@ -326,19 +295,32 @@ export default function IssuedInvoices() {
             )}
           </tbody>
         </table>
-      </div>
 
-      {/* Paginació */}
-      {data?.pagination && data.pagination.totalPages > 1 && (
-        <div className="flex items-center justify-between p-3 border-t text-sm">
-          <span className="text-muted-foreground">{data.pagination.total} factures</span>
-          <div className="flex gap-2">
-            <button onClick={() => { setPage(Math.max(1, page - 1)); clearSelection(); }} disabled={page === 1} className="px-3 py-1 rounded border disabled:opacity-50">Anterior</button>
-            <span className="px-3 py-1">{page} / {data.pagination.totalPages}</span>
-            <button onClick={() => { setPage(Math.min(data.pagination.totalPages, page + 1)); clearSelection(); }} disabled={page >= data.pagination.totalPages} className="px-3 py-1 rounded border disabled:opacity-50">Següent</button>
+        {/* Paginació */}
+        {data?.pagination && (
+          <div className="flex items-center justify-between p-3 border-t text-sm">
+            <div className="flex items-center gap-3">
+              <span className="text-muted-foreground">{data.pagination.total} factures</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-foreground">Per pàgina:</span>
+                <select value={pageSize} onChange={(e) => { setPageSize(parseInt(e.target.value)); setPage(1); clearSelection(); }} className="rounded border bg-background px-2 py-1 text-xs">
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value={200}>200</option>
+                </select>
+              </div>
+            </div>
+            {data.pagination.totalPages > 1 && (
+              <div className="flex gap-2">
+                <button onClick={() => { setPage(Math.max(1, page - 1)); clearSelection(); }} disabled={page === 1} className="px-3 py-1 rounded border disabled:opacity-50">Anterior</button>
+                <span className="px-3 py-1">{page} / {data.pagination.totalPages}</span>
+                <button onClick={() => { setPage(Math.min(data.pagination.totalPages, page + 1)); clearSelection(); }} disabled={page >= data.pagination.totalPages} className="px-3 py-1 rounded border disabled:opacity-50">Següent</button>
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Popup detall factura emesa */}
       <IssuedInvoiceDetailModal
