@@ -352,21 +352,21 @@ router.put('/qonto/credentials', async (req, res, next) => {
 });
 
 // ===========================================
-// PUT /api/connections/gocardless/credentials — Guardar credencials GoCardless
+// PUT /api/connections/gocardless/credentials — Guardar credencials Plaid (usa provider GOCARDLESS)
 // ===========================================
 router.put('/gocardless/credentials', async (req, res, next) => {
   try {
-    const { appId, appSecret } = req.body;
-    if (!appId || !appSecret) {
-      return res.status(400).json({ error: 'Cal indicar Secret ID i Secret Key' });
+    const { clientId, secret } = req.body;
+    if (!clientId || !secret) {
+      return res.status(400).json({ error: 'Cal indicar Client ID i Secret' });
     }
 
     await prisma.serviceConnection.upsert({
       where: { provider: 'GOCARDLESS' },
       update: {
-        apiKey: appId,
-        apiSecret: appSecret,
-        displayName: 'GoCardless Open Banking',
+        apiKey: clientId,
+        apiSecret: secret,
+        displayName: 'Plaid Open Banking',
         status: 'ACTIVE',
         connectedBy: req.user?.id || null,
         connectedAt: new Date(),
@@ -374,16 +374,94 @@ router.put('/gocardless/credentials', async (req, res, next) => {
       },
       create: {
         provider: 'GOCARDLESS',
-        apiKey: appId,
-        apiSecret: appSecret,
-        displayName: 'GoCardless Open Banking',
+        apiKey: clientId,
+        apiSecret: secret,
+        displayName: 'Plaid Open Banking',
         status: 'ACTIVE',
         connectedBy: req.user?.id || null,
         connectedAt: new Date(),
       },
     });
 
-    res.json({ success: true, message: 'Credencials GoCardless guardades.' });
+    res.json({ success: true, message: 'Credencials Plaid guardades.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================
+// POST /api/connections/plaid/link-token — Crear Link Token per Plaid Link
+// ===========================================
+router.post('/plaid/link-token', async (req, res, next) => {
+  try {
+    const openBanking = require('../services/openBankingService');
+    const userId = req.user?.id || 'seitocamera_admin';
+    const result = await openBanking.createLinkToken(userId);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================
+// POST /api/connections/plaid/exchange — Intercanviar public_token per access_token
+// ===========================================
+router.post('/plaid/exchange', async (req, res, next) => {
+  try {
+    const { publicToken, bankAccountId } = req.body;
+    if (!publicToken) {
+      return res.status(400).json({ error: 'Cal indicar el public_token' });
+    }
+
+    const openBanking = require('../services/openBankingService');
+    const { accessToken, itemId } = await openBanking.exchangePublicToken(publicToken);
+
+    // Si tenim un bankAccountId, guardar l'access_token al syncConfig
+    if (bankAccountId) {
+      const account = await prisma.bankAccount.findUnique({ where: { id: bankAccountId } });
+      const currentConfig = typeof account?.syncConfig === 'object' && account.syncConfig ? account.syncConfig : {};
+
+      await prisma.bankAccount.update({
+        where: { id: bankAccountId },
+        data: {
+          syncConfig: {
+            ...currentConfig,
+            plaidAccessToken: accessToken,
+            plaidItemId: itemId,
+            provider: 'plaid',
+            linkedAt: new Date().toISOString(),
+          },
+        },
+      });
+
+      // Obtenir els comptes vinculats per info
+      try {
+        const accounts = await openBanking.getAccounts(bankAccountId);
+        if (accounts.length > 0) {
+          await prisma.bankAccount.update({
+            where: { id: bankAccountId },
+            data: {
+              syncConfig: {
+                ...currentConfig,
+                plaidAccessToken: accessToken,
+                plaidItemId: itemId,
+                plaidAccountId: accounts[0].id,
+                provider: 'plaid',
+                linkedAt: new Date().toISOString(),
+              },
+            },
+          });
+        }
+      } catch (accErr) {
+        logger.warn(`No s'han pogut obtenir comptes Plaid: ${accErr.message}`);
+      }
+    }
+
+    res.json({
+      success: true,
+      itemId,
+      message: 'Compte bancari vinculat via Plaid correctament.',
+    });
   } catch (error) {
     next(error);
   }
@@ -525,17 +603,22 @@ router.post('/:provider/test', async (req, res, next) => {
       }
     }
 
-    // Test GoCardless
+    // Test Plaid (usa provider GOCARDLESS)
     if (provider.toUpperCase() === 'GOCARDLESS') {
+      const openBanking = require('../services/openBankingService');
+      const result = await openBanking.testConnection();
       const conn = await prisma.serviceConnection.findUnique({ where: { provider: 'GOCARDLESS' } });
-      if (!conn?.apiKey || !conn?.apiSecret) {
-        return res.json({ connected: false, error: 'Credencials GoCardless no configurades' });
+      if (conn) {
+        await prisma.serviceConnection.update({
+          where: { provider: 'GOCARDLESS' },
+          data: {
+            status: result.connected ? 'ACTIVE' : 'ERROR',
+            lastUsedAt: result.connected ? new Date() : undefined,
+            lastError: result.connected ? null : result.error,
+          },
+        });
       }
-      await prisma.serviceConnection.update({
-        where: { provider: 'GOCARDLESS' },
-        data: { status: 'ACTIVE', lastUsedAt: new Date(), lastError: null },
-      });
-      return res.json({ connected: true, message: 'Credencials guardades. La connexió Open Banking es completa al vincular un compte bancari.' });
+      return res.json(result);
     }
 
     res.status(400).json({ error: `Test no implementat per ${provider}` });

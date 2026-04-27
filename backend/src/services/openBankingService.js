@@ -2,339 +2,232 @@ const { prisma } = require('../config/database');
 const { logger } = require('../config/logger');
 
 // ===========================================
-// Servei Yapily Open Banking
+// Servei Plaid Open Banking
 // ===========================================
 // Connexió Open Banking per Banc Sabadell i altres bancs espanyols.
-// Documentació: https://docs.yapily.com/api/reference/
+// Documentació: https://plaid.com/docs/api/
 //
 // Env vars necessàries:
-//   YAPILY_APP_ID       — Application ID (username per Basic Auth)
-//   YAPILY_APP_SECRET   — Application Secret (password per Basic Auth)
-//   APP_BASE_URL        — URL base de l'app (per redirect)
+//   PLAID_CLIENT_ID    — Client ID (dashboard.plaid.com)
+//   PLAID_SECRET       — Secret Key
+//   PLAID_ENV          — sandbox | development | production
+//   APP_URL            — URL base de l'app (per redirect)
 // ===========================================
 
-const YAPILY_BASE_URL = 'https://api.yapily.com';
+const PLAID_ENVS = {
+  sandbox: 'https://sandbox.plaid.com',
+  development: 'https://development.plaid.com',
+  production: 'https://production.plaid.com',
+};
+
+function getPlaidBaseUrl() {
+  const env = process.env.PLAID_ENV || 'sandbox';
+  return PLAID_ENVS[env] || PLAID_ENVS.sandbox;
+}
 
 /**
- * Obté les credencials Yapily: ServiceConnection → BankAccount.syncConfig → .env
+ * Obté les credencials Plaid: ServiceConnection → .env
  */
-async function getCredentials(bankAccountId) {
+async function getCredentials() {
   // 1. Mirar ServiceConnection (centralitzat)
   try {
     const conn = await prisma.serviceConnection.findUnique({ where: { provider: 'GOCARDLESS' } });
     if (conn?.apiKey && conn?.apiSecret) {
-      return { appId: conn.apiKey, appSecret: conn.apiSecret, source: 'database' };
+      return { clientId: conn.apiKey, secret: conn.apiSecret, source: 'database' };
     }
   } catch (err) {
     logger.debug(`ServiceConnection GOCARDLESS lookup failed: ${err.message}`);
   }
 
-  // 2. Fallback: BankAccount.syncConfig (legacy)
-  if (bankAccountId) {
-    const account = await prisma.bankAccount.findUnique({ where: { id: bankAccountId } });
-    if (account?.syncConfig) {
-      const config = typeof account.syncConfig === 'string' ? JSON.parse(account.syncConfig) : account.syncConfig;
-      if (config.appId && config.appSecret) {
-        return { ...config, source: 'bankAccount' };
-      }
-    }
+  // 2. Fallback: env vars
+  const clientId = process.env.PLAID_CLIENT_ID;
+  const secret = process.env.PLAID_SECRET;
+  if (!clientId || !secret) {
+    throw new Error('Credencials Plaid no configurades. Configura-les a Connexions o al .env');
   }
-
-  // 3. Fallback: env vars
-  const appId = process.env.YAPILY_APP_ID;
-  const appSecret = process.env.YAPILY_APP_SECRET;
-  if (!appId || !appSecret) {
-    throw new Error('Credencials GoCardless/Yapily no configurades. Configura-les a Connexions o al .env');
-  }
-  return { appId, appSecret, source: 'env' };
+  return { clientId, secret, source: 'env' };
 }
 
 /**
- * Genera el header d'autenticació Basic Auth per Yapily
+ * Fa una petició a l'API de Plaid (tots els endpoints són POST)
  */
-function getAuthHeader(creds) {
-  const encoded = Buffer.from(`${creds.appId}:${creds.appSecret}`).toString('base64');
-  return `Basic ${encoded}`;
-}
-
-/**
- * Fa una petició autenticada a Yapily
- */
-async function yapFetch(path, creds, options = {}) {
-  const url = `${YAPILY_BASE_URL}${path}`;
-  const headers = {
-    'Authorization': getAuthHeader(creds),
-    'Content-Type': 'application/json',
-    ...options.headers,
-  };
+async function plaidFetch(path, body = {}) {
+  const creds = await getCredentials();
+  const url = `${getPlaidBaseUrl()}${path}`;
 
   const response = await fetch(url, {
-    method: options.method || 'GET',
-    headers,
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Yapily API error ${response.status} (${path}): ${body}`);
-  }
-
-  if (response.status === 204) return null;
-  return response.json();
-}
-
-/**
- * Llista institucions bancàries disponibles per un país
- */
-async function listInstitutions(bankAccountId, country = 'ES') {
-  const creds = await getCredentials(bankAccountId);
-  const data = await yapFetch(`/institutions?country=${country}`, creds);
-  return (data.data || []).map(inst => ({
-    id: inst.id,
-    name: inst.name,
-    countries: inst.countries,
-    logo: inst.media?.find(m => m.type === 'logo')?.source || null,
-    features: inst.features,
-  }));
-}
-
-/**
- * Crea una sol·licitud d'autorització (redirigeix l'usuari al banc)
- * Retorna la URL on l'usuari ha d'anar per autoritzar
- */
-async function createAuthRequest(bankAccountId, institutionId, redirectUrl) {
-  const creds = await getCredentials(bankAccountId);
-
-  const data = await yapFetch('/account-auth-requests', creds, {
     method: 'POST',
-    body: {
-      applicationUserId: `seitocamera_${bankAccountId}`,
-      institutionId,
-      callback: redirectUrl,
-    },
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      client_id: creds.clientId,
+      secret: creds.secret,
+      ...body,
+    }),
   });
 
-  // Guardar consent info a syncConfig
-  const account = await prisma.bankAccount.findUnique({ where: { id: bankAccountId } });
-  const currentConfig = typeof account?.syncConfig === 'object' && account.syncConfig ? account.syncConfig : {};
+  const data = await response.json();
 
-  await prisma.bankAccount.update({
-    where: { id: bankAccountId },
-    data: {
-      syncConfig: {
-        ...currentConfig,
-        institutionId,
-        consentId: data.data?.id,
-        consentStatus: data.data?.status,
-        applicationUserId: `seitocamera_${bankAccountId}`,
-      },
-    },
+  if (!response.ok || data.error_code) {
+    const errMsg = data.error_message || data.error_code || `HTTP ${response.status}`;
+    throw new Error(`Plaid API error (${path}): ${errMsg}`);
+  }
+
+  return data;
+}
+
+/**
+ * Crea un Link Token per iniciar el flux d'autorització Plaid Link
+ * El frontend usarà aquest token per obrir el widget Plaid Link
+ */
+async function createLinkToken(userId) {
+  const data = await plaidFetch('/link/token/create', {
+    user: { client_user_id: userId || 'seitocamera_default' },
+    client_name: 'SeitoCamera Admin',
+    products: ['transactions'],
+    country_codes: ['ES'],
+    language: 'es',
+    redirect_uri: undefined, // no necessari per Link modal
   });
 
   return {
-    consentId: data.data?.id,
-    authorisationUrl: data.data?.authorisationUrl,
-    status: data.data?.status,
+    linkToken: data.link_token,
+    expiration: data.expiration,
   };
 }
 
 /**
- * Comprova l'estat del consentiment i obté el consentToken
+ * Intercanvia un public_token (del frontend) per un access_token permanent
  */
-async function checkConsentStatus(bankAccountId) {
-  const account = await prisma.bankAccount.findUnique({ where: { id: bankAccountId } });
-  if (!account?.syncConfig) throw new Error('Compte sense configuració de sync');
-
-  const config = typeof account.syncConfig === 'string' ? JSON.parse(account.syncConfig) : account.syncConfig;
-  if (!config.consentId) throw new Error('No hi ha consentiment pendent');
-
-  const creds = await getCredentials(bankAccountId);
-  const data = await yapFetch(`/consents/${config.consentId}`, creds);
-
-  const consent = data.data || data;
-
-  if (consent.status === 'AUTHORIZED' && consent.consentToken) {
-    // Guardar el consentToken
-    await prisma.bankAccount.update({
-      where: { id: bankAccountId },
-      data: {
-        syncConfig: {
-          ...config,
-          consentToken: consent.consentToken,
-          consentStatus: 'AUTHORIZED',
-          authorizedAt: new Date().toISOString(),
-        },
-      },
-    });
-
-    return {
-      status: 'AUTHORIZED',
-      consentToken: consent.consentToken,
-    };
-  }
+async function exchangePublicToken(publicToken) {
+  const data = await plaidFetch('/item/public_token/exchange', {
+    public_token: publicToken,
+  });
 
   return {
-    status: consent.status,
-    statusDescription: getStatusDescription(consent.status),
+    accessToken: data.access_token,
+    itemId: data.item_id,
   };
 }
 
-function getStatusDescription(status) {
-  const descriptions = {
-    AWAITING_AUTHORIZATION: 'Esperant autorització de l\'usuari al banc',
-    AUTHORIZED: 'Autoritzat correctament',
-    REJECTED: 'Rebutjat per l\'usuari o el banc',
-    REVOKED: 'Revocat',
-    EXPIRED: 'Expirat — cal reautoritzar',
-    FAILED: 'Error durant l\'autorització',
-    CONSUMED: 'Consumit — cal crear un nou consentiment',
-    UNKNOWN: 'Estat desconegut',
-  };
-  return descriptions[status] || `Estat: ${status}`;
-}
-
 /**
- * Obté el consentToken guardat (necessari per totes les operacions de dades)
- */
-async function getConsentToken(bankAccountId) {
-  const account = await prisma.bankAccount.findUnique({ where: { id: bankAccountId } });
-  if (!account?.syncConfig) throw new Error('Compte sense configuració de sync');
-
-  const config = typeof account.syncConfig === 'string' ? JSON.parse(account.syncConfig) : account.syncConfig;
-  if (!config.consentToken) {
-    throw new Error('Compte no autoritzat — cal completar el flux Open Banking primer');
-  }
-
-  return config.consentToken;
-}
-
-/**
- * Obté la llista de comptes bancaris de l'usuari
+ * Obté la llista de comptes bancaris vinculats a un item Plaid
  */
 async function getAccounts(bankAccountId) {
-  const creds = await getCredentials(bankAccountId);
-  const consentToken = await getConsentToken(bankAccountId);
+  const config = await getLinkedConfig(bankAccountId);
+  if (!config.plaidAccessToken) {
+    throw new Error('Compte no vinculat a Plaid — cal completar el flux Open Banking primer');
+  }
 
-  const data = await yapFetch('/accounts', creds, {
-    headers: { 'Consent': consentToken },
+  const data = await plaidFetch('/accounts/get', {
+    access_token: config.plaidAccessToken,
   });
 
-  return (data.data || []).map(acc => ({
-    id: acc.id,
+  return (data.accounts || []).map(acc => ({
+    id: acc.account_id,
     type: acc.type,
-    iban: acc.identification?.find(i => i.type === 'IBAN')?.identification || acc.iban,
-    name: acc.accountNames?.[0]?.name || acc.nickname || 'Compte',
-    currency: acc.currency || 'EUR',
-    balance: acc.balance,
+    subtype: acc.subtype,
+    iban: acc.iban || null,
+    name: acc.official_name || acc.name || 'Compte',
+    currency: acc.balances?.iso_currency_code || 'EUR',
+    balance: acc.balances?.current || 0,
+    availableBalance: acc.balances?.available || null,
   }));
 }
 
 /**
- * Obté el saldo d'un compte via Yapily
+ * Obté el saldo d'un compte via Plaid
  */
 async function getBalance(bankAccountId) {
-  const creds = await getCredentials(bankAccountId);
-  const consentToken = await getConsentToken(bankAccountId);
-
   const config = await getLinkedConfig(bankAccountId);
-  const yapilyAccountId = config.yapilyAccountId;
+  if (!config.plaidAccessToken) return null;
 
-  if (!yapilyAccountId) {
-    // Si no tenim account ID guardat, obtenir el primer compte
-    const accounts = await getAccounts(bankAccountId);
-    if (!accounts.length) return null;
-
-    // Guardar el primer account ID
-    await prisma.bankAccount.update({
-      where: { id: bankAccountId },
-      data: {
-        syncConfig: { ...config, yapilyAccountId: accounts[0].id },
-      },
+  try {
+    const data = await plaidFetch('/accounts/balance/get', {
+      access_token: config.plaidAccessToken,
     });
 
+    const accounts = data.accounts || [];
+    // Si tenim un account ID específic, filtrar
+    const acc = config.plaidAccountId
+      ? accounts.find(a => a.account_id === config.plaidAccountId)
+      : accounts[0];
+
+    if (!acc) return null;
+
     return {
-      balance: accounts[0].balance || 0,
-      currency: accounts[0].currency || 'EUR',
-      iban: accounts[0].iban,
+      balance: acc.balances?.current || 0,
+      availableBalance: acc.balances?.available || null,
+      currency: acc.balances?.iso_currency_code || 'EUR',
+      name: acc.official_name || acc.name,
     };
+  } catch (err) {
+    logger.warn(`Plaid getBalance error: ${err.message}`);
+    return null;
   }
-
-  const data = await yapFetch(`/accounts/${yapilyAccountId}/balances`, creds, {
-    headers: { 'Consent': consentToken },
-  });
-
-  const balances = data.data || [];
-  const best = balances.find(b => b.type === 'CLOSING_BOOKED') ||
-               balances.find(b => b.type === 'EXPECTED') ||
-               balances[0];
-
-  if (!best) return null;
-
-  return {
-    balance: best.balanceAmount?.amount || 0,
-    currency: best.balanceAmount?.currency || 'EUR',
-    type: best.type,
-    date: best.dateTime,
-  };
 }
 
 /**
- * Obté transaccions del compte via Yapily
+ * Obté transaccions del compte via Plaid
  */
 async function fetchTransactions(options = {}) {
   const { bankAccountId, dateFrom, dateTo } = options;
-  const creds = await getCredentials(bankAccountId);
-  const consentToken = await getConsentToken(bankAccountId);
   const config = await getLinkedConfig(bankAccountId);
-
-  let yapilyAccountId = config.yapilyAccountId;
-
-  // Si no tenim account ID, obtenir-lo
-  if (!yapilyAccountId) {
-    const accounts = await getAccounts(bankAccountId);
-    if (!accounts.length) throw new Error('Cap compte bancari trobat via Open Banking');
-    yapilyAccountId = accounts[0].id;
-    await prisma.bankAccount.update({
-      where: { id: bankAccountId },
-      data: { syncConfig: { ...config, yapilyAccountId } },
-    });
+  if (!config.plaidAccessToken) {
+    throw new Error('Compte no vinculat a Plaid — cal completar el flux Open Banking primer');
   }
 
-  let path = `/accounts/${yapilyAccountId}/transactions`;
-  const params = new URLSearchParams();
-  if (dateFrom) params.set('from', dateFrom);
-  if (dateTo) params.set('before', dateTo);
-  if (params.toString()) path += `?${params.toString()}`;
+  const startDate = dateFrom || new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const endDate = dateTo || new Date().toISOString().split('T')[0];
 
-  const data = await yapFetch(path, creds, {
-    headers: { 'Consent': consentToken },
-  });
+  const body = {
+    access_token: config.plaidAccessToken,
+    start_date: startDate,
+    end_date: endDate,
+    options: {
+      count: 500,
+      offset: 0,
+    },
+  };
 
-  const transactions = [];
+  // Si tenim un account ID específic, filtrar
+  if (config.plaidAccountId) {
+    body.options.account_ids = [config.plaidAccountId];
+  }
 
-  for (const tx of (data.data || [])) {
-    const amount = tx.amount || 0;
-    transactions.push({
-      transactionId: tx.id || tx.reference || `yap_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-      date: new Date(tx.bookingDateTime || tx.date || new Date()),
-      settledAt: tx.bookingDateTime ? new Date(tx.bookingDateTime) : null,
+  const allTransactions = [];
+  let totalAvailable = Infinity;
+
+  while (allTransactions.length < totalAvailable) {
+    body.options.offset = allTransactions.length;
+    const data = await plaidFetch('/transactions/get', body);
+    totalAvailable = data.total_transactions || 0;
+    const txs = data.transactions || [];
+    if (!txs.length) break;
+    allTransactions.push(...txs);
+  }
+
+  return allTransactions.map(tx => {
+    // Plaid: amount positiu = despesa, negatiu = ingrés (invers al que esperem)
+    const amount = -(tx.amount || 0);
+    return {
+      transactionId: tx.transaction_id,
+      date: new Date(tx.date),
+      settledAt: tx.authorized_date ? new Date(tx.authorized_date) : null,
       amount,
-      currency: tx.currency || 'EUR',
+      currency: tx.iso_currency_code || 'EUR',
       side: amount >= 0 ? 'credit' : 'debit',
-      counterparty: tx.payeeDetails?.name || tx.payerDetails?.name || tx.description || '',
-      reference: tx.reference || '',
-      category: null,
-      note: tx.supplementaryData?.internalRef || null,
-      status: tx.status || 'booked',
+      counterparty: tx.merchant_name || tx.name || '',
+      reference: tx.payment_channel || '',
+      category: tx.personal_finance_category?.primary || (tx.category || []).join(' > ') || null,
+      note: tx.name || null,
+      status: tx.pending ? 'pending' : 'booked',
       rawData: tx,
-    });
-  }
-
-  return transactions;
+    };
+  });
 }
 
 /**
- * Sincronitza transaccions Open Banking amb la BD
+ * Sincronitza transaccions Plaid amb la BD
  */
 async function syncTransactions(options = {}) {
   const { bankAccountId, fullSync = false } = options;
@@ -355,7 +248,7 @@ async function syncTransactions(options = {}) {
   }
 
   const transactions = await fetchTransactions({ bankAccountId, dateFrom });
-  logger.info(`Open Banking sync: ${transactions.length} transaccions obtingudes`);
+  logger.info(`Plaid sync: ${transactions.length} transaccions obtingudes`);
 
   let created = 0, skipped = 0, updated = 0, errors = 0;
 
@@ -377,6 +270,7 @@ async function syncTransactions(options = {}) {
             data: {
               counterparty: tx.counterparty || null,
               reference: tx.reference || existing.reference,
+              category: tx.category || null,
               bankAccountId,
             },
           });
@@ -388,8 +282,8 @@ async function syncTransactions(options = {}) {
       }
 
       const description = tx.counterparty
-        ? (tx.reference ? `${tx.counterparty} — ${tx.reference}` : tx.counterparty)
-        : tx.reference || 'Transacció bancària';
+        ? (tx.note && tx.note !== tx.counterparty ? `${tx.counterparty} — ${tx.note}` : tx.counterparty)
+        : tx.note || 'Transacció bancària';
 
       await prisma.bankMovement.create({
         data: {
@@ -402,13 +296,14 @@ async function syncTransactions(options = {}) {
           bankAccount: 'Sabadell',
           bankAccountId,
           counterparty: tx.counterparty || null,
+          category: tx.category || null,
           qontoSlug: slug,
           rawData: tx.rawData,
         },
       });
       created++;
     } catch (err) {
-      logger.error(`Open Banking sync error: ${err.message}`);
+      logger.error(`Plaid sync error: ${err.message}`);
       errors++;
     }
   }
@@ -429,24 +324,40 @@ async function syncTransactions(options = {}) {
       });
     }
   } catch (balErr) {
-    logger.warn(`Open Banking: No s'ha pogut obtenir saldo: ${balErr.message}`);
+    logger.warn(`Plaid: No s'ha pogut obtenir saldo: ${balErr.message}`);
   }
 
-  logger.info(`Open Banking sync: ${created} creats, ${skipped} omesos, ${updated} actualitzats, ${errors} errors`);
+  logger.info(`Plaid sync: ${created} creats, ${skipped} omesos, ${updated} actualitzats, ${errors} errors`);
 
   return { total: transactions.length, created, skipped, updated, errors, balance };
 }
 
 /**
- * Testa la connexió Open Banking
+ * Testa la connexió Plaid (comprova que les credencials API són vàlides)
  */
 async function testConnection(bankAccountId) {
   try {
-    const consentToken = await getConsentToken(bankAccountId);
+    // Testejar creant un link token (operació lleugera)
+    const result = await createLinkToken('test_connection');
+    return {
+      connected: true,
+      message: 'Credencials Plaid vàlides',
+      environment: process.env.PLAID_ENV || 'sandbox',
+    };
+  } catch (err) {
+    return { connected: false, error: err.message };
+  }
+}
+
+/**
+ * Testa la connexió d'un compte bancari específic (access_token)
+ */
+async function testBankConnection(bankAccountId) {
+  try {
     const accounts = await getAccounts(bankAccountId);
     return {
       connected: true,
-      accounts: accounts.map(a => ({ name: a.name, iban: a.iban, currency: a.currency })),
+      accounts: accounts.map(a => ({ name: a.name, currency: a.currency, balance: a.balance })),
     };
   } catch (err) {
     return { connected: false, error: err.message };
@@ -463,12 +374,12 @@ async function getLinkedConfig(bankAccountId) {
 }
 
 module.exports = {
-  listInstitutions,
-  createAuthRequest,
-  checkConsentStatus,
+  createLinkToken,
+  exchangePublicToken,
   getAccounts,
   getBalance,
   fetchTransactions,
   syncTransactions,
   testConnection,
+  testBankConnection,
 };

@@ -28,7 +28,7 @@ const PROVIDER_INFO = {
     supportsOAuth: false,
   },
   GOCARDLESS: {
-    label: 'GoCardless (Open Banking)',
+    label: 'Plaid (Open Banking)',
     icon: Building2,
     color: 'text-teal-600 bg-teal-50',
     description: 'Connexió bancària via Open Banking per comptes tradicionals (Sabadell, CaixaBank...).',
@@ -103,7 +103,7 @@ export default function Connections() {
     } else if (provider === 'QONTO') {
       setApiSetup({ provider: 'QONTO', orgSlug: '', secretKey: '' });
     } else if (provider === 'GOCARDLESS') {
-      setApiSetup({ provider: 'GOCARDLESS', appId: '', appSecret: '' });
+      setApiSetup({ provider: 'GOCARDLESS', clientId: '', secret: '' });
     } else if (provider === 'RENTMAN') {
       setApiSetup({ provider: 'RENTMAN', apiToken: '' });
     }
@@ -414,16 +414,16 @@ export default function Connections() {
               {apiSetup.provider === 'GOCARDLESS' && (
                 <>
                   <div className="bg-teal-50 text-teal-800 rounded-lg p-3 text-xs">
-                    <p>Obtén les credencials a <a href="https://bankaccountdata.gocardless.com" target="_blank" rel="noopener noreferrer" className="underline font-medium">GoCardless Bank Account Data</a></p>
+                    <p>Obtén les credencials a <a href="https://dashboard.plaid.com/developers/keys" target="_blank" rel="noopener noreferrer" className="underline font-medium">Plaid Dashboard → Developers → Keys</a></p>
                   </div>
                   <div>
-                    <label className="block text-xs font-medium mb-1">Secret ID *</label>
-                    <input type="text" value={apiSetup.appId || ''} onChange={(e) => setApiSetup({ ...apiSetup, appId: e.target.value })}
-                      className="w-full px-3 py-2 border rounded-md text-sm bg-background" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+                    <label className="block text-xs font-medium mb-1">Client ID *</label>
+                    <input type="text" value={apiSetup.clientId || ''} onChange={(e) => setApiSetup({ ...apiSetup, clientId: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-md text-sm bg-background" placeholder="xxxxxxxxxxxxxxxxxxxxxxxx" />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium mb-1">Secret Key *</label>
-                    <input type="password" value={apiSetup.appSecret || ''} onChange={(e) => setApiSetup({ ...apiSetup, appSecret: e.target.value })}
+                    <label className="block text-xs font-medium mb-1">Secret (Sandbox) *</label>
+                    <input type="password" value={apiSetup.secret || ''} onChange={(e) => setApiSetup({ ...apiSetup, secret: e.target.value })}
                       className="w-full px-3 py-2 border rounded-md text-sm bg-background" placeholder="••••••••" />
                   </div>
                 </>
