@@ -892,6 +892,63 @@ async function scanAllAccounts(options = {}) {
   return allResults;
 }
 
+// ===========================================
+// Enviar correus
+// ===========================================
+
+/**
+ * Envia un correu electrònic via Zoho Mail API.
+ * Zoho API: POST /messages
+ * Docs: https://www.zoho.com/mail/help/api/post-send-an-email.html
+ *
+ * @param {Object} params
+ * @param {string} params.to - Destinatari (email)
+ * @param {string} params.subject - Assumpte
+ * @param {string} params.body - Cos del missatge (text pla, es converteix a HTML)
+ * @param {string} [params.fromAddress] - Adreça remitent (default: ZOHO_REMINDER_FROM o rental@seitocamera.com)
+ * @param {string} [params.cc] - CC (opcional)
+ * @param {string} [params.accountId] - Account ID (opcional)
+ * @returns {Object} Resposta de Zoho
+ */
+async function sendEmail({ to, subject, body, fromAddress, cc, accountId }) {
+  if (!to || !subject || !body) {
+    throw new Error('Cal indicar to, subject i body per enviar un correu');
+  }
+
+  const from = fromAddress || process.env.ZOHO_REMINDER_FROM || 'rental@seitocamera.com';
+
+  // Convertir text pla a HTML bàsic (preservant salts de línia)
+  const htmlBody = body
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>')
+    .replace(/^(.*)$/gm, '<p style="margin:0">$1</p>')
+    .replace(/<p style="margin:0"><br><\/p>/g, '<br>');
+
+  const emailData = {
+    fromAddress: from,
+    toAddress: to,
+    subject,
+    content: htmlBody,
+    askReceipt: 'no',
+  };
+
+  if (cc) emailData.ccAddress = cc;
+
+  logger.info(`Zoho sendEmail: enviant a ${to} des de ${from} — ${subject}`);
+
+  const result = await apiRequest('POST', '/messages', emailData, accountId);
+
+  if (result.status?.code !== 200 && result.status?.code !== 201) {
+    const errMsg = result.data?.errorCode || result.status?.description || JSON.stringify(result);
+    throw new Error(`Error enviant correu via Zoho: ${errMsg}`);
+  }
+
+  logger.info(`Zoho sendEmail: enviat correctament a ${to}`);
+  return result;
+}
+
 module.exports = {
   getAccessToken,
   getConfiguredAccountIds,
@@ -905,6 +962,7 @@ module.exports = {
   downloadAttachment,
   markAsRead,
   moveMessage,
+  sendEmail,
   analyzeInvoiceEmail,
   scoreInvoiceProbability,
   classifyEmail,

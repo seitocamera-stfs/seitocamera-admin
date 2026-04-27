@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Search, Check, X as XIcon, Trash2, Eye, RefreshCw, Download as DownloadIcon, CircleDollarSign } from 'lucide-react';
+import { Plus, Search, Check, X as XIcon, Trash2, Eye, RefreshCw, Download as DownloadIcon, CircleDollarSign, Mail } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import api from '../lib/api';
 import { StatusBadge } from '../components/shared/StatusBadge';
@@ -24,6 +24,8 @@ export default function IssuedInvoices() {
   const [syncing, setSyncing] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
   const [form, setForm] = useState({ invoiceNumber: '', clientId: '', issueDate: '', dueDate: '', subtotal: '', taxRate: '21', taxAmount: '', totalAmount: '', description: '' });
+  const [reminderModal, setReminderModal] = useState(null);
+  const [reminderLoading, setReminderLoading] = useState(false);
 
   const currentUser = useAuthStore((s) => s.user);
   const isAdmin = currentUser?.role === 'ADMIN';
@@ -93,6 +95,38 @@ export default function IssuedInvoices() {
   const handleStatusChange = async (id, status) => {
     await mutate('patch', `/invoices/issued/${id}/status`, { status });
     refetch();
+  };
+
+  // Recordatori de pagament
+  const handlePaymentReminder = async (invoiceId) => {
+    setReminderLoading(true);
+    try {
+      const res = await api.get(`/invoices/issued/${invoiceId}/payment-reminder`);
+      setReminderModal({ ...res.data, invoiceId });
+    } catch (err) {
+      alert('Error generant el recordatori: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setReminderLoading(false);
+    }
+  };
+
+  const handleSendReminder = async () => {
+    if (!reminderModal) return;
+    setReminderLoading(true);
+    try {
+      await api.post(`/invoices/issued/${reminderModal.invoiceId}/send-reminder`, {
+        to: reminderModal.to,
+        subject: reminderModal.subject,
+        body: reminderModal.body,
+      });
+      alert(`Recordatori enviat correctament a ${reminderModal.to}`);
+      setReminderModal(null);
+      refetch();
+    } catch (err) {
+      alert('Error enviant el recordatori: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setReminderLoading(false);
+    }
   };
 
   const handleBulkStatusChange = async (status) => {
@@ -272,14 +306,15 @@ export default function IssuedInvoices() {
               <SortableHeader label="Venciment" field="dueDate" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <SortableHeader label="Import" field="totalAmount" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <SortableHeader label="Estat" field="status" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+              <th className="text-center p-3 font-medium text-xs text-muted-foreground uppercase">Últim rec.</th>
               <th className="text-right p-3 font-medium text-xs text-muted-foreground uppercase">Accions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
+              <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
             ) : data?.data?.length === 0 ? (
-              <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">Cap factura trobada</td></tr>
+              <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">Cap factura trobada</td></tr>
             ) : (
               sortedData.map((inv) => (
                 <tr
@@ -307,6 +342,15 @@ export default function IssuedInvoices() {
                   <td className="p-3 text-muted-foreground">{inv.dueDate ? formatDate(inv.dueDate) : '—'}</td>
                   <td className="p-3 text-right font-medium">{formatCurrency(inv.totalAmount)}</td>
                   <td className="p-3 text-center"><StatusBadge status={inv.status} /></td>
+                  <td className="p-3 text-center">
+                    {inv.paymentReminders?.[0] ? (
+                      <span className="text-xs text-muted-foreground" title={`Enviat a ${inv.paymentReminders[0].sentTo}`}>
+                        {formatDate(inv.paymentReminders[0].createdAt)}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </td>
                   <td className="p-3 text-right">
                     <div className="flex items-center justify-end gap-1">
                       <button
@@ -320,9 +364,19 @@ export default function IssuedInvoices() {
                         <button onClick={() => handleStatusChange(inv.id, 'APPROVED')} className="p-1.5 rounded hover:bg-green-50 text-green-600" title="Aprovar"><Check size={14} /></button>
                       )}
                       {inv.status !== 'PAID' && (
-                        <button onClick={() => handleStatusChange(inv.id, 'PAID')} className="p-1.5 rounded hover:bg-emerald-50 text-emerald-600" title="Marcar com a pagada">
-                          <CircleDollarSign size={14} />
-                        </button>
+                        <>
+                          <button
+                            onClick={() => handlePaymentReminder(inv.id)}
+                            disabled={reminderLoading}
+                            className="p-1.5 rounded hover:bg-amber-50 text-amber-600"
+                            title="Enviar recordatori de pagament"
+                          >
+                            <Mail size={14} />
+                          </button>
+                          <button onClick={() => handleStatusChange(inv.id, 'PAID')} className="p-1.5 rounded hover:bg-emerald-50 text-emerald-600" title="Marcar com a pagada">
+                            <CircleDollarSign size={14} />
+                          </button>
+                        </>
                       )}
                     </div>
                   </td>
@@ -364,6 +418,73 @@ export default function IssuedInvoices() {
         onClose={() => setDetailInvoice(null)}
         invoice={detailInvoice}
       />
+
+      {/* Modal recordatori de pagament */}
+      {reminderModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-card rounded-lg border shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-4 border-b">
+              <div className="flex items-center gap-2">
+                <Mail size={18} className="text-amber-500" />
+                <h3 className="font-semibold">Recordatori de pagament</h3>
+              </div>
+              <button onClick={() => setReminderModal(null)} className="p-1 rounded hover:bg-muted">
+                <XIcon size={18} />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">Destinatari</label>
+                <input
+                  type="email"
+                  value={reminderModal.to || ''}
+                  onChange={(e) => setReminderModal({ ...reminderModal, to: e.target.value })}
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">Assumpte</label>
+                <input
+                  type="text"
+                  value={reminderModal.subject}
+                  onChange={(e) => setReminderModal({ ...reminderModal, subject: e.target.value })}
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">Cos del missatge</label>
+                <textarea
+                  value={reminderModal.body}
+                  onChange={(e) => setReminderModal({ ...reminderModal, body: e.target.value })}
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm font-mono"
+                  rows={12}
+                />
+              </div>
+              <div className="bg-muted/50 rounded-md p-3 text-xs text-muted-foreground space-y-1">
+                <p><strong>Client:</strong> {reminderModal.clientName}</p>
+                <p><strong>Factura:</strong> {reminderModal.invoiceNumber} — {formatCurrency(reminderModal.totalAmount)}</p>
+                <p><strong>Dies pendents:</strong> {reminderModal.daysPending}</p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 p-4 border-t">
+              <button
+                onClick={() => setReminderModal(null)}
+                className="px-4 py-2 rounded-md border text-sm"
+              >
+                Cancel·lar
+              </button>
+              <button
+                onClick={handleSendReminder}
+                disabled={reminderLoading}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-amber-500 text-white text-sm font-medium hover:bg-amber-600 transition-colors disabled:opacity-50"
+              >
+                <Mail size={14} />
+                {reminderLoading ? 'Enviant…' : 'Enviar des de rental@seitocamera.com'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Modal isOpen={showModal} onClose={() => setShowModal(false)} title="Nova factura emesa" size="lg">
         <form onSubmit={handleSave} className="space-y-3">

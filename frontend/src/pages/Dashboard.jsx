@@ -327,7 +327,7 @@ export default function Dashboard() {
     setReminderLoading(true);
     try {
       const res = await api.get(`/invoices/issued/${invoiceId}/payment-reminder`);
-      setReminderModal(res.data);
+      setReminderModal({ ...res.data, invoiceId });
     } catch (err) {
       alert('Error generant el recordatori: ' + (err.response?.data?.error || err.message));
     } finally {
@@ -335,12 +335,25 @@ export default function Dashboard() {
     }
   };
 
-  // Enviar recordatori via mailto:
-  const handleSendReminder = () => {
+  // Enviar recordatori directament via Zoho Mail
+  const [reminderSending, setReminderSending] = useState(false);
+  const handleSendReminder = async () => {
     if (!reminderModal) return;
-    const mailto = `mailto:${encodeURIComponent(reminderModal.to)}?subject=${encodeURIComponent(reminderModal.subject)}&body=${encodeURIComponent(reminderModal.body)}`;
-    window.open(mailto, '_blank');
-    setReminderModal(null);
+    setReminderSending(true);
+    try {
+      await api.post(`/invoices/issued/${reminderModal.invoiceId}/send-reminder`, {
+        to: reminderModal.to,
+        subject: reminderModal.subject,
+        body: reminderModal.body,
+      });
+      alert(`Recordatori enviat correctament a ${reminderModal.to}`);
+      setReminderModal(null);
+      refetchStats();
+    } catch (err) {
+      alert('Error enviant el recordatori: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setReminderSending(false);
+    }
   };
 
   // Aplicar preset de rang
@@ -769,6 +782,7 @@ export default function Dashboard() {
                   <SortHeader label="Venciment" field="dueDate" sort={collectionSort} setSort={setCollectionSort} />
                   <SortHeader label="Import" field="totalAmount" sort={collectionSort} setSort={setCollectionSort} align="right" />
                   <SortHeader label="Dies" field="daysPending" sort={collectionSort} setSort={setCollectionSort} align="center" />
+                  <th className="text-center p-3 font-medium">Últim recordatori</th>
                   <th className="text-center p-3 font-medium">Acció</th>
                 </tr>
               </thead>
@@ -788,6 +802,22 @@ export default function Dashboard() {
                       <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">
                         {inv.daysPending}d
                       </span>
+                    </td>
+                    <td className="p-3 text-center">
+                      {inv.lastReminder ? (
+                        <div className="text-xs" title={`Enviat a ${inv.lastReminder.sentTo} per ${inv.lastReminder.user?.name || '?'}`}>
+                          <span className="text-muted-foreground">
+                            {new Date(inv.lastReminder.createdAt).toLocaleDateString('ca-ES')}
+                          </span>
+                          {inv.reminderCount > 1 && (
+                            <span className="ml-1 text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">
+                              ×{inv.reminderCount}
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
                     </td>
                     <td className="p-3 text-center">
                       <div className="flex items-center justify-center gap-1">
@@ -825,7 +855,7 @@ export default function Dashboard() {
                 <tr className="border-t-2 bg-muted/30 font-semibold">
                   <td className="p-3" colSpan={4}>Total pendent de cobrament</td>
                   <td className="p-3 text-right">{formatCurrency(stats.overdueIssuedInvoices.total)}</td>
-                  <td className="p-3" colSpan={2}></td>
+                  <td className="p-3" colSpan={3}></td>
                 </tr>
               </tfoot>
             </table>
@@ -944,10 +974,11 @@ export default function Dashboard() {
               </button>
               <button
                 onClick={handleSendReminder}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-amber-500 text-white text-sm font-medium hover:bg-amber-600 transition-colors"
+                disabled={reminderSending}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-amber-500 text-white text-sm font-medium hover:bg-amber-600 transition-colors disabled:opacity-50"
               >
                 <Mail size={14} />
-                Obrir correu i enviar
+                {reminderSending ? 'Enviant…' : 'Enviar des de rental@seitocamera.com'}
               </button>
             </div>
           </div>

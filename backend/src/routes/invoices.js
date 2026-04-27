@@ -1773,7 +1773,7 @@ router.get('/issued', async (req, res, next) => {
     const orderBy = orderByMap[sortBy] || { issueDate: 'desc' };
 
     const [invoices, total] = await Promise.all([
-      prisma.issuedInvoice.findMany({ where, skip, take: parseInt(limit), orderBy, include: { client: { select: { id: true, name: true, nif: true } } } }),
+      prisma.issuedInvoice.findMany({ where, skip, take: parseInt(limit), orderBy, include: { client: { select: { id: true, name: true, nif: true } }, paymentReminders: { select: { id: true, sentTo: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: 1 } } }),
       prisma.issuedInvoice.count({ where }),
     ]);
 
@@ -1981,6 +1981,90 @@ router.get('/issued/:id/payment-reminder', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+// =============================================
+// POST /api/invoices/issued/:id/send-reminder — Enviar recordatori via Zoho Mail
+// =============================================
+router.post('/issued/:id/send-reminder', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const { to, subject, body } = req.body;
+    if (!to || !subject || !body) {
+      return res.status(400).json({ error: 'Cal indicar to, subject i body' });
+    }
+
+    const invoice = await prisma.issuedInvoice.findUnique({
+      where: { id: req.params.id },
+      include: { client: true },
+    });
+    if (!invoice) return res.status(404).json({ error: 'Factura no trobada' });
+
+    // Enviar via Zoho Mail
+    const zohoMail = require('../services/zohoMailService');
+    await zohoMail.sendEmail({ to, subject, body });
+
+    // Registrar l'enviament a la BD
+    const log = await prisma.paymentReminderLog.create({
+      data: {
+        issuedInvoiceId: req.params.id,
+        sentTo: to,
+        sentBy: req.user.id,
+        subject,
+      },
+      include: { user: { select: { name: true } } },
+    });
+
+    logger.info(`Recordatori pagament enviat: factura ${invoice.invoiceNumber} → ${to} (per ${req.user.name})`);
+
+    res.json({
+      success: true,
+      message: `Recordatori enviat a ${to}`,
+      log,
+    });
+  } catch (error) {
+    logger.error(`Error enviant recordatori: ${error.message}`);
+    res.status(500).json({ error: `Error enviant el correu: ${error.message}` });
+  }
+});
+
+// =============================================
+// POST /api/invoices/issued/:id/payment-reminder-log — Registrar enviament recordatori
+// =============================================
+router.post('/issued/:id/payment-reminder-log', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const { sentTo, subject, notes } = req.body;
+    if (!sentTo) return res.status(400).json({ error: 'Cal indicar el destinatari (sentTo)' });
+
+    const invoice = await prisma.issuedInvoice.findUnique({ where: { id: req.params.id } });
+    if (!invoice) return res.status(404).json({ error: 'Factura no trobada' });
+
+    const log = await prisma.paymentReminderLog.create({
+      data: {
+        issuedInvoiceId: req.params.id,
+        sentTo,
+        sentBy: req.user.id,
+        subject: subject || null,
+        notes: notes || null,
+      },
+      include: { user: { select: { name: true } } },
+    });
+
+    res.status(201).json(log);
+  } catch (error) { next(error); }
+});
+
+// =============================================
+// GET /api/invoices/issued/:id/payment-reminder-logs — Historial de recordatoris
+// =============================================
+router.get('/issued/:id/payment-reminder-logs', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const logs = await prisma.paymentReminderLog.findMany({
+      where: { issuedInvoiceId: req.params.id },
+      include: { user: { select: { name: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json(logs);
+  } catch (error) { next(error); }
 });
 
 // =============================================

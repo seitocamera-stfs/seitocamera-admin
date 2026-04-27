@@ -44,8 +44,9 @@ model User {
   reminderMentions  ReminderMention[]
   activityLogs      ActivityLog[]
   agentChats        AgentChat[]
-  lockedPeriods       SharedPeriodLock[] @relation("lockedPeriods")
-  compensatedPeriods  SharedPeriodLock[] @relation("compensatedPeriods")
+  lockedPeriods         SharedPeriodLock[] @relation("lockedPeriods")
+  compensatedPeriods    SharedPeriodLock[] @relation("compensatedPeriods")
+  paymentReminders      PaymentReminderLog[]
 
   @@map("users")
 }
@@ -270,14 +271,35 @@ model IssuedInvoice {
   updatedAt         DateTime      @updatedAt
 
   // Relacions
-  client         Client          @relation(fields: [clientId], references: [id])
-  conciliations  Conciliation[]
+  client              Client                @relation(fields: [clientId], references: [id])
+  conciliations       Conciliation[]
+  paymentReminders    PaymentReminderLog[]
 
   @@index([status])
   @@index([issueDate])
   @@index([clientId])
   @@index([rentmanInvoiceId])
   @@map("issued_invoices")
+}
+
+// ===========================================
+// Historial de recordatoris de cobrament
+// ===========================================
+model PaymentReminderLog {
+  id              String        @id @default(cuid())
+  issuedInvoiceId String
+  sentTo          String        // Email destinatari
+  sentBy          String        // userId de qui ho envia
+  subject         String?
+  notes           String?
+  createdAt       DateTime      @default(now())
+
+  // Relacions
+  issuedInvoice   IssuedInvoice @relation(fields: [issuedInvoiceId], references: [id], onDelete: Cascade)
+  user            User          @relation(fields: [sentBy], references: [id])
+
+  @@index([issuedInvoiceId])
+  @@map("payment_reminder_logs")
 }
 
 // ===========================================
