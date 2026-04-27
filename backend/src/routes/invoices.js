@@ -1798,7 +1798,6 @@ router.get('/issued/report', authorize('ADMIN', 'EDITOR'), async (req, res, next
 
     const where = {
       issueDate: { gte: dateFrom, lte: dateTo },
-      deletedAt: null,
     };
 
     const invoices = await prisma.issuedInvoice.findMany({
