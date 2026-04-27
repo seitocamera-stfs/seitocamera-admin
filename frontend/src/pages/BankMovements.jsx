@@ -186,12 +186,6 @@ function BankAccountsModal({ isOpen, onClose, accounts, onRefresh }) {
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
-                  {(acc.syncType === 'QONTO' || acc.syncType === 'OPEN_BANKING') && (
-                    <button onClick={() => setConnectingId(connectingId === acc.id ? null : acc.id)}
-                      className="text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded hover:bg-muted flex items-center gap-1">
-                      <Link size={12} /> API
-                    </button>
-                  )}
                   <button onClick={() => handleEdit(acc)} className="text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded hover:bg-muted">Editar</button>
                   {!acc.isDefault && (
                     <button onClick={() => handleDelete(acc.id)} className="text-xs text-destructive hover:text-destructive/80 px-2 py-1 rounded hover:bg-destructive/10">Eliminar</button>
@@ -199,119 +193,12 @@ function BankAccountsModal({ isOpen, onClose, accounts, onRefresh }) {
                 </div>
               </div>
 
-              {/* Panell de connexió API */}
-              {connectingId === acc.id && (
-                <div className="border-t p-3 bg-muted/30 space-y-3">
-                  {acc.syncType === 'QONTO' && (
-                    <>
-                      <p className="text-xs font-medium">Connexió API Qonto</p>
-                      <p className="text-[11px] text-muted-foreground">Ves a Qonto → Settings → API per obtenir les credencials. L'accés és només de lectura.</p>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="block text-[11px] font-medium mb-0.5">Organization Slug</label>
-                          <input type="text" value={connectForm[acc.id]?.orgSlug || ''} onChange={(e) => setConnectForm({ ...connectForm, [acc.id]: { ...connectForm[acc.id], orgSlug: e.target.value } })}
-                            placeholder="la-teva-org" className="w-full rounded border bg-background px-2 py-1.5 text-xs" />
-                        </div>
-                        <div>
-                          <label className="block text-[11px] font-medium mb-0.5">Secret Key</label>
-                          <div className="relative">
-                            <input type={showSecret[acc.id] ? 'text' : 'password'} value={connectForm[acc.id]?.secretKey || ''} onChange={(e) => setConnectForm({ ...connectForm, [acc.id]: { ...connectForm[acc.id], secretKey: e.target.value } })}
-                              placeholder="••••••••" className="w-full rounded border bg-background px-2 py-1.5 text-xs pr-7" />
-                            <button type="button" onClick={() => setShowSecret({ ...showSecret, [acc.id]: !showSecret[acc.id] })}
-                              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                              {showSecret[acc.id] ? <EyeOff size={12} /> : <Eye size={12} />}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button onClick={() => handleConnect(acc.id, 'QONTO')}
-                          disabled={connectStatus[acc.id]?.loading || !connectForm[acc.id]?.orgSlug || !connectForm[acc.id]?.secretKey}
-                          className="px-3 py-1.5 rounded bg-primary text-primary-foreground text-xs font-medium disabled:opacity-50">
-                          {connectStatus[acc.id]?.loading ? 'Connectant...' : 'Connectar'}
-                        </button>
-                        <button onClick={() => checkConnection(acc.id)} className="px-3 py-1.5 rounded border text-xs hover:bg-muted">Testar</button>
-                        <button onClick={() => handleDisconnect(acc.id)} className="px-3 py-1.5 rounded border text-xs text-destructive hover:bg-destructive/10 flex items-center gap-1">
-                          <Unlink size={10} /> Desconnectar
-                        </button>
-                      </div>
-                    </>
-                  )}
-
-                  {acc.syncType === 'OPEN_BANKING' && (
-                    <>
-                      <p className="text-xs font-medium">Connexió Open Banking (Yapily)</p>
-                      <p className="text-[11px] text-muted-foreground">
-                        Registra't a <a href="https://dashboard.yapily.com" target="_blank" rel="noopener noreferrer" className="underline">Yapily Dashboard</a> per obtenir Application ID i Secret.
-                        Seràs redirigit al teu banc per autoritzar l'accés de lectura.
-                      </p>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="block text-[11px] font-medium mb-0.5">Application ID</label>
-                          <input type="text" value={connectForm[acc.id]?.appId || ''} onChange={(e) => setConnectForm({ ...connectForm, [acc.id]: { ...connectForm[acc.id], appId: e.target.value } })}
-                            placeholder="xxxxxxxx-xxxx-xxxx-xxxx" className="w-full rounded border bg-background px-2 py-1.5 text-xs" />
-                        </div>
-                        <div>
-                          <label className="block text-[11px] font-medium mb-0.5">Application Secret</label>
-                          <div className="relative">
-                            <input type={showSecret[acc.id] ? 'text' : 'password'} value={connectForm[acc.id]?.appSecret || ''} onChange={(e) => setConnectForm({ ...connectForm, [acc.id]: { ...connectForm[acc.id], appSecret: e.target.value } })}
-                              placeholder="••••••••" className="w-full rounded border bg-background px-2 py-1.5 text-xs pr-7" />
-                            <button type="button" onClick={() => setShowSecret({ ...showSecret, [acc.id]: !showSecret[acc.id] })}
-                              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                              {showSecret[acc.id] ? <EyeOff size={12} /> : <Eye size={12} />}
-                            </button>
-                          </div>
-                        </div>
-                        <div className="col-span-2">
-                          <label className="block text-[11px] font-medium mb-0.5">Banc</label>
-                          <select value={connectForm[acc.id]?.institutionId || 'banco-sabadell'} onChange={(e) => setConnectForm({ ...connectForm, [acc.id]: { ...connectForm[acc.id], institutionId: e.target.value } })}
-                            className="w-full rounded border bg-background px-2 py-1.5 text-xs">
-                            <option value="banco-sabadell">Banc Sabadell</option>
-                            <option value="caixabank">CaixaBank</option>
-                            <option value="bbva">BBVA</option>
-                            <option value="santander">Santander</option>
-                            <option value="bankinter">Bankinter</option>
-                            <option value="ing-es">ING Espanya</option>
-                          </select>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button onClick={() => handleConnect(acc.id, 'OPEN_BANKING')}
-                          disabled={connectStatus[acc.id]?.loading || !connectForm[acc.id]?.appId || !connectForm[acc.id]?.appSecret}
-                          className="px-3 py-1.5 rounded bg-primary text-primary-foreground text-xs font-medium disabled:opacity-50 flex items-center gap-1">
-                          <ExternalLink size={10} />
-                          {connectStatus[acc.id]?.loading ? 'Connectant...' : 'Connectar amb el banc'}
-                        </button>
-                        <button onClick={() => checkConnection(acc.id)} className="px-3 py-1.5 rounded border text-xs hover:bg-muted">Comprovar estat</button>
-                        <button onClick={() => handleDisconnect(acc.id)} className="px-3 py-1.5 rounded border text-xs text-destructive hover:bg-destructive/10 flex items-center gap-1">
-                          <Unlink size={10} /> Desconnectar
-                        </button>
-                      </div>
-                    </>
-                  )}
-
-                  {/* Estat connexió */}
-                  {connectStatus[acc.id]?.success && (
-                    <div className="bg-green-50 text-green-800 rounded p-2 text-xs flex items-center gap-1.5">
-                      <CheckCircle2 size={12} /> {connectStatus[acc.id].message}
-                      {connectStatus[acc.id].link && (
-                        <a href={connectStatus[acc.id].link} target="_blank" rel="noopener noreferrer" className="underline ml-1">Obrir enllanç del banc</a>
-                      )}
-                    </div>
-                  )}
-                  {connectStatus[acc.id]?.error && (
-                    <div className="bg-red-50 text-red-800 rounded p-2 text-xs flex items-center gap-1.5">
-                      <AlertCircle size={12} /> {connectStatus[acc.id].error}
-                    </div>
-                  )}
-                  {connectStatus[acc.id]?.info && (
-                    <div className="bg-blue-50 text-blue-800 rounded p-2 text-xs">
-                      {connectStatus[acc.id].connected
-                        ? <span className="flex items-center gap-1"><Wifi size={10} /> Connectat correctament</span>
-                        : <span className="flex items-center gap-1"><WifiOff size={10} /> {connectStatus[acc.id].statusDescription || connectStatus[acc.id].error || 'No connectat'}</span>
-                      }
-                    </div>
-                  )}
+              {/* Info API: link a Connexions */}
+              {(acc.syncType === 'QONTO' || acc.syncType === 'OPEN_BANKING') && (
+                <div className="border-t p-2 bg-muted/20 text-xs text-muted-foreground flex items-center gap-1.5">
+                  <Wifi size={10} />
+                  <span>Credencials API configurades a</span>
+                  <a href="/settings/connections" className="text-primary underline hover:text-primary/80">Connexions</a>
                 </div>
               )}
             </div>

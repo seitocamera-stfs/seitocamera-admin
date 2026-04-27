@@ -314,6 +314,118 @@ router.put('/zoho/credentials', async (req, res, next) => {
 });
 
 // ===========================================
+// PUT /api/connections/qonto/credentials — Guardar credencials Qonto
+// ===========================================
+router.put('/qonto/credentials', async (req, res, next) => {
+  try {
+    const { orgSlug, secretKey } = req.body;
+    if (!orgSlug || !secretKey) {
+      return res.status(400).json({ error: 'Cal indicar Organization Slug i Secret Key' });
+    }
+
+    await prisma.serviceConnection.upsert({
+      where: { provider: 'QONTO' },
+      update: {
+        apiKey: orgSlug,
+        apiSecret: secretKey,
+        displayName: `Qonto — ${orgSlug}`,
+        status: 'ACTIVE',
+        connectedBy: req.user?.id || null,
+        connectedAt: new Date(),
+        lastError: null,
+      },
+      create: {
+        provider: 'QONTO',
+        apiKey: orgSlug,
+        apiSecret: secretKey,
+        displayName: `Qonto — ${orgSlug}`,
+        status: 'ACTIVE',
+        connectedBy: req.user?.id || null,
+        connectedAt: new Date(),
+      },
+    });
+
+    res.json({ success: true, message: 'Credencials Qonto guardades.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================
+// PUT /api/connections/gocardless/credentials — Guardar credencials GoCardless
+// ===========================================
+router.put('/gocardless/credentials', async (req, res, next) => {
+  try {
+    const { appId, appSecret } = req.body;
+    if (!appId || !appSecret) {
+      return res.status(400).json({ error: 'Cal indicar Secret ID i Secret Key' });
+    }
+
+    await prisma.serviceConnection.upsert({
+      where: { provider: 'GOCARDLESS' },
+      update: {
+        apiKey: appId,
+        apiSecret: appSecret,
+        displayName: 'GoCardless Open Banking',
+        status: 'ACTIVE',
+        connectedBy: req.user?.id || null,
+        connectedAt: new Date(),
+        lastError: null,
+      },
+      create: {
+        provider: 'GOCARDLESS',
+        apiKey: appId,
+        apiSecret: appSecret,
+        displayName: 'GoCardless Open Banking',
+        status: 'ACTIVE',
+        connectedBy: req.user?.id || null,
+        connectedAt: new Date(),
+      },
+    });
+
+    res.json({ success: true, message: 'Credencials GoCardless guardades.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================
+// PUT /api/connections/rentman/credentials — Guardar credencials Rentman
+// ===========================================
+router.put('/rentman/credentials', async (req, res, next) => {
+  try {
+    const { apiToken } = req.body;
+    if (!apiToken) {
+      return res.status(400).json({ error: 'Cal indicar el token API' });
+    }
+
+    await prisma.serviceConnection.upsert({
+      where: { provider: 'RENTMAN' },
+      update: {
+        apiKey: apiToken,
+        displayName: 'Rentman API',
+        status: 'ACTIVE',
+        connectedBy: req.user?.id || null,
+        connectedAt: new Date(),
+        lastError: null,
+      },
+      create: {
+        provider: 'RENTMAN',
+        apiKey: apiToken,
+        displayName: 'Rentman API',
+        status: 'ACTIVE',
+        connectedBy: req.user?.id || null,
+        connectedAt: new Date(),
+      },
+    });
+
+    res.json({ success: true, message: 'Credencials Rentman guardades.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================
 // POST /api/connections/:provider/disconnect — Desconnectar servei
 // ===========================================
 router.post('/:provider/disconnect', async (req, res, next) => {
@@ -372,6 +484,58 @@ router.post('/:provider/test', async (req, res, next) => {
       }
 
       return res.json(result);
+    }
+
+    // Test Qonto
+    if (provider.toUpperCase() === 'QONTO') {
+      const conn = await prisma.serviceConnection.findUnique({ where: { provider: 'QONTO' } });
+      if (!conn?.apiKey || !conn?.apiSecret) {
+        return res.json({ connected: false, error: 'Credencials Qonto no configurades' });
+      }
+      try {
+        const https = require('https');
+        const testResult = await new Promise((resolve, reject) => {
+          const options = {
+            hostname: 'thirdparty.qonto.com',
+            path: '/v2/organization',
+            method: 'GET',
+            headers: { Authorization: `${conn.apiKey}:${conn.apiSecret}` },
+          };
+          const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', (c) => { data += c; });
+            res.on('end', () => { try { resolve(JSON.parse(data)); } catch { reject(new Error('Resposta no JSON')); } });
+          });
+          req.on('error', reject);
+          req.setTimeout(10000, () => { req.destroy(); reject(new Error('Timeout')); });
+          req.end();
+        });
+        const orgName = testResult.organization?.slug || testResult.organization?.legal_name || 'OK';
+        await prisma.serviceConnection.update({
+          where: { provider: 'QONTO' },
+          data: { status: 'ACTIVE', lastUsedAt: new Date(), lastError: null, displayName: `Qonto — ${orgName}` },
+        });
+        return res.json({ connected: true, organization: orgName });
+      } catch (err) {
+        await prisma.serviceConnection.update({
+          where: { provider: 'QONTO' },
+          data: { status: 'ERROR', lastError: err.message },
+        });
+        return res.json({ connected: false, error: err.message });
+      }
+    }
+
+    // Test GoCardless
+    if (provider.toUpperCase() === 'GOCARDLESS') {
+      const conn = await prisma.serviceConnection.findUnique({ where: { provider: 'GOCARDLESS' } });
+      if (!conn?.apiKey || !conn?.apiSecret) {
+        return res.json({ connected: false, error: 'Credencials GoCardless no configurades' });
+      }
+      await prisma.serviceConnection.update({
+        where: { provider: 'GOCARDLESS' },
+        data: { status: 'ACTIVE', lastUsedAt: new Date(), lastError: null },
+      });
+      return res.json({ connected: true, message: 'Credencials guardades. La connexió Open Banking es completa al vincular un compte bancari.' });
     }
 
     res.status(400).json({ error: `Test no implementat per ${provider}` });

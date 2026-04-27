@@ -61,7 +61,8 @@ export default function Connections() {
   const [connections, setConnections] = useState([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(null);
-  const [zohoSetup, setZohoSetup] = useState(null); // { clientId, clientSecret, accountId, fromAddress }
+  const [zohoSetup, setZohoSetup] = useState(null);
+  const [apiSetup, setApiSetup] = useState(null); // { provider, fields... } per Qonto/GoCardless/Rentman
   const [successMsg, setSuccessMsg] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
 
@@ -95,12 +96,31 @@ export default function Connections() {
     if (provider === 'ZOHO_MAIL') {
       const conn = connections.find((c) => c.provider === 'ZOHO_MAIL');
       if (!conn?.hasCredentials) {
-        // Mostrar formulari de setup
         setZohoSetup({ clientId: '', clientSecret: '', accountId: '', fromAddress: 'rental@seitocamera.com' });
         return;
       }
-      // Ja té credencials → generar URL auth
       await startZohoOAuth();
+    } else if (provider === 'QONTO') {
+      setApiSetup({ provider: 'QONTO', orgSlug: '', secretKey: '' });
+    } else if (provider === 'GOCARDLESS') {
+      setApiSetup({ provider: 'GOCARDLESS', appId: '', appSecret: '' });
+    } else if (provider === 'RENTMAN') {
+      setApiSetup({ provider: 'RENTMAN', apiToken: '' });
+    }
+  };
+
+  const handleSaveApiCredentials = async () => {
+    if (!apiSetup) return;
+    setActionLoading(apiSetup.provider + '_SAVE');
+    try {
+      await api.put(`/connections/${apiSetup.provider.toLowerCase()}/credentials`, apiSetup);
+      setApiSetup(null);
+      await fetchConnections();
+      setSuccessMsg(`${PROVIDER_INFO[apiSetup.provider]?.label || apiSetup.provider}: credencials guardades.`);
+    } catch (err) {
+      setErrorMsg(err.response?.data?.error || err.message);
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -310,13 +330,129 @@ export default function Connections() {
                     </>
                   )}
 
-                  {conn.provider !== 'ZOHO_MAIL' && (
+                  {(conn.provider === 'QONTO' || conn.provider === 'GOCARDLESS' || conn.provider === 'RENTMAN') && (
+                    <>
+                      {isConnected ? (
+                        <>
+                          <button
+                            onClick={() => handleTest(conn.provider)}
+                            disabled={!!actionLoading}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors disabled:opacity-50"
+                          >
+                            {actionLoading === conn.provider + '_TEST' ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                            Testejar
+                          </button>
+                          <button
+                            onClick={() => handleConnect(conn.provider)}
+                            disabled={!!actionLoading}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors disabled:opacity-50"
+                          >
+                            <Settings size={14} />
+                            Editar
+                          </button>
+                          <button
+                            onClick={() => handleDisconnect(conn.provider)}
+                            disabled={!!actionLoading}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-red-50 text-red-700 hover:bg-red-100 transition-colors disabled:opacity-50"
+                          >
+                            <XCircle size={14} />
+                            Desconnectar
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          onClick={() => handleConnect(conn.provider)}
+                          disabled={!!actionLoading}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-green-600 text-white hover:bg-green-700 transition-colors disabled:opacity-50"
+                        >
+                          <PlugZap size={14} />
+                          Connectar
+                        </button>
+                      )}
+                    </>
+                  )}
+
+                  {(conn.provider === 'GOOGLE_DRIVE' || conn.provider === 'SMTP') && (
                     <span className="text-xs text-muted-foreground self-center italic">Pròximament</span>
                   )}
                 </div>
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Modal de setup API (Qonto, GoCardless, Rentman) */}
+      {apiSetup && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-card rounded-lg shadow-xl max-w-lg w-full p-6">
+            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              {(() => { const I = PROVIDER_INFO[apiSetup.provider]?.icon || Plug; return <I size={20} />; })()}
+              Configurar {PROVIDER_INFO[apiSetup.provider]?.label || apiSetup.provider}
+            </h3>
+
+            <div className="space-y-4 text-sm">
+              {apiSetup.provider === 'QONTO' && (
+                <>
+                  <div className="bg-purple-50 text-purple-800 rounded-lg p-3 text-xs">
+                    <p>Obtén les credencials a <a href="https://app.qonto.com/settings/integrations" target="_blank" rel="noopener noreferrer" className="underline font-medium">Qonto → Integracions → API</a></p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium mb-1">Organization Slug *</label>
+                    <input type="text" value={apiSetup.orgSlug || ''} onChange={(e) => setApiSetup({ ...apiSetup, orgSlug: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-md text-sm bg-background" placeholder="nom-empresa-xxxxx" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium mb-1">Secret Key *</label>
+                    <input type="password" value={apiSetup.secretKey || ''} onChange={(e) => setApiSetup({ ...apiSetup, secretKey: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-md text-sm bg-background" placeholder="••••••••" />
+                  </div>
+                </>
+              )}
+
+              {apiSetup.provider === 'GOCARDLESS' && (
+                <>
+                  <div className="bg-teal-50 text-teal-800 rounded-lg p-3 text-xs">
+                    <p>Obtén les credencials a <a href="https://bankaccountdata.gocardless.com" target="_blank" rel="noopener noreferrer" className="underline font-medium">GoCardless Bank Account Data</a></p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium mb-1">Secret ID *</label>
+                    <input type="text" value={apiSetup.appId || ''} onChange={(e) => setApiSetup({ ...apiSetup, appId: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-md text-sm bg-background" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium mb-1">Secret Key *</label>
+                    <input type="password" value={apiSetup.appSecret || ''} onChange={(e) => setApiSetup({ ...apiSetup, appSecret: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-md text-sm bg-background" placeholder="••••••••" />
+                  </div>
+                </>
+              )}
+
+              {apiSetup.provider === 'RENTMAN' && (
+                <>
+                  <div className="bg-orange-50 text-orange-800 rounded-lg p-3 text-xs">
+                    <p>Obtén el token API a Rentman → Configuració → API</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium mb-1">API Token *</label>
+                    <input type="password" value={apiSetup.apiToken || ''} onChange={(e) => setApiSetup({ ...apiSetup, apiToken: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-md text-sm bg-background" placeholder="••••••••" />
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 mt-6">
+              <button onClick={() => setApiSetup(null)} className="px-4 py-2 rounded-md text-sm font-medium bg-gray-100 hover:bg-gray-200 transition-colors">
+                Cancel·lar
+              </button>
+              <button onClick={handleSaveApiCredentials}
+                disabled={!!actionLoading}
+                className="px-4 py-2 rounded-md text-sm font-medium bg-primary text-white hover:bg-primary/90 transition-colors disabled:opacity-50">
+                {actionLoading ? 'Guardant...' : 'Guardar i connectar'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

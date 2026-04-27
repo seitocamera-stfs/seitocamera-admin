@@ -16,25 +16,37 @@ const { logger } = require('../config/logger');
 const YAPILY_BASE_URL = 'https://api.yapily.com';
 
 /**
- * Obté les credencials Yapily des del BankAccount o env vars
+ * Obté les credencials Yapily: ServiceConnection → BankAccount.syncConfig → .env
  */
 async function getCredentials(bankAccountId) {
+  // 1. Mirar ServiceConnection (centralitzat)
+  try {
+    const conn = await prisma.serviceConnection.findUnique({ where: { provider: 'GOCARDLESS' } });
+    if (conn?.apiKey && conn?.apiSecret) {
+      return { appId: conn.apiKey, appSecret: conn.apiSecret, source: 'database' };
+    }
+  } catch (err) {
+    logger.debug(`ServiceConnection GOCARDLESS lookup failed: ${err.message}`);
+  }
+
+  // 2. Fallback: BankAccount.syncConfig (legacy)
   if (bankAccountId) {
     const account = await prisma.bankAccount.findUnique({ where: { id: bankAccountId } });
     if (account?.syncConfig) {
       const config = typeof account.syncConfig === 'string' ? JSON.parse(account.syncConfig) : account.syncConfig;
       if (config.appId && config.appSecret) {
-        return config;
+        return { ...config, source: 'bankAccount' };
       }
     }
   }
-  // Fallback a env vars
+
+  // 3. Fallback: env vars
   const appId = process.env.YAPILY_APP_ID;
   const appSecret = process.env.YAPILY_APP_SECRET;
   if (!appId || !appSecret) {
-    throw new Error('Credencials Yapily no configurades (YAPILY_APP_ID + YAPILY_APP_SECRET)');
+    throw new Error('Credencials GoCardless/Yapily no configurades. Configura-les a Connexions o al .env');
   }
-  return { appId, appSecret };
+  return { appId, appSecret, source: 'env' };
 }
 
 /**

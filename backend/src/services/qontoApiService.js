@@ -15,26 +15,37 @@ const { logger } = require('../config/logger');
 const QONTO_BASE_URL = 'https://thirdparty.qonto.com/v2';
 
 /**
- * Obté les credencials de Qonto des del BankAccount o env vars
+ * Obté les credencials de Qonto: ServiceConnection → BankAccount.syncConfig → .env
  */
 async function getCredentials(bankAccountId) {
-  // Primer mirar si el compte té credencials guardades
+  // 1. Mirar ServiceConnection (centralitzat)
+  try {
+    const conn = await prisma.serviceConnection.findUnique({ where: { provider: 'QONTO' } });
+    if (conn?.apiKey && conn?.apiSecret) {
+      return { orgSlug: conn.apiKey, secretKey: conn.apiSecret, source: 'database' };
+    }
+  } catch (err) {
+    logger.debug(`ServiceConnection QONTO lookup failed: ${err.message}`);
+  }
+
+  // 2. Fallback: BankAccount.syncConfig (legacy)
   if (bankAccountId) {
     const account = await prisma.bankAccount.findUnique({ where: { id: bankAccountId } });
     if (account?.syncConfig) {
       const config = typeof account.syncConfig === 'string' ? JSON.parse(account.syncConfig) : account.syncConfig;
       if (config.orgSlug && config.secretKey) {
-        return { orgSlug: config.orgSlug, secretKey: config.secretKey };
+        return { orgSlug: config.orgSlug, secretKey: config.secretKey, source: 'bankAccount' };
       }
     }
   }
-  // Fallback a env vars
+
+  // 3. Fallback: env vars
   const orgSlug = process.env.QONTO_ORG_SLUG;
   const secretKey = process.env.QONTO_SECRET_KEY;
   if (!orgSlug || !secretKey) {
-    throw new Error('Credencials Qonto no configurades (QONTO_ORG_SLUG + QONTO_SECRET_KEY)');
+    throw new Error('Credencials Qonto no configurades. Configura-les a Connexions o al .env');
   }
-  return { orgSlug, secretKey };
+  return { orgSlug, secretKey, source: 'env' };
 }
 
 /**
