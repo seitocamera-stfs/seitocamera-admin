@@ -80,6 +80,10 @@ router.get('/summary', async (req, res, next) => {
       const monthExpense = Math.abs(parseFloat(expenseMonth._sum.amount || 0));
       const lastBalance = lastMovement ? parseFloat(lastMovement.balance) : null;
 
+      // Extreure subAccounts del syncConfig (desglossament Qonto)
+      const syncConfig = typeof acc.syncConfig === 'string' ? JSON.parse(acc.syncConfig) : acc.syncConfig;
+      const subAccounts = syncConfig?.subAccounts || null;
+
       return {
         id: acc.id,
         name: acc.name,
@@ -94,6 +98,7 @@ router.get('/summary', async (req, res, next) => {
         incomeMonth: monthIncome,
         expenseMonth: monthExpense,
         movementCount: totalCount,
+        syncConfig: subAccounts ? { subAccounts } : null,
       };
     }));
 

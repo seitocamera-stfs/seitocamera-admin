@@ -100,18 +100,24 @@ async function getBankAccounts(bankAccountId) {
 }
 
 /**
- * Obté el saldo real del compte Qonto
+ * Obté el saldo real del compte Qonto (total + desglossament per sub-compte)
  */
 async function getBalance(bankAccountId) {
   const accounts = await getBankAccounts(bankAccountId);
   if (!accounts.length) return null;
-  // Retornar el primer compte actiu (normalment n'hi ha un)
-  const active = accounts.find(a => a.status === 'active') || accounts[0];
+
+  const activeAccounts = accounts.filter(a => a.status === 'active');
+  const totalBalance = activeAccounts.reduce((sum, a) => sum + (a.balance || 0), 0);
+
   return {
-    balance: active.balance,
-    currency: active.currency,
-    iban: active.iban,
-    accountSlug: active.slug,
+    balance: Math.round(totalBalance * 100) / 100,
+    currency: activeAccounts[0]?.currency || 'EUR',
+    accounts: activeAccounts.map(a => ({
+      name: a.name,
+      slug: a.slug,
+      balance: a.balance,
+      iban: a.iban,
+    })),
   };
 }
 
@@ -272,18 +278,29 @@ async function syncTransactions(options = {}) {
     }
   }
 
-  // Obtenir saldo real i guardar-lo
+  // Obtenir saldo real (total + desglossament) i guardar-lo
   let balance = null;
+  let subAccounts = null;
   try {
     const balanceData = await getBalance(bankAccountId);
     if (balanceData) {
       balance = balanceData.balance;
+      subAccounts = balanceData.accounts;
+
+      // Guardar saldo total + desglossament al syncConfig
+      const account = await prisma.bankAccount.findUnique({ where: { id: bankAccountId } });
+      const currentConfig = typeof account?.syncConfig === 'object' && account.syncConfig ? account.syncConfig : {};
+
       await prisma.bankAccount.update({
         where: { id: bankAccountId },
         data: {
           currentBalance: balanceData.balance,
           lastSyncAt: new Date(),
           lastSyncError: null,
+          syncConfig: {
+            ...currentConfig,
+            subAccounts: balanceData.accounts,
+          },
         },
       });
     }
@@ -293,7 +310,7 @@ async function syncTransactions(options = {}) {
 
   logger.info(`Qonto API sync: ${created} creats, ${skipped} omesos, ${updated} actualitzats, ${errors} errors`);
 
-  return { total: transactions.length, created, skipped, updated, errors, balance };
+  return { total: transactions.length, created, skipped, updated, errors, balance, subAccounts };
 }
 
 /**

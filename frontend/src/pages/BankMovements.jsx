@@ -655,6 +655,16 @@ export default function BankMovements() {
               {acc.currentBalance != null && (
                 <div className="text-lg font-bold mb-1">{formatCurrency(parseFloat(acc.currentBalance))}</div>
               )}
+              {acc.syncConfig?.subAccounts && acc.syncConfig.subAccounts.length > 1 && (
+                <div className="mb-2 space-y-0.5">
+                  {acc.syncConfig.subAccounts.map((sub) => (
+                    <div key={sub.slug} className="flex justify-between text-[11px] text-muted-foreground">
+                      <span>{sub.name}</span>
+                      <span className="font-medium">{formatCurrency(sub.balance)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
               <div className="text-xs text-muted-foreground mb-1">Últims 30 dies</div>
               <div className="flex items-center gap-3 text-sm">
                 <span className="text-green-600 font-medium">+{formatCurrency(acc.incomeMonth)}</span>
