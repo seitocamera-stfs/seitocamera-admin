@@ -43,7 +43,7 @@ const supplierSchema = z.object({
 // ===========================================
 router.get('/', async (req, res, next) => {
   try {
-    const { search, page = 1, limit = 25, active } = req.query;
+    const { search, page = 1, limit = 25, active, sortBy, sortOrder } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const where = {};
@@ -62,12 +62,22 @@ router.get('/', async (req, res, next) => {
       ];
     }
 
+    // Ordenació dinàmica
+    const dir = sortOrder === 'desc' ? 'desc' : 'asc';
+    const orderByMap = {
+      name: { name: dir },
+      nif: { nif: dir },
+      email: { email: dir },
+      city: { city: dir },
+    };
+    const orderBy = orderByMap[sortBy] || { name: 'asc' };
+
     const [suppliers, total] = await Promise.all([
       prisma.supplier.findMany({
         where,
         skip,
         take: parseInt(limit),
-        orderBy: { name: 'asc' },
+        orderBy,
         include: {
           _count: { select: { receivedInvoices: true } },
         },

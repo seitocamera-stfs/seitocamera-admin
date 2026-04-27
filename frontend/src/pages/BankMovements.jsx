@@ -699,7 +699,7 @@ export default function BankMovements() {
               <div className="text-xs text-muted-foreground mb-1">Últims 30 dies</div>
               <div className="flex items-center gap-3 text-sm">
                 <span className="text-green-600 font-medium">+{formatCurrency(acc.incomeMonth)}</span>
-                <span className="text-red-600 font-medium">{formatCurrency(acc.expenseMonth)}</span>
+                <span className="text-red-600 font-medium">-{formatCurrency(acc.expenseMonth)}</span>
               </div>
               <div className="text-[10px] text-muted-foreground mt-2">
                 {acc.movementCount} moviments totals
@@ -719,7 +719,7 @@ export default function BankMovements() {
               <div className="text-xs text-muted-foreground mb-1">Últims 30 dies</div>
               <div className="flex items-center gap-3 text-sm">
                 <span className="text-green-600 font-medium">+{formatCurrency(accountSummary.totals.incomeMonth)}</span>
-                <span className="text-red-600 font-medium">{formatCurrency(accountSummary.totals.expenseMonth)}</span>
+                <span className="text-red-600 font-medium">-{formatCurrency(accountSummary.totals.expenseMonth)}</span>
               </div>
               <div className="text-[10px] text-muted-foreground mt-2">
                 {accountSummary.totals.movementCount} moviments totals

@@ -2006,28 +2006,56 @@ router.post('/issued/:id/send-reminder', authorize('ADMIN', 'EDITOR'), async (re
     });
     if (!invoice) return res.status(404).json({ error: 'Factura no trobada' });
 
-    // Enviar via Zoho Mail
-    const zohoMail = require('../services/zohoMailService');
-    await zohoMail.sendEmail({ to, subject, body });
+    // Intentar enviar via Zoho Mail, amb fallback a mailto:
+    let sentViaZoho = false;
+    let zohoError = null;
+    try {
+      const zohoMail = require('../services/zohoMailService');
+      await zohoMail.sendEmail({ to, subject, body });
+      sentViaZoho = true;
+    } catch (err) {
+      zohoError = err.message || String(err);
+      logger.warn(`Zoho sendEmail fallit (fallback a mailto): ${zohoError}`);
+    }
 
-    // Registrar l'enviament a la BD
-    const log = await prisma.paymentReminderLog.create({
-      data: {
-        issuedInvoiceId: req.params.id,
-        sentTo: to,
-        sentBy: req.user.id,
-        subject,
-      },
-      include: { user: { select: { name: true } } },
-    });
+    // Registrar l'enviament/intent a la BD (sempre, tant si Zoho com mailto)
+    let log = null;
+    try {
+      log = await prisma.paymentReminderLog.create({
+        data: {
+          issuedInvoiceId: req.params.id,
+          sentTo: to,
+          sentBy: req.user.id,
+          subject,
+          notes: sentViaZoho ? 'Enviat via Zoho Mail API' : `Obert via mailto (Zoho error: ${zohoError})`,
+        },
+        include: { user: { select: { name: true } } },
+      });
+    } catch (logErr) {
+      logger.warn(`No s'ha pogut registrar el reminder log (taula pendent?): ${logErr.message}`);
+    }
 
-    logger.info(`Recordatori pagament enviat: factura ${invoice.invoiceNumber} → ${to} (per ${req.user.name})`);
-
-    res.json({
-      success: true,
-      message: `Recordatori enviat a ${to}`,
-      log,
-    });
+    if (sentViaZoho) {
+      logger.info(`Recordatori pagament enviat via Zoho: factura ${invoice.invoiceNumber} → ${to} (per ${req.user.name})`);
+      res.json({
+        success: true,
+        method: 'zoho',
+        message: `Recordatori enviat a ${to}`,
+        log,
+      });
+    } else {
+      // Fallback: retornar mailto URL perquè el frontend l'obri
+      const mailtoUrl = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      logger.info(`Recordatori pagament via mailto (fallback): factura ${invoice.invoiceNumber} → ${to} (per ${req.user.name})`);
+      res.json({
+        success: true,
+        method: 'mailto',
+        fallback: 'mailto',
+        mailtoUrl,
+        message: `No s'ha pogut enviar via Zoho (${zohoError}). S'obre el client de correu.`,
+        log,
+      });
+    }
   } catch (error) {
     logger.error(`Error enviant recordatori: ${error.message}`);
     res.status(500).json({ error: `Error enviant el correu: ${error.message}` });

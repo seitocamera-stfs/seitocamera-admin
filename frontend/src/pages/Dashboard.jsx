@@ -341,12 +341,17 @@ export default function Dashboard() {
     if (!reminderModal) return;
     setReminderSending(true);
     try {
-      await api.post(`/invoices/issued/${reminderModal.invoiceId}/send-reminder`, {
+      const { data: result } = await api.post(`/invoices/issued/${reminderModal.invoiceId}/send-reminder`, {
         to: reminderModal.to,
         subject: reminderModal.subject,
         body: reminderModal.body,
       });
-      alert(`Recordatori enviat correctament a ${reminderModal.to}`);
+      if (result.fallback === 'mailto' && result.mailtoUrl) {
+        window.open(result.mailtoUrl, '_blank');
+        alert(`S'ha obert el client de correu per enviar a ${reminderModal.to}.\n(Zoho Mail API no disponible, s'ha registrat igualment)`);
+      } else {
+        alert(`Recordatori enviat correctament a ${reminderModal.to}`);
+      }
       setReminderModal(null);
       refetchStats();
     } catch (err) {

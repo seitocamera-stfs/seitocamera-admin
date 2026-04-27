@@ -9,10 +9,18 @@ const SERVICE_LABELS = {
   equipment_extraction: { label: 'Extracció equips', icon: Package, color: 'text-orange-600 bg-orange-50' },
 };
 
+// Tipus de canvi USD → EUR (actualitzar periòdicament)
+const USD_TO_EUR = 0.88;
+
+function toEur(usd) {
+  return (usd || 0) * USD_TO_EUR;
+}
+
 function formatCost(usd) {
-  if (!usd || usd === 0) return '$0.00';
-  if (usd < 0.01) return `$${usd.toFixed(4)}`;
-  return `$${usd.toFixed(2)}`;
+  const eur = toEur(usd);
+  if (!eur || eur === 0) return '0,00 €';
+  if (eur < 0.01) return `${eur.toFixed(4)} €`;
+  return `${eur.toFixed(2)} €`;
 }
 
 function formatTokens(n) {
@@ -210,7 +218,7 @@ export default function AiCosts() {
       {/* Info preus */}
       <div className="text-xs text-muted-foreground text-center space-y-1">
         <p>Preus Claude Haiku: $1.00/M tokens entrada · $5.00/M tokens sortida</p>
-        <p>Els costos es calculen localment a partir dels tokens reportats per l'API</p>
+        <p>Conversió: 1 USD = {USD_TO_EUR} EUR · Els costos es calculen a partir dels tokens reportats per l'API</p>
       </div>
     </div>
   );

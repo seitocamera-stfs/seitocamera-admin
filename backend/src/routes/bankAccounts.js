@@ -76,8 +76,8 @@ router.get('/summary', async (req, res, next) => {
         }),
       ]);
 
-      const monthIncome = parseFloat(incomeMonth._sum.amount || 0);
-      const monthExpense = parseFloat(expenseMonth._sum.amount || 0);
+      const monthIncome = Math.abs(parseFloat(incomeMonth._sum.amount || 0));
+      const monthExpense = Math.abs(parseFloat(expenseMonth._sum.amount || 0));
       const lastBalance = lastMovement ? parseFloat(lastMovement.balance) : null;
 
       return {
