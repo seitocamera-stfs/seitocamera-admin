@@ -18,37 +18,47 @@ router.use(authenticate);
 router.get('/', async (req, res, next) => {
   try {
     const { year, groupBy = 'month' } = req.query;
-    const targetYear = parseInt(year) || new Date().getFullYear();
+    const isAll = year === 'all';
+    const targetYear = isAll ? null : (parseInt(year) || new Date().getFullYear());
+
+    const whereClause = {
+      isShared: true,
+      deletedAt: null,
+    };
+    if (!isAll) {
+      whereClause.issueDate = {
+        gte: new Date(`${targetYear}-01-01`),
+        lt: new Date(`${targetYear + 1}-01-01`),
+      };
+    }
 
     const invoices = await prisma.receivedInvoice.findMany({
-      where: {
-        isShared: true,
-        deletedAt: null,
-        issueDate: {
-          gte: new Date(`${targetYear}-01-01`),
-          lt: new Date(`${targetYear + 1}-01-01`),
-        },
-      },
+      where: whereClause,
       orderBy: { issueDate: 'asc' },
       include: {
         supplier: { select: { id: true, name: true } },
       },
     });
 
-    // Agrupar per mes o trimestre
+    // Agrupar per mes o trimestre (o per any si és "all")
     const groups = {};
+    const monthNames = ['Gener', 'Febrer', 'Març', 'Abril', 'Maig', 'Juny', 'Juliol', 'Agost', 'Setembre', 'Octubre', 'Novembre', 'Desembre'];
     for (const inv of invoices) {
       const date = new Date(inv.issueDate);
+      const invYear = date.getFullYear();
       const month = date.getMonth() + 1; // 1-12
       let key, label;
 
-      if (groupBy === 'quarter') {
+      if (isAll) {
+        // Quan és "Tot", agrupar per any
+        key = String(invYear);
+        label = String(invYear);
+      } else if (groupBy === 'quarter') {
         const q = Math.ceil(month / 3);
         key = `Q${q}`;
         label = `T${q} ${targetYear}`;
       } else {
         key = String(month).padStart(2, '0');
-        const monthNames = ['Gener', 'Febrer', 'Març', 'Abril', 'Maig', 'Juny', 'Juliol', 'Agost', 'Setembre', 'Octubre', 'Novembre', 'Desembre'];
         label = `${monthNames[month - 1]} ${targetYear}`;
       }
 
@@ -94,8 +104,8 @@ router.get('/', async (req, res, next) => {
     }), { totalAmount: 0, totalSeito: 0, totalLogistik: 0, count: 0 });
 
     res.json({
-      year: targetYear,
-      groupBy,
+      year: isAll ? 'all' : targetYear,
+      groupBy: isAll ? 'year' : groupBy,
       groups: Object.values(groups).sort((a, b) => a.key.localeCompare(b.key)),
       totals: {
         totalAmount: +yearTotal.totalAmount.toFixed(2),

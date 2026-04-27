@@ -8,6 +8,7 @@ import api from '../lib/api';
 export default function SharedInvoices() {
   const currentYear = new Date().getFullYear();
   const [year, setYear] = useState(currentYear);
+  const availableYears = Array.from({ length: currentYear - 2022 }, (_, i) => currentYear - i);
   const [groupBy, setGroupBy] = useState('month');
   const [expanded, setExpanded] = useState({});
   const [editingId, setEditingId] = useState(null);
@@ -27,11 +28,15 @@ export default function SharedInvoices() {
   const [lockLoading, setLockLoading] = useState(null); // "periodType:period" que s'està processant
   const [confirmAction, setConfirmAction] = useState(null); // { type: 'lock'|'unlock'|'compensate', group }
 
-  const { data, loading, refetch } = useApiGet('/shared-invoices', { year, groupBy });
+  const { data, loading, refetch } = useApiGet('/shared-invoices', { year, groupBy: year === 'all' ? undefined : groupBy });
 
   // Carregar estat de bloqueig
   const fetchLocks = useCallback(async () => {
     try {
+      if (year === 'all') {
+        setLocks({});
+        return;
+      }
       const res = await api.get('/shared-invoices/period-locks', { params: { year } });
       setLocks(res.data || {});
     } catch {
@@ -298,12 +303,15 @@ export default function SharedInvoices() {
               {selectedIds.length > 0 ? `${selectedIds.length} sel.` : 'Sel. tot'}
             </button>
           )}
-          <select value={groupBy} onChange={(e) => setGroupBy(e.target.value)} className="rounded-md border bg-background px-3 py-2 text-sm">
-            <option value="month">Per mes</option>
-            <option value="quarter">Per trimestre</option>
-          </select>
-          <select value={year} onChange={(e) => { setYear(parseInt(e.target.value)); setSelectedIds([]); }} className="rounded-md border bg-background px-3 py-2 text-sm">
-            {[currentYear, currentYear - 1, currentYear - 2].map((y) => (
+          {year !== 'all' && (
+            <select value={groupBy} onChange={(e) => setGroupBy(e.target.value)} className="rounded-md border bg-background px-3 py-2 text-sm">
+              <option value="month">Per mes</option>
+              <option value="quarter">Per trimestre</option>
+            </select>
+          )}
+          <select value={year} onChange={(e) => { setYear(e.target.value === 'all' ? 'all' : parseInt(e.target.value)); setSelectedIds([]); }} className="rounded-md border bg-background px-3 py-2 text-sm">
+            <option value="all">Tot</option>
+            {availableYears.map((y) => (
               <option key={y} value={y}>{y}</option>
             ))}
           </select>
@@ -336,7 +344,7 @@ export default function SharedInvoices() {
       {data?.groups?.length > 0 && (
         <div className="bg-card border rounded-lg overflow-hidden mb-6">
           <div className="px-4 py-3 border-b bg-muted/30">
-            <h3 className="text-sm font-semibold">Registre per {groupBy === 'quarter' ? 'trimestre' : 'mes'}</h3>
+            <h3 className="text-sm font-semibold">Registre per {year === 'all' ? 'any' : groupBy === 'quarter' ? 'trimestre' : 'mes'}</h3>
           </div>
           <table className="w-full text-sm">
             <thead className="bg-muted/20">
@@ -415,7 +423,7 @@ export default function SharedInvoices() {
                 const totBalance = totPaidSeito - data.totals.totalSeito;
                 return (
                   <tr className="border-t-2 bg-muted/30 font-semibold">
-                    <td className="p-3">Total {year}</td>
+                    <td className="p-3">Total {year === 'all' ? 'global' : year}</td>
                     <td className="p-3 text-center">{data.totals.count}</td>
                     <td className="p-3 text-right">{formatCurrency(data.totals.totalAmount)}</td>
                     <td className="p-3 text-right text-blue-600">{formatCurrency(data.totals.totalSeito)}</td>
