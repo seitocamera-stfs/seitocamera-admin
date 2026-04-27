@@ -234,7 +234,8 @@ export default function IssuedInvoices() {
               </th>
               <SortableHeader label="Número" field="invoiceNumber" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <SortableHeader label="Client" field="client" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
-              <SortableHeader label="Data" field="issueDate" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+              <SortableHeader label="Data emissió" field="issueDate" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+              <SortableHeader label="Venciment" field="dueDate" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <SortableHeader label="Import" field="totalAmount" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <SortableHeader label="Estat" field="status" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <th className="text-right p-3 font-medium text-xs text-muted-foreground uppercase">Accions</th>
@@ -242,9 +243,9 @@ export default function IssuedInvoices() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
+              <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
             ) : data?.data?.length === 0 ? (
-              <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">Cap factura trobada</td></tr>
+              <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">Cap factura trobada</td></tr>
             ) : (
               sortedData.map((inv) => (
                 <tr
@@ -269,6 +270,7 @@ export default function IssuedInvoices() {
                   </td>
                   <td className="p-3">{inv.client?.name}</td>
                   <td className="p-3 text-muted-foreground">{formatDate(inv.issueDate)}</td>
+                  <td className="p-3 text-muted-foreground">{inv.dueDate ? formatDate(inv.dueDate) : '—'}</td>
                   <td className="p-3 text-right font-medium">{formatCurrency(inv.totalAmount)}</td>
                   <td className="p-3 text-center"><StatusBadge status={inv.status} /></td>
                   <td className="p-3 text-right">
