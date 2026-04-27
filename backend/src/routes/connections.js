@@ -115,7 +115,7 @@ router.get('/', async (req, res, next) => {
       connectedAt: c.connectedAt,
       lastUsedAt: c.lastUsedAt,
       lastError: c.lastError,
-      hasCredentials: !!(c.refreshToken || c.apiKey),
+      hasCredentials: !!(c.refreshToken || c.apiKey || c.clientId),
       config: c.config ? sanitizeConfig(c.config) : null,
     }));
 

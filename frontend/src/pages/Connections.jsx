@@ -147,7 +147,8 @@ export default function Connections() {
       await api.put('/connections/zoho/credentials', zohoSetup);
       setZohoSetup(null);
       await fetchConnections();
-      setSuccessMsg('Credencials guardades. Ara clica "Connectar" per autoritzar.');
+      // Iniciar OAuth automàticament després de guardar
+      await startZohoOAuth();
     } catch (err) {
       setErrorMsg(err.response?.data?.error || err.message);
     } finally {
