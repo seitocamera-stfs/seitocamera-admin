@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, Search, Edit2, Trash2, Eye, FileText } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, Eye, FileText, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import { StatusBadge } from '../components/shared/StatusBadge';
 import Modal from '../components/shared/Modal';
@@ -9,6 +9,9 @@ import api from '../lib/api';
 export default function Clients() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [sortField, setSortField] = useState('name');
+  const [sortDir, setSortDir] = useState('asc');
   const [showModal, setShowModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedClient, setSelectedClient] = useState(null);
@@ -26,7 +29,22 @@ export default function Clients() {
     }
   };
 
-  const { data, loading, refetch } = useApiGet('/clients', { search, page, limit: 25 });
+  const handleSort = (field) => {
+    if (sortField === field) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDir('asc');
+    }
+    setPage(1);
+  };
+
+  const SortIcon = ({ field }) => {
+    if (sortField !== field) return <ArrowUpDown size={12} className="text-muted-foreground/40" />;
+    return sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />;
+  };
+
+  const { data, loading, refetch } = useApiGet('/clients', { search, page, limit: pageSize, sortBy: sortField, sortOrder: sortDir });
   const { data: clientInvoices } = useApiGet(
     selectedClient ? '/invoices/issued' : null,
     selectedClient ? { clientId: selectedClient.id, limit: 100 } : {}
@@ -90,9 +108,9 @@ export default function Clients() {
         <table className="w-full text-sm">
           <thead className="bg-muted/50">
             <tr>
-              <th className="text-left p-3 font-medium">Nom</th>
-              <th className="text-left p-3 font-medium">NIF</th>
-              <th className="text-left p-3 font-medium">Email</th>
+              <th className="text-left p-3 font-medium cursor-pointer select-none" onClick={() => handleSort('name')}><span className="flex items-center gap-1">Nom <SortIcon field="name" /></span></th>
+              <th className="text-left p-3 font-medium cursor-pointer select-none" onClick={() => handleSort('nif')}><span className="flex items-center gap-1">NIF <SortIcon field="nif" /></span></th>
+              <th className="text-left p-3 font-medium cursor-pointer select-none" onClick={() => handleSort('email')}><span className="flex items-center gap-1">Email <SortIcon field="email" /></span></th>
               <th className="text-left p-3 font-medium">Telèfon</th>
               <th className="text-center p-3 font-medium">Factures</th>
               <th className="text-right p-3 font-medium">Accions</th>
@@ -124,14 +142,21 @@ export default function Clients() {
           </tbody>
         </table>
 
-        {data?.pagination && data.pagination.totalPages > 1 && (
+        {data?.pagination && (
           <div className="flex items-center justify-between p-3 border-t text-sm">
-            <span className="text-muted-foreground">{data.pagination.total} clients</span>
-            <div className="flex gap-2">
-              <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} className="px-3 py-1 rounded border disabled:opacity-50">Anterior</button>
-              <span className="px-3 py-1">{page} / {data.pagination.totalPages}</span>
-              <button onClick={() => setPage(Math.min(data.pagination.totalPages, page + 1))} disabled={page >= data.pagination.totalPages} className="px-3 py-1 rounded border disabled:opacity-50">Següent</button>
+            <div className="flex items-center gap-3">
+              <span className="text-muted-foreground">{data.pagination.total} clients</span>
+              <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }} className="border rounded px-2 py-1 text-xs bg-background">
+                {[25, 50, 100, 200].map(n => <option key={n} value={n}>{n} / pàgina</option>)}
+              </select>
             </div>
+            {data.pagination.totalPages > 1 && (
+              <div className="flex gap-2">
+                <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} className="px-3 py-1 rounded border disabled:opacity-50">Anterior</button>
+                <span className="px-3 py-1">{page} / {data.pagination.totalPages}</span>
+                <button onClick={() => setPage(Math.min(data.pagination.totalPages, page + 1))} disabled={page >= data.pagination.totalPages} className="px-3 py-1 rounded border disabled:opacity-50">Següent</button>
+              </div>
+            )}
           </div>
         )}
       </div>
