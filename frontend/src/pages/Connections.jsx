@@ -289,12 +289,12 @@ export default function Connections() {
                             Testejar
                           </button>
                           <button
-                            onClick={() => startZohoOAuth()}
+                            onClick={() => setZohoSetup({ clientId: '', clientSecret: '', accountId: '', fromAddress: 'rental@seitocamera.com' })}
                             disabled={!!actionLoading}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors disabled:opacity-50"
                           >
-                            <RefreshCw size={14} />
-                            Re-autoritzar
+                            <Settings size={14} />
+                            Canviar credencials
                           </button>
                           <button
                             onClick={() => handleDisconnect(conn.provider)}
