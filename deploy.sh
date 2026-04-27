@@ -16,8 +16,14 @@ echo "🚀 Desplegant SeitoCamera Admin..."
 if [ -d "$REMOTE_DIR" ] && [ "$(pwd)" = "$REMOTE_DIR" -o -f "./docker-compose.yml" ]; then
   cd "$REMOTE_DIR"
 
-  echo "📦 Baixant imatges noves..."
-  docker compose pull
+  echo "📥 Actualitzant codi..."
+  git pull origin main
+
+  echo "📦 Baixant imatges base (postgres, redis, nginx)..."
+  docker compose pull postgres redis nginx
+
+  echo "🔨 Construint backend i frontend..."
+  docker compose build --no-cache backend frontend
 
   echo "🔄 Reiniciant serveis..."
   docker compose up -d
