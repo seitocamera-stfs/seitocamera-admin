@@ -23,6 +23,9 @@ if (missing.length > 0) {
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+// Desactivar ETag per evitar cache 304 en respostes API
+app.set('etag', false);
+
 // ===========================================
 // Middleware global
 // ===========================================
