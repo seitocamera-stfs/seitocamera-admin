@@ -1731,7 +1731,7 @@ router.post('/received/:id/unmark-duplicate', authorize('ADMIN', 'EDITOR'), asyn
 
 router.get('/issued', async (req, res, next) => {
   try {
-    const { search, status, clientId, conciliated, dateFrom, dateTo, page = 1, limit = 25 } = req.query;
+    const { search, status, clientId, conciliated, dateFrom, dateTo, sortBy, sortOrder, page = 1, limit = 25 } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const where = {};
     if (status) where.status = status;
@@ -1759,10 +1759,31 @@ router.get('/issued', async (req, res, next) => {
       }
       where.OR = searchConditions;
     }
+
+    // Ordenació dinàmica
+    const dir = sortOrder === 'asc' ? 'asc' : 'desc';
+    const orderByMap = {
+      invoiceNumber: { invoiceNumber: dir },
+      client: { client: { name: dir } },
+      issueDate: { issueDate: dir },
+      dueDate: { dueDate: dir },
+      totalAmount: { totalAmount: dir },
+      status: { status: dir },
+    };
+    const orderBy = orderByMap[sortBy] || { issueDate: 'desc' };
+
+    logger.info(`[ISSUED] sortBy=${sortBy} sortOrder=${sortOrder} dir=${dir} orderBy=${JSON.stringify(orderBy)}`);
+
     const [invoices, total] = await Promise.all([
-      prisma.issuedInvoice.findMany({ where, skip, take: parseInt(limit), orderBy: { issueDate: 'desc' }, include: { client: { select: { id: true, name: true, nif: true } } } }),
+      prisma.issuedInvoice.findMany({ where, skip, take: parseInt(limit), orderBy, include: { client: { select: { id: true, name: true, nif: true } } } }),
       prisma.issuedInvoice.count({ where }),
     ]);
+
+    // Log primera i última factura per verificar ordenació
+    if (invoices.length > 0) {
+      logger.info(`[ISSUED] Primera: ${invoices[0].invoiceNumber} (${invoices[0].issueDate}) | Última: ${invoices[invoices.length-1].invoiceNumber} (${invoices[invoices.length-1].issueDate})`);
+    }
+
     res.json({ data: invoices, pagination: { page: parseInt(page), limit: parseInt(limit), total, totalPages: Math.ceil(total / parseInt(limit)) } });
   } catch (error) { next(error); }
 });
