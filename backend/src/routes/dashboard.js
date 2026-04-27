@@ -324,24 +324,32 @@ router.get('/stats', async (req, res, next) => {
     }
 
     // ----- 7. Factures emeses pendents de cobrament (des de 2025) -----
+    // Comprovar si la taula paymentReminders existeix
+    let hasReminderTable = false;
+    try { await prisma.paymentReminderLog.findFirst({ take: 1 }); hasReminderTable = true; } catch { /* migració pendent */ }
+
+    const overdueSelect = {
+      id: true,
+      invoiceNumber: true,
+      issueDate: true,
+      dueDate: true,
+      totalAmount: true,
+      status: true,
+      client: { select: { id: true, name: true } },
+    };
+    if (hasReminderTable) {
+      overdueSelect.paymentReminders = {
+        select: { id: true, sentTo: true, createdAt: true, user: { select: { name: true } } },
+        orderBy: { createdAt: 'desc' },
+      };
+    }
+
     const overdueIssuedInvoices = await prisma.issuedInvoice.findMany({
       where: {
         status: { notIn: ['PAID'] },
         issueDate: { gte: new Date('2025-01-01') },
       },
-      select: {
-        id: true,
-        invoiceNumber: true,
-        issueDate: true,
-        dueDate: true,
-        totalAmount: true,
-        status: true,
-        client: { select: { id: true, name: true } },
-        paymentReminders: {
-          select: { id: true, sentTo: true, createdAt: true, user: { select: { name: true } } },
-          orderBy: { createdAt: 'desc' },
-        },
-      },
+      select: overdueSelect,
       orderBy: { issueDate: 'asc' },
       take: 50,
     });

@@ -1772,8 +1772,15 @@ router.get('/issued', async (req, res, next) => {
     };
     const orderBy = orderByMap[sortBy] || { issueDate: 'desc' };
 
+    // Include paymentReminders si la taula existeix (pot fallar si migració pendent)
+    let includeFields = { client: { select: { id: true, name: true, nif: true } } };
+    try {
+      await prisma.paymentReminderLog.findFirst({ take: 1 });
+      includeFields.paymentReminders = { select: { id: true, sentTo: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: 1 };
+    } catch { /* taula no existeix encara */ }
+
     const [invoices, total] = await Promise.all([
-      prisma.issuedInvoice.findMany({ where, skip, take: parseInt(limit), orderBy, include: { client: { select: { id: true, name: true, nif: true } }, paymentReminders: { select: { id: true, sentTo: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: 1 } } }),
+      prisma.issuedInvoice.findMany({ where, skip, take: parseInt(limit), orderBy, include: includeFields }),
       prisma.issuedInvoice.count({ where }),
     ]);
 
