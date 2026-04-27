@@ -94,6 +94,21 @@ export default function IssuedInvoices() {
     refetch();
   };
 
+  const handleBulkStatusChange = async (status) => {
+    if (selectedIds.length === 0) return;
+    const label = status === 'PAID' ? 'pagades' : status === 'APPROVED' ? 'aprovades' : status.toLowerCase();
+    const confirmed = window.confirm(`Marcar ${selectedIds.length} factures com a ${label}?`);
+    if (!confirmed) return;
+    try {
+      const { data: result } = await api.patch('/invoices/issued/bulk-status', { ids: selectedIds, status });
+      clearSelection();
+      refetch();
+      alert(`${result.updated} factures marcades com a ${label}`);
+    } catch (err) {
+      alert('Error: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
   const handleViewDetails = async (id) => {
     try {
       const { data: invoice } = await api.get(`/invoices/issued/${id}`);
@@ -210,12 +225,28 @@ export default function IssuedInvoices() {
           <span className="text-sm text-teal-800">
             <strong>{selectedIds.length}</strong> factures seleccionades
           </span>
-          <button
-            onClick={clearSelection}
-            className="text-xs text-teal-700 hover:text-teal-900 underline"
-          >
-            Netejar selecció
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleBulkStatusChange('PAID')}
+              className="flex items-center gap-1.5 bg-emerald-600 text-white px-3 py-1.5 rounded-md text-xs font-medium hover:bg-emerald-700"
+            >
+              <CircleDollarSign size={13} />
+              Marcar com a pagades
+            </button>
+            <button
+              onClick={() => handleBulkStatusChange('APPROVED')}
+              className="flex items-center gap-1.5 bg-green-600 text-white px-3 py-1.5 rounded-md text-xs font-medium hover:bg-green-700"
+            >
+              <Check size={13} />
+              Aprovar
+            </button>
+            <button
+              onClick={clearSelection}
+              className="text-xs text-teal-700 hover:text-teal-900 underline ml-2"
+            >
+              Netejar selecció
+            </button>
+          </div>
         </div>
       )}
 

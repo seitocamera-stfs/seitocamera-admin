@@ -1772,17 +1772,10 @@ router.get('/issued', async (req, res, next) => {
     };
     const orderBy = orderByMap[sortBy] || { issueDate: 'desc' };
 
-    logger.info(`[ISSUED] sortBy=${sortBy} sortOrder=${sortOrder} dir=${dir} orderBy=${JSON.stringify(orderBy)}`);
-
     const [invoices, total] = await Promise.all([
       prisma.issuedInvoice.findMany({ where, skip, take: parseInt(limit), orderBy, include: { client: { select: { id: true, name: true, nif: true } } } }),
       prisma.issuedInvoice.count({ where }),
     ]);
-
-    // Log primera i última factura per verificar ordenació
-    if (invoices.length > 0) {
-      logger.info(`[ISSUED] Primera: ${invoices[0].invoiceNumber} (${invoices[0].issueDate}) | Última: ${invoices[invoices.length-1].invoiceNumber} (${invoices[invoices.length-1].issueDate})`);
-    }
 
     res.json({ data: invoices, pagination: { page: parseInt(page), limit: parseInt(limit), total, totalPages: Math.ceil(total / parseInt(limit)) } });
   } catch (error) { next(error); }
@@ -1794,6 +1787,34 @@ router.get('/issued/:id', async (req, res, next) => {
     if (!invoice) return res.status(404).json({ error: 'Factura no trobada' });
     res.json(invoice);
   } catch (error) { next(error); }
+});
+
+// =============================================
+// PATCH /api/invoices/issued/bulk-status — Canvi d'estat massiu
+// =============================================
+router.patch('/issued/bulk-status', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const { ids, status } = req.body;
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'Cal proporcionar un array d\'ids' });
+    }
+    if (!['PENDING', 'APPROVED', 'PAID', 'REJECTED', 'PARTIALLY_PAID'].includes(status)) {
+      return res.status(400).json({ error: 'Estat no vàlid' });
+    }
+    if (ids.length > 500) {
+      return res.status(400).json({ error: 'Màxim 500 factures per operació' });
+    }
+
+    const result = await prisma.issuedInvoice.updateMany({
+      where: { id: { in: ids } },
+      data: { status },
+    });
+
+    res.json({ updated: result.count, status });
+  } catch (error) {
+    next(error);
+  }
 });
 
 router.post('/issued', authorize('ADMIN', 'EDITOR'), validate(issuedInvoiceSchema), async (req, res, next) => {
