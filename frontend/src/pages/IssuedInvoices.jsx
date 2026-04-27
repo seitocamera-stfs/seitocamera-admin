@@ -8,6 +8,7 @@ import IssuedInvoiceDetailModal from '../components/shared/IssuedInvoiceDetailMo
 import { formatCurrency, formatDate } from '../lib/utils';
 import ExportButtons from '../components/shared/ExportButtons';
 import SortableHeader from '../components/shared/SortableHeader';
+import IssuedInvoicesReport from '../components/shared/IssuedInvoicesReport';
 import useAuthStore from '../stores/authStore';
 
 export default function IssuedInvoices() {
@@ -205,6 +206,8 @@ export default function IssuedInvoices() {
           </button>
         </div>
       </div>
+
+      <IssuedInvoicesReport />
 
       <div className="flex gap-3 mb-4">
         <div className="relative flex-1">

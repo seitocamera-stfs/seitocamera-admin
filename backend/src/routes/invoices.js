@@ -1781,6 +1781,82 @@ router.get('/issued', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+// =============================================
+// GET /api/invoices/issued/report — Informe per període personalitzat
+// =============================================
+router.get('/issued/report', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const { from, to } = req.query;
+    if (!from || !to) return res.status(400).json({ error: 'Cal indicar from i to (YYYY-MM-DD)' });
+
+    const dateFrom = new Date(from + 'T00:00:00.000Z');
+    const dateTo = new Date(to + 'T23:59:59.999Z');
+
+    if (isNaN(dateFrom.getTime()) || isNaN(dateTo.getTime())) {
+      return res.status(400).json({ error: 'Format de data invàlid' });
+    }
+
+    const where = {
+      issueDate: { gte: dateFrom, lte: dateTo },
+      deletedAt: null,
+    };
+
+    const invoices = await prisma.issuedInvoice.findMany({
+      where,
+      include: { client: { select: { id: true, name: true, nif: true } } },
+      orderBy: { issueDate: 'asc' },
+    });
+
+    // Totals per estat
+    const byStatus = {};
+    for (const inv of invoices) {
+      if (!byStatus[inv.status]) byStatus[inv.status] = { count: 0, total: 0 };
+      byStatus[inv.status].count += 1;
+      byStatus[inv.status].total += parseFloat(inv.totalAmount) || 0;
+    }
+
+    // Totals per client
+    const byClient = {};
+    for (const inv of invoices) {
+      const clientName = inv.client?.name || 'Sense client';
+      const clientId = inv.client?.id || 'unknown';
+      if (!byClient[clientId]) byClient[clientId] = { name: clientName, count: 0, total: 0, paid: 0, pending: 0 };
+      byClient[clientId].count += 1;
+      const amount = parseFloat(inv.totalAmount) || 0;
+      byClient[clientId].total += amount;
+      if (inv.status === 'PAID') byClient[clientId].paid += amount;
+      else byClient[clientId].pending += amount;
+    }
+
+    // Totals per mes
+    const byMonth = {};
+    for (const inv of invoices) {
+      const d = new Date(inv.issueDate);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      if (!byMonth[key]) byMonth[key] = { month: key, count: 0, total: 0, paid: 0, pending: 0 };
+      const amount = parseFloat(inv.totalAmount) || 0;
+      byMonth[key].count += 1;
+      byMonth[key].total += amount;
+      if (inv.status === 'PAID') byMonth[key].paid += amount;
+      else byMonth[key].pending += amount;
+    }
+
+    const grandTotal = invoices.reduce((s, inv) => s + (parseFloat(inv.totalAmount) || 0), 0);
+    const paidTotal = invoices.filter(i => i.status === 'PAID').reduce((s, inv) => s + (parseFloat(inv.totalAmount) || 0), 0);
+    const pendingTotal = grandTotal - paidTotal;
+
+    res.json({
+      from,
+      to,
+      summary: { count: invoices.length, total: grandTotal, paid: paidTotal, pending: pendingTotal },
+      byStatus,
+      byClient: Object.values(byClient).sort((a, b) => b.total - a.total),
+      byMonth: Object.values(byMonth).sort((a, b) => a.month.localeCompare(b.month)),
+      invoices,
+    });
+  } catch (error) { next(error); }
+});
+
 router.get('/issued/:id', async (req, res, next) => {
   try {
     const invoice = await prisma.issuedInvoice.findUnique({ where: { id: req.params.id }, include: { client: true, conciliations: { include: { bankMovement: true } } } });
