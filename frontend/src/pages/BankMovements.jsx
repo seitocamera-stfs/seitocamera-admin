@@ -115,23 +115,66 @@ function BankAccountsModal({ isOpen, onClose, accounts, onRefresh }) {
         setConnectStatus((s) => ({ ...s, [accId]: { success: true, message: data.message } }));
         onRefresh();
       } else if (syncType === 'OPEN_BANKING') {
-        const { data } = await api.post(`/bank-accounts/${accId}/connect`, {
-          syncType: 'OPEN_BANKING',
-          config: {
-            institutionId: connectForm[accId]?.institutionId || 'banco-sabadell',
-            appId: connectForm[accId]?.appId,
-            appSecret: connectForm[accId]?.appSecret,
-            redirectUrl: `${window.location.origin}/bank?callback=openbanking&accountId=${accId}`,
-          },
-        });
-        if (data.link) {
-          setConnectStatus((s) => ({ ...s, [accId]: { success: true, message: 'Redirigint al banc...', link: data.link } }));
-          // Obrir en nova finestra
-          window.open(data.link, '_blank');
-        }
+        // Plaid Link flow
+        await openPlaidLink(accId);
       }
     } catch (err) {
       setConnectStatus((s) => ({ ...s, [accId]: { error: err.response?.data?.error || err.message } }));
+    }
+  };
+
+  // Plaid Link: obre el widget per vincular un compte bancari
+  const openPlaidLink = async (bankAccountId) => {
+    try {
+      setConnectStatus((s) => ({ ...s, [bankAccountId]: { loading: true, message: 'Carregant Plaid Link...' } }));
+
+      // 1. Obtenir link_token del backend
+      const { data: linkData } = await api.post('/connections/plaid/link-token');
+      const linkToken = linkData.linkToken;
+
+      // 2. Carregar l'script de Plaid Link si no existeix
+      if (!window.Plaid) {
+        await new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = 'https://cdn.plaid.com/link/v2/stable/link-initialize.js';
+          script.onload = resolve;
+          script.onerror = () => reject(new Error('No s\'ha pogut carregar Plaid Link'));
+          document.head.appendChild(script);
+        });
+      }
+
+      // 3. Obrir Plaid Link
+      const handler = window.Plaid.create({
+        token: linkToken,
+        onSuccess: async (publicToken, metadata) => {
+          try {
+            setConnectStatus((s) => ({ ...s, [bankAccountId]: { loading: true, message: 'Vinculant compte...' } }));
+            // Intercanviar public_token per access_token al backend
+            const { data: exchangeData } = await api.post('/connections/plaid/exchange', {
+              publicToken,
+              bankAccountId,
+            });
+            setConnectStatus((s) => ({ ...s, [bankAccountId]: { success: true, message: 'Compte vinculat correctament!' } }));
+            onRefresh();
+          } catch (err) {
+            setConnectStatus((s) => ({ ...s, [bankAccountId]: { error: err.response?.data?.error || err.message } }));
+          }
+        },
+        onExit: (err) => {
+          if (err) {
+            setConnectStatus((s) => ({ ...s, [bankAccountId]: { error: err.display_message || 'L\'usuari ha cancel·lat' } }));
+          } else {
+            setConnectStatus((s) => ({ ...s, [bankAccountId]: {} }));
+          }
+        },
+        onEvent: (eventName) => {
+          console.log('Plaid Link event:', eventName);
+        },
+      });
+
+      handler.open();
+    } catch (err) {
+      setConnectStatus((s) => ({ ...s, [bankAccountId]: { error: err.response?.data?.error || err.message } }));
     }
   };
 
@@ -193,12 +236,41 @@ function BankAccountsModal({ isOpen, onClose, accounts, onRefresh }) {
                 </div>
               </div>
 
-              {/* Info API: link a Connexions */}
+              {/* Info API: link a Connexions + Vincular Plaid */}
               {(acc.syncType === 'QONTO' || acc.syncType === 'OPEN_BANKING') && (
-                <div className="border-t p-2 bg-muted/20 text-xs text-muted-foreground flex items-center gap-1.5">
-                  <Wifi size={10} />
-                  <span>Credencials API configurades a</span>
-                  <a href="/settings/connections" className="text-primary underline hover:text-primary/80">Connexions</a>
+                <div className="border-t p-2 bg-muted/20 text-xs text-muted-foreground space-y-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <Wifi size={10} />
+                    <span>Credencials API configurades a</span>
+                    <a href="/settings/connections" className="text-primary underline hover:text-primary/80">Connexions</a>
+                  </div>
+                  {acc.syncType === 'OPEN_BANKING' && (
+                    <div className="flex items-center gap-2">
+                      {acc.syncConfig?.plaidAccessToken ? (
+                        <span className="text-green-600 flex items-center gap-1">
+                          <CheckCircle2 size={12} /> Vinculat via Plaid
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => openPlaidLink(acc.id)}
+                          disabled={connectStatus[acc.id]?.loading}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 bg-teal-600 text-white rounded text-xs font-medium hover:bg-teal-700 disabled:opacity-50"
+                        >
+                          {connectStatus[acc.id]?.loading ? (
+                            <><RefreshCw size={10} className="animate-spin" /> {connectStatus[acc.id]?.message || 'Connectant...'}</>
+                          ) : (
+                            <><Link size={10} /> Vincular amb Plaid</>
+                          )}
+                        </button>
+                      )}
+                      {connectStatus[acc.id]?.error && (
+                        <span className="text-destructive text-[10px]">{connectStatus[acc.id].error}</span>
+                      )}
+                      {connectStatus[acc.id]?.success && (
+                        <span className="text-green-600 text-[10px]">{connectStatus[acc.id].message}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -227,7 +299,7 @@ function BankAccountsModal({ isOpen, onClose, accounts, onRefresh }) {
                 <option value="MANUAL">Manual</option>
                 <option value="CSV">CSV</option>
                 <option value="QONTO">Qonto (API directa)</option>
-                <option value="OPEN_BANKING">Open Banking (GoCardless)</option>
+                <option value="OPEN_BANKING">Open Banking (Plaid)</option>
               </select>
             </div>
             <div className="col-span-2">
