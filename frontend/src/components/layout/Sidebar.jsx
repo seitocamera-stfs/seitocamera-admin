@@ -15,6 +15,7 @@ import {
   Camera,
   BrainCircuit,
   Calculator,
+  Plug,
 } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
 import useCompanyStore from '../../stores/companyStore';
@@ -35,6 +36,7 @@ const navItems = [
   { to: '/equipment', icon: Camera, label: 'Inventari equips', section: 'equipment' },
   { to: '/agent', icon: Bot, label: 'Agent comptable', section: 'agent' },
   { to: '/ai-costs', icon: BrainCircuit, label: 'Costos IA', section: null, adminOnly: true },
+  { to: '/settings/connections', icon: Plug, label: 'Connexions', section: null, adminOnly: true },
 ];
 
 export default function Sidebar() {

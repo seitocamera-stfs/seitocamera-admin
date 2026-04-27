@@ -18,6 +18,45 @@ let cachedAccessToken = null;
 let tokenExpiresAt = 0;
 
 // ===========================================
+// Credencials: BD (ServiceConnection) → .env (fallback)
+// ===========================================
+
+/**
+ * Obté les credencials Zoho: primer de la BD, fallback a .env.
+ * Retorna { clientId, clientSecret, refreshToken, accountId, fromAddress }
+ */
+async function getCredentials() {
+  try {
+    const { prisma } = require('../config/database');
+    const conn = await prisma.serviceConnection.findUnique({
+      where: { provider: 'ZOHO_MAIL' },
+    });
+    if (conn && conn.clientId && conn.refreshToken) {
+      return {
+        clientId: conn.clientId,
+        clientSecret: conn.clientSecret,
+        refreshToken: conn.refreshToken,
+        accountId: conn.config?.accountId || process.env.ZOHO_ACCOUNT_ID,
+        fromAddress: conn.config?.fromAddress || process.env.ZOHO_REMINDER_FROM || 'rental@seitocamera.com',
+        source: 'database',
+      };
+    }
+  } catch (err) {
+    // Taula pot no existir encara → fallback a .env
+    logger.debug(`ServiceConnection lookup failed (fallback to .env): ${err.message}`);
+  }
+
+  return {
+    clientId: process.env.ZOHO_CLIENT_ID,
+    clientSecret: process.env.ZOHO_CLIENT_SECRET,
+    refreshToken: process.env.ZOHO_REFRESH_TOKEN,
+    accountId: process.env.ZOHO_ACCOUNT_ID,
+    fromAddress: process.env.ZOHO_REMINDER_FROM || 'rental@seitocamera.com',
+    source: 'env',
+  };
+}
+
+// ===========================================
 // Multi-compte: retorna els Account IDs configurats
 // ===========================================
 
@@ -41,7 +80,7 @@ function getConfiguredAccountIds() {
 
 /**
  * Obté un access token nou usant el refresh token.
- * Zoho OAuth2 requereix refresh token per obtenir access tokens de curta vida.
+ * Primer mira la BD (ServiceConnection), fallback a .env.
  */
 async function getAccessToken() {
   // Retornar token en cache si encara és vàlid (amb marge de 60s)
@@ -49,18 +88,16 @@ async function getAccessToken() {
     return cachedAccessToken;
   }
 
-  const clientId = process.env.ZOHO_CLIENT_ID;
-  const clientSecret = process.env.ZOHO_CLIENT_SECRET;
-  const refreshToken = process.env.ZOHO_REFRESH_TOKEN;
+  const creds = await getCredentials();
 
-  if (!clientId || !clientSecret || !refreshToken) {
-    throw new Error('Zoho Mail no configurat. Afegeix ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET i ZOHO_REFRESH_TOKEN al .env');
+  if (!creds.clientId || !creds.clientSecret || !creds.refreshToken) {
+    throw new Error('Zoho Mail no configurat. Connecta Zoho Mail des de Configuració → Connexions, o afegeix les variables al .env');
   }
 
   const params = new URLSearchParams({
-    refresh_token: refreshToken,
-    client_id: clientId,
-    client_secret: clientSecret,
+    refresh_token: creds.refreshToken,
+    client_id: creds.clientId,
+    client_secret: creds.clientSecret,
     grant_type: 'refresh_token',
   });
 
@@ -69,6 +106,14 @@ async function getAccessToken() {
   });
 
   if (data.error) {
+    // Actualitzar estat a la BD si l'error és d'autenticació
+    try {
+      const { prisma } = require('../config/database');
+      await prisma.serviceConnection.updateMany({
+        where: { provider: 'ZOHO_MAIL' },
+        data: { status: 'ERROR', lastError: `OAuth error: ${data.error}` },
+      });
+    } catch {} // ignore
     throw new Error(`Zoho OAuth error: ${data.error}`);
   }
 
@@ -76,7 +121,22 @@ async function getAccessToken() {
   // Zoho tokens duren 3600s per defecte
   tokenExpiresAt = Date.now() + (data.expires_in || 3600) * 1000;
 
-  logger.info('Zoho Mail: Access token renovat');
+  // Actualitzar access token a la BD si existeix
+  try {
+    const { prisma } = require('../config/database');
+    await prisma.serviceConnection.updateMany({
+      where: { provider: 'ZOHO_MAIL' },
+      data: {
+        accessToken: cachedAccessToken,
+        tokenExpiresAt: new Date(tokenExpiresAt),
+        status: 'ACTIVE',
+        lastUsedAt: new Date(),
+        lastError: null,
+      },
+    });
+  } catch {} // ignore si la taula no existeix
+
+  logger.info(`Zoho Mail: Access token renovat (source: ${creds.source})`);
   return cachedAccessToken;
 }
 
@@ -915,7 +975,9 @@ async function sendEmail({ to, subject, body, fromAddress, cc, accountId }) {
     throw new Error('Cal indicar to, subject i body per enviar un correu');
   }
 
-  const from = fromAddress || process.env.ZOHO_REMINDER_FROM || 'rental@seitocamera.com';
+  // Obtenir fromAddress de credencials (BD o .env)
+  const creds = await getCredentials();
+  const from = fromAddress || creds.fromAddress || 'rental@seitocamera.com';
 
   // Convertir text pla a HTML bàsic (preservant salts de línia)
   const htmlBody = body
@@ -951,6 +1013,7 @@ async function sendEmail({ to, subject, body, fromAddress, cc, accountId }) {
 
 module.exports = {
   getAccessToken,
+  getCredentials,
   getConfiguredAccountIds,
   getFolders,
   getFolderId,

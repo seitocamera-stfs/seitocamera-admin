@@ -303,6 +303,58 @@ model PaymentReminderLog {
 }
 
 // ===========================================
+// Connexions de serveis externs (OAuth, API keys)
+// ===========================================
+
+enum ServiceProvider {
+  ZOHO_MAIL
+  GOOGLE_DRIVE
+  QONTO
+  GOCARDLESS
+  RENTMAN
+  SMTP
+}
+
+enum ConnectionStatus {
+  ACTIVE
+  EXPIRED
+  ERROR
+  DISCONNECTED
+}
+
+model ServiceConnection {
+  id            String           @id @default(cuid())
+  provider      ServiceProvider  @unique  // Un sol registre per proveïdor
+  status        ConnectionStatus @default(DISCONNECTED)
+  displayName   String?                  // "Zoho Mail - rental@seitocamera.com"
+
+  // OAuth2 credentials (Zoho, Google, etc.)
+  clientId      String?
+  clientSecret  String?
+  refreshToken  String?
+  accessToken   String?
+  tokenExpiresAt DateTime?
+  scopes        String?                  // Scopes concedits, separats per coma
+
+  // API key credentials (Qonto, Rentman, etc.)
+  apiKey        String?
+  apiSecret     String?
+
+  // Config extra (JSON flexible per cada proveïdor)
+  config        Json?                    // { accountId, fromAddress, host, port, ... }
+
+  // Metadades
+  connectedBy   String?                  // userId de qui l'ha connectat
+  connectedAt   DateTime?
+  lastUsedAt    DateTime?
+  lastError     String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@map("service_connections")
+}
+
+// ===========================================
 // Moviments Bancaris
 // ===========================================
 

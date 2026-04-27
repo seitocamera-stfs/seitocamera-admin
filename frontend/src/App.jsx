@@ -18,6 +18,7 @@ import Equipment from './pages/Equipment';
 import AiCosts from './pages/AiCosts';
 import SharedInvoices from './pages/SharedInvoices';
 import Fiscal from './pages/Fiscal';
+import Connections from './pages/Connections';
 import useAuthStore from './stores/authStore';
 
 function App() {
@@ -52,6 +53,7 @@ function App() {
         <Route path="agent" element={<AccountingAgent />} />
         <Route path="equipment" element={<Equipment />} />
         <Route path="ai-costs" element={<AiCosts />} />
+        <Route path="settings/connections" element={<RoleGuard section="users"><Connections /></RoleGuard>} />
       </Route>
     </Routes>
   );

@@ -140,6 +140,7 @@ app.use('/api/equipment', require('./routes/equipment'));
 app.use('/api/fiscal', require('./routes/fiscal'));
 app.use('/api/shared-invoices', require('./routes/sharedInvoices'));
 app.use('/api/ai-costs', require('./routes/aiCosts'));
+app.use('/api/connections', require('./routes/connections'));
 
 // ===========================================
 // Gestió d'errors
