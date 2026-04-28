@@ -458,7 +458,7 @@ async function syncOneProject(rmProject) {
   }
 
   // No existeix → crear
-  await prisma.rentalProject.create({
+  const newProject = await prisma.rentalProject.create({
     data: {
       name,
       clientName: contactName,
@@ -477,6 +477,22 @@ async function syncOneProject(rmProject) {
       internalNotes: rmProject.location ? `Ubicació: ${rmProject.location}` : null,
     },
   });
+
+  // Crear tasques predeterminades per al nou projecte
+  try {
+    await prisma.projectTask.createMany({
+      data: [
+        { projectId: newProject.id, title: 'Backfocus Camera', category: 'TECH', status: 'OP_PENDING' },
+        { projectId: newProject.id, title: 'Col·limar òptiques', category: 'TECH', status: 'OP_PENDING' },
+        { projectId: newProject.id, title: 'Revisar bateries', category: 'TECH', status: 'OP_PENDING' },
+        { projectId: newProject.id, title: 'Linkar teradeks', category: 'TECH', status: 'OP_PENDING' },
+        { projectId: newProject.id, title: 'Posar GPS', category: 'TECH', status: 'OP_PENDING' },
+      ],
+    });
+  } catch (err) {
+    logger.error(`Error creant tasques predeterminades per projecte ${newProject.id}:`, err.message);
+  }
+
   return 'created';
 }
 

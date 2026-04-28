@@ -8,6 +8,34 @@ const router = express.Router();
 router.use(authenticate);
 
 // ===========================================
+// Tasques predeterminades per projecte
+// ===========================================
+
+const DEFAULT_PROJECT_TASKS = [
+  { title: 'Backfocus Camera', category: 'TECH' },
+  { title: 'Col·limar òptiques', category: 'TECH' },
+  { title: 'Revisar bateries', category: 'TECH' },
+  { title: 'Linkar teradeks', category: 'TECH' },
+  { title: 'Posar GPS', category: 'TECH' },
+];
+
+async function createDefaultTasks(projectId, createdById = null) {
+  try {
+    await prisma.projectTask.createMany({
+      data: DEFAULT_PROJECT_TASKS.map((t) => ({
+        projectId,
+        title: t.title,
+        category: t.category,
+        status: 'OP_PENDING',
+        createdById,
+      })),
+    });
+  } catch (err) {
+    logger.error('Error creant tasques predeterminades:', err.message);
+  }
+}
+
+// ===========================================
 // EQUIP — Llista d'usuaris actius (per selectors)
 // ===========================================
 
@@ -296,6 +324,9 @@ router.post('/projects', async (req, res, next) => {
         client: { select: { id: true, name: true } },
       },
     });
+
+    // Crear tasques predeterminades
+    await createDefaultTasks(project.id, req.user.id);
 
     // Notificar WAREHOUSE_LEAD
     await createNotificationForRole('WAREHOUSE_LEAD', {
