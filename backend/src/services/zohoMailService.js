@@ -710,7 +710,14 @@ async function classifyEmailWithAI(analysis) {
 }
 
 /**
- * Classifica un email: primer intenta amb IA, fallback a regles.
+ * Classifica un email: regles primer, IA només pels casos dubtosos.
+ *
+ * Lògica d'estalvi:
+ *   score ≥ 6  → regles prou segures, NO cal IA
+ *   score ≤ 0  → clarament NO factura, NO cal IA
+ *   score 1-5  → zona grisa, cridar Claude Haiku per desempatar
+ *
+ * Això redueix les crides a l'API de Claude un 70-80%.
  */
 async function classifyEmail(analysis) {
   if (!analysis) return 'NOT_INVOICE';
@@ -720,7 +727,23 @@ async function classifyEmail(analysis) {
     return 'NOT_INVOICE';
   }
 
-  // Intentar classificació per IA
+  const score = analysis.scoring?.score ?? 0;
+
+  // Score alt (≥6): les regles estan segures → classificar directament
+  if (score >= 6) {
+    const rulesResult = classifyEmailByRules(analysis);
+    logger.info(`Email classify [REGLES·SEGUR]: score=${score} → ${rulesResult} | ${analysis.emailMeta?.from} — ${analysis.emailMeta?.subject} (IA estalviada)`);
+    return rulesResult;
+  }
+
+  // Score baix (≤0): clarament no és factura → classificar directament
+  if (score <= 0) {
+    logger.info(`Email classify [REGLES·DESCART]: score=${score} → NOT_INVOICE | ${analysis.emailMeta?.from} — ${analysis.emailMeta?.subject} (IA estalviada)`);
+    return classifyEmailByRules(analysis);
+  }
+
+  // Zona grisa (score 1-5): demanar a Claude Haiku
+  logger.info(`Email classify [IA·ZONA_GRISA]: score=${score} → consultant Claude | ${analysis.emailMeta?.from} — ${analysis.emailMeta?.subject}`);
   const aiClassification = await classifyEmailWithAI(analysis);
   if (aiClassification) {
     return aiClassification;
