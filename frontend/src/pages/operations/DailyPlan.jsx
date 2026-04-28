@@ -91,6 +91,21 @@ export default function DailyPlan() {
 
   const goToday = () => setSelectedDate(new Date());
 
+  const { departuresToday, departuresTomorrow, returnsToday, openIncidents, staff, plan, tasksToday } = data || {};
+
+  // Agrupar tasques per usuari (hook SEMPRE abans de qualsevol return condicional)
+  const tasksByUser = useMemo(() => {
+    if (!tasksToday) return {};
+    const grouped = {};
+    tasksToday.forEach((task) => {
+      const key = task.assignedTo ? task.assignedTo.id : '_unassigned';
+      const name = task.assignedTo ? task.assignedTo.name : 'Sense assignar';
+      if (!grouped[key]) grouped[key] = { name, tasks: [] };
+      grouped[key].tasks.push(task);
+    });
+    return grouped;
+  }, [tasksToday]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -106,21 +121,6 @@ export default function DailyPlan() {
       </div>
     );
   }
-
-  const { departuresToday, departuresTomorrow, returnsToday, openIncidents, staff, plan, tasksToday } = data || {};
-
-  // Agrupar tasques per usuari
-  const tasksByUser = useMemo(() => {
-    if (!tasksToday) return {};
-    const grouped = {};
-    tasksToday.forEach((task) => {
-      const key = task.assignedTo ? task.assignedTo.id : '_unassigned';
-      const name = task.assignedTo ? task.assignedTo.name : 'Sense assignar';
-      if (!grouped[key]) grouped[key] = { name, tasks: [] };
-      grouped[key].tasks.push(task);
-    });
-    return grouped;
-  }, [tasksToday]);
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
