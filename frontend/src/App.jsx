@@ -28,6 +28,7 @@ import OperationsRoles from './pages/operations/Roles';
 import OperationsProtocols from './pages/operations/Protocols';
 import OperationsCalendar from './pages/operations/Calendar';
 import OperationsTasks from './pages/operations/Tasks';
+import OperationsAbsences from './pages/operations/Absences';
 import useAuthStore from './stores/authStore';
 
 function App() {
@@ -73,6 +74,7 @@ function App() {
         <Route path="operations/protocols" element={<OperationsProtocols />} />
         <Route path="operations/calendar" element={<OperationsCalendar />} />
         <Route path="operations/tasks" element={<OperationsTasks />} />
+        <Route path="operations/absences" element={<OperationsAbsences />} />
       </Route>
     </Routes>
   );

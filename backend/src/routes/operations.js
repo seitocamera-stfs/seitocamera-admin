@@ -19,6 +19,10 @@ router.use((req, res, next) => {
   if (req.path.startsWith('/notifications')) {
     return next();
   }
+  // Absències: qualsevol usuari pot gestionar les seves pròpies
+  if (req.path.startsWith('/absences')) {
+    return next();
+  }
   // La resta requereix permís 'operations'
   requireSection('operations')(req, res, next);
 });
@@ -1577,6 +1581,7 @@ router.get('/dashboard', async (req, res, next) => {
       returnsToday,
       openIncidents,
       staff,
+      todayAbsences,
     ] = await Promise.all([
       // Projectes actius (no tancats)
       prisma.rentalProject.count({
@@ -1682,7 +1687,27 @@ router.get('/dashboard', async (req, res, next) => {
         },
         orderBy: { role: { sortOrder: 'asc' } },
       }),
+      // Absències aprovades per avui
+      prisma.staffAbsence.findMany({
+        where: {
+          status: 'APROVADA',
+          startDate: { lte: today },
+          endDate: { gte: today },
+        },
+        include: {
+          user: { select: { id: true, name: true } },
+        },
+      }),
     ]);
+
+    // Filtrar personal: actiu i no absent avui
+    const absentUserIds = new Set(todayAbsences.map(a => a.userId));
+    const availableStaffList = staff
+      .filter((s) => s.user.isActive !== false)
+      .map((s) => ({
+        ...s,
+        absent: absentUserIds.has(s.user.id),
+      }));
 
     res.json({
       stats: {
@@ -1698,7 +1723,15 @@ router.get('/dashboard', async (req, res, next) => {
       tasksToday,
       returnsToday,
       openIncidents,
-      staff: staff.filter((s) => s.user.isActive !== false),
+      staff: availableStaffList,
+      todayAbsences: todayAbsences.map(a => ({
+        id: a.id,
+        userId: a.userId,
+        userName: a.user.name,
+        type: a.type,
+        startDate: a.startDate,
+        endDate: a.endDate,
+      })),
     });
   } catch (err) {
     next(err);
@@ -1737,5 +1770,250 @@ async function createNotificationForRole(roleCode, notifData) {
     logger.error(`Error creant notificació per rol ${roleCode}: ${err.message}`);
   }
 }
+
+// ===========================================
+// ABSÈNCIES DE PERSONAL
+// ===========================================
+
+const ABSENCE_TYPE_LABELS = {
+  VACANCES: 'Vacances',
+  MALALTIA: 'Malaltia',
+  RODATGE: 'Rodatge',
+  PERMIS: 'Permís',
+  FORMACIO: 'Formació',
+  ALTRE: 'Altre',
+};
+
+/**
+ * GET /operations/absences — Llista absències
+ * Query: ?from=&to=&userId=&status=
+ * Qualsevol usuari pot veure totes les absències (calendari)
+ */
+router.get('/absences', async (req, res, next) => {
+  try {
+    const { from, to, userId, status } = req.query;
+    const where = {};
+
+    if (from || to) {
+      where.startDate = {};
+      if (to) where.startDate.lte = new Date(to);
+      where.endDate = {};
+      if (from) where.endDate.gte = new Date(from);
+    }
+    if (userId) where.userId = userId;
+    if (status) where.status = status;
+
+    const absences = await prisma.staffAbsence.findMany({
+      where,
+      include: {
+        user: { select: { id: true, name: true, color: true } },
+        approvedBy: { select: { id: true, name: true } },
+      },
+      orderBy: { startDate: 'asc' },
+    });
+
+    res.json(absences);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /operations/absences/today — Personal absent avui (per dashboard)
+ */
+router.get('/absences/today', async (req, res, next) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const absences = await prisma.staffAbsence.findMany({
+      where: {
+        status: 'APROVADA',
+        startDate: { lte: today },
+        endDate: { gte: today },
+      },
+      include: {
+        user: { select: { id: true, name: true } },
+      },
+    });
+
+    // Retorna set de userIds absents
+    const absentUserIds = [...new Set(absences.map(a => a.userId))];
+    res.json({ absentUserIds, absences });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /operations/absences — Crear absència
+ * Treballador: crea amb status PENDENT
+ * Admin: pot crear directament amb status APROVADA
+ */
+router.post('/absences', async (req, res, next) => {
+  try {
+    const { startDate, endDate, type, notes, userId: targetUserId } = req.body;
+    const isAdmin = req.user.role === 'ADMIN';
+
+    if (!startDate || !endDate || !type) {
+      return res.status(400).json({ error: 'startDate, endDate i type són obligatoris' });
+    }
+
+    if (!ABSENCE_TYPE_LABELS[type]) {
+      return res.status(400).json({ error: `Tipus invàlid: ${type}` });
+    }
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    if (end < start) {
+      return res.status(400).json({ error: 'endDate no pot ser anterior a startDate' });
+    }
+
+    // Admin pot crear per qualsevol usuari; treballadors només per ells mateixos
+    const userId = isAdmin && targetUserId ? targetUserId : req.user.id;
+
+    const absence = await prisma.staffAbsence.create({
+      data: {
+        userId,
+        startDate: start,
+        endDate: end,
+        type,
+        notes: notes || null,
+        status: isAdmin ? 'APROVADA' : 'PENDENT',
+        approvedById: isAdmin ? req.user.id : null,
+      },
+      include: {
+        user: { select: { id: true, name: true, color: true } },
+        approvedBy: { select: { id: true, name: true } },
+      },
+    });
+
+    logger.info(`Absència creada: ${absence.user.name} ${type} ${startDate}→${endDate} [${absence.status}]`);
+    res.status(201).json(absence);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PUT /operations/absences/:id — Editar absència
+ * Treballador: pot editar les seves PENDENT
+ * Admin: pot editar qualsevol
+ */
+router.put('/absences/:id', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { startDate, endDate, type, notes } = req.body;
+    const isAdmin = req.user.role === 'ADMIN';
+
+    const existing = await prisma.staffAbsence.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ error: 'Absència no trobada' });
+
+    // Permisos: treballadors només les seves i en estat PENDENT
+    if (!isAdmin && (existing.userId !== req.user.id || existing.status !== 'PENDENT')) {
+      return res.status(403).json({ error: 'No tens permís per editar aquesta absència' });
+    }
+
+    const data = {};
+    if (startDate) data.startDate = new Date(startDate);
+    if (endDate) data.endDate = new Date(endDate);
+    if (type) data.type = type;
+    if (notes !== undefined) data.notes = notes || null;
+
+    const absence = await prisma.staffAbsence.update({
+      where: { id },
+      data,
+      include: {
+        user: { select: { id: true, name: true, color: true } },
+        approvedBy: { select: { id: true, name: true } },
+      },
+    });
+
+    res.json(absence);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PUT /operations/absences/:id/approve — Aprovar absència (admin)
+ */
+router.put('/absences/:id/approve', async (req, res, next) => {
+  try {
+    if (req.user.role !== 'ADMIN') {
+      return res.status(403).json({ error: 'Només administradors poden aprovar absències' });
+    }
+
+    const absence = await prisma.staffAbsence.update({
+      where: { id: req.params.id },
+      data: {
+        status: 'APROVADA',
+        approvedById: req.user.id,
+      },
+      include: {
+        user: { select: { id: true, name: true, color: true } },
+        approvedBy: { select: { id: true, name: true } },
+      },
+    });
+
+    logger.info(`Absència aprovada: ${absence.user.name} ${absence.type} ${absence.startDate}→${absence.endDate}`);
+    res.json(absence);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PUT /operations/absences/:id/reject — Rebutjar absència (admin)
+ */
+router.put('/absences/:id/reject', async (req, res, next) => {
+  try {
+    if (req.user.role !== 'ADMIN') {
+      return res.status(403).json({ error: 'Només administradors poden rebutjar absències' });
+    }
+
+    const absence = await prisma.staffAbsence.update({
+      where: { id: req.params.id },
+      data: {
+        status: 'REBUTJADA',
+        approvedById: req.user.id,
+        rejectReason: req.body.reason || null,
+      },
+      include: {
+        user: { select: { id: true, name: true, color: true } },
+        approvedBy: { select: { id: true, name: true } },
+      },
+    });
+
+    logger.info(`Absència rebutjada: ${absence.user.name} ${absence.type}`);
+    res.json(absence);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * DELETE /operations/absences/:id — Eliminar absència
+ * Treballador: pot eliminar les seves PENDENT
+ * Admin: pot eliminar qualsevol
+ */
+router.delete('/absences/:id', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const isAdmin = req.user.role === 'ADMIN';
+
+    const existing = await prisma.staffAbsence.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ error: 'Absència no trobada' });
+
+    if (!isAdmin && (existing.userId !== req.user.id || existing.status !== 'PENDENT')) {
+      return res.status(403).json({ error: 'No tens permís per eliminar aquesta absència' });
+    }
+
+    await prisma.staffAbsence.delete({ where: { id } });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
 
 module.exports = router;

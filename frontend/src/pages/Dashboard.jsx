@@ -67,6 +67,7 @@ export default function Dashboard() {
   const returns = data?.returnsToday || [];
   const incidents = data?.openIncidents || [];
   const staff = data?.staff || [];
+  const todayAbsences = data?.todayAbsences || [];
 
   const today = new Date();
   const dayNames = ['Diumenge', 'Dilluns', 'Dimarts', 'Dimecres', 'Dijous', 'Divendres', 'Dissabte'];
@@ -124,37 +125,71 @@ export default function Dashboard() {
           </div>
 
           {/* Personal disponible */}
-          {staff.length > 0 && (
-            <div className="bg-white rounded-xl border p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-xs font-medium text-gray-900 flex items-center gap-1.5">
-                  <Users size={14} className="text-[#00617F]" /> Personal disponible avui
-                </h3>
-                <span className="text-[9px] font-medium px-2 py-0.5 rounded-full" style={{ background: '#e6f3f7', color: '#00617F' }}>
-                  {new Set(staff.map((s) => s.user.id)).size} persones
-                </span>
+          {staff.length > 0 && (() => {
+            const ABSENCE_LABELS = { VACANCES: 'Vacances', MALALTIA: 'Malaltia', RODATGE: 'Rodatge', PERMIS: 'Permís', FORMACIO: 'Formació', ALTRE: 'Absent' };
+            const available = staff.filter((s) => !s.absent);
+            const absent = staff.filter((s) => s.absent);
+            // Deduplicar per userId
+            const uniqueAvailable = [...new Map(available.map(s => [s.user.id, s])).values()];
+            const uniqueAbsent = [...new Map(absent.map(s => [s.user.id, s])).values()];
+
+            return (
+              <div className="bg-white rounded-xl border p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-xs font-medium text-gray-900 flex items-center gap-1.5">
+                    <Users size={14} className="text-[#00617F]" /> Personal disponible avui
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    {uniqueAbsent.length > 0 && (
+                      <span className="text-[9px] font-medium px-2 py-0.5 rounded-full bg-red-50 text-red-600">
+                        {uniqueAbsent.length} absent{uniqueAbsent.length > 1 ? 's' : ''}
+                      </span>
+                    )}
+                    <span className="text-[9px] font-medium px-2 py-0.5 rounded-full" style={{ background: '#e6f3f7', color: '#00617F' }}>
+                      {uniqueAvailable.length} disponible{uniqueAvailable.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {available.map((s) => {
+                    const RoleIcon = ROLE_ICONS[s.role.code] || User;
+                    return (
+                      <div
+                        key={s.id}
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border bg-gray-50/50"
+                        style={{ borderColor: `${s.role.color}40` }}
+                      >
+                        {s.user.color && (
+                          <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: s.user.color }} />
+                        )}
+                        <RoleIcon size={12} style={{ color: s.role.color }} />
+                        <span className="font-medium text-gray-800">{s.user.name}</span>
+                        <span className="text-gray-400">{s.role.shortName}</span>
+                      </div>
+                    );
+                  })}
+                  {absent.map((s) => {
+                    const RoleIcon = ROLE_ICONS[s.role.code] || User;
+                    const absenceInfo = todayAbsences.find(a => a.userId === s.user.id);
+                    return (
+                      <div
+                        key={s.id}
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border border-red-200 bg-red-50/50 opacity-60"
+                        title={absenceInfo ? ABSENCE_LABELS[absenceInfo.type] || 'Absent' : 'Absent'}
+                      >
+                        {s.user.color && (
+                          <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: s.user.color }} />
+                        )}
+                        <RoleIcon size={12} style={{ color: '#9ca3af' }} />
+                        <span className="font-medium text-gray-400 line-through">{s.user.name}</span>
+                        <span className="text-red-400 text-[10px]">{absenceInfo ? ABSENCE_LABELS[absenceInfo.type] : 'Absent'}</span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                {staff.map((s) => {
-                  const RoleIcon = ROLE_ICONS[s.role.code] || User;
-                  return (
-                    <div
-                      key={s.id}
-                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border bg-gray-50/50"
-                      style={{ borderColor: `${s.role.color}40` }}
-                    >
-                      {s.user.color && (
-                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: s.user.color }} />
-                      )}
-                      <RoleIcon size={12} style={{ color: s.role.color }} />
-                      <span className="font-medium text-gray-800">{s.user.name}</span>
-                      <span className="text-gray-400">{s.role.shortName}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Grid principal: 3 columnes */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
