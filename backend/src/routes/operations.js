@@ -1687,7 +1687,7 @@ router.get('/dashboard', async (req, res, next) => {
         },
         orderBy: { role: { sortOrder: 'asc' } },
       }),
-      // Absències aprovades per avui
+      // Absències aprovades per avui (safe: taula pot no existir encara)
       prisma.staffAbsence.findMany({
         where: {
           status: 'APROVADA',
@@ -1697,7 +1697,7 @@ router.get('/dashboard', async (req, res, next) => {
         include: {
           user: { select: { id: true, name: true } },
         },
-      }),
+      }).catch(() => []),
     ]);
 
     // Filtrar personal: actiu i no absent avui
