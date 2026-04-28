@@ -641,18 +641,9 @@ router.put('/tasks/:id', async (req, res, next) => {
       },
     });
 
-    // Notificar si s'ha reassignat
+    // Log reassignació
     if (assignedToId && assignedToId !== currentTask?.assignedToId && assignedToId !== req.user.id) {
-      await prisma.notification.create({
-        data: {
-          userId: assignedToId,
-          type: 'task_assigned',
-          title: `Tasca assignada per ${req.user.name || 'un company'}`,
-          message: `${currentTask?.title || title}`,
-          entityType: 'project_task',
-          entityId: task.id,
-        },
-      }).catch(() => {});
+      logger.info(`Tasca ${task.id} assignada a ${assignedToId} per ${req.user.id}`);
     }
 
     res.json(task);
@@ -1280,18 +1271,9 @@ router.post('/tasks', async (req, res, next) => {
       },
     });
 
-    // Notificar l'assignat si no és el creador
+    // Log assignació
     if (assignedToId && assignedToId !== req.user.id) {
-      await prisma.notification.create({
-        data: {
-          userId: assignedToId,
-          type: 'task_assigned',
-          title: 'Nova tasca assignada',
-          message: `${req.user.name} t'ha assignat: ${title}`,
-          entityType: 'project_task',
-          entityId: task.id,
-        },
-      }).catch(() => {}); // No bloquejar si falla
+      logger.info(`Nova tasca ${task.id} assignada a ${assignedToId} per ${req.user.id}`);
     }
 
     res.status(201).json(task);
