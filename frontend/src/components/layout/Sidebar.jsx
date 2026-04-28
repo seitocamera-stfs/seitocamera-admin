@@ -42,11 +42,11 @@ const sections = [
     label: 'Operacions',
     items: [
       { to: '/', icon: LayoutDashboard, label: 'Dashboard', section: 'dashboard' },
-      { to: '/operations/calendar', icon: Calendar, label: 'Calendari' },
-      { to: '/operations/projects', icon: Package, label: 'Projectes' },
-      { to: '/operations/tasks', icon: ListTodo, label: 'Tasques' },
-      { to: '/operations/incidents', icon: AlertTriangle, label: 'Incidències' },
-      { to: '/operations/protocols', icon: BookOpen, label: 'Protocols' },
+      { to: '/operations/calendar', icon: Calendar, label: 'Calendari', section: 'operations' },
+      { to: '/operations/projects', icon: Package, label: 'Projectes', section: 'operations' },
+      { to: '/operations/tasks', icon: ListTodo, label: 'Tasques', section: 'operations' },
+      { to: '/operations/incidents', icon: AlertTriangle, label: 'Incidències', section: 'operations' },
+      { to: '/operations/protocols', icon: BookOpen, label: 'Protocols', section: 'operations' },
     ],
   },
   {
@@ -73,7 +73,7 @@ const sections = [
       { to: '/suppliers', icon: Truck, label: 'Proveïdors', section: 'suppliers' },
       { to: '/clients', icon: Users, label: 'Clients', section: 'clients' },
       { to: '/equipment', icon: Camera, label: 'Inventari equips', section: 'equipment' },
-      { to: '/operations/roles', icon: ShieldCheck, label: 'Rols i personal' },
+      { to: '/operations/roles', icon: ShieldCheck, label: 'Rols i personal', section: 'operations' },
     ],
   },
   {

@@ -18,6 +18,7 @@ const LEVEL_ORDER = { read: 1, write: 2, admin: 3 };
 const ROLE_PERMISSIONS = {
   ADMIN: {
     dashboard: 'admin',
+    operations: 'admin',
     receivedInvoices: 'admin',
     issuedInvoices: 'admin',
     sharedInvoices: 'admin',
@@ -33,6 +34,7 @@ const ROLE_PERMISSIONS = {
   },
   EDITOR: {
     dashboard: 'read',
+    operations: 'write',
     receivedInvoices: 'write',
     issuedInvoices: 'write',
     sharedInvoices: 'write',

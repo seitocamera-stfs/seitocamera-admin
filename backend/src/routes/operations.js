@@ -1,11 +1,27 @@
 const express = require('express');
 const { prisma } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
+const { requireSection } = require('../middleware/sectionAccess');
 const { logger } = require('../config/logger');
 
 const router = express.Router();
 
 router.use(authenticate);
+
+// Dashboard i stats tenen el seu propi control (secció 'dashboard').
+// La resta d'endpoints d'operacions requereixen accés a la secció 'operations'.
+router.use((req, res, next) => {
+  // Endpoints exempts: dashboard i stats (controlats per la secció 'dashboard')
+  if (req.path === '/dashboard' || req.path === '/stats') {
+    return next();
+  }
+  // Notificacions també són generals (qualsevol usuari autenticat)
+  if (req.path.startsWith('/notifications')) {
+    return next();
+  }
+  // La resta requereix permís 'operations'
+  requireSection('operations')(req, res, next);
+});
 
 // ===========================================
 // Tasques predeterminades per projecte
