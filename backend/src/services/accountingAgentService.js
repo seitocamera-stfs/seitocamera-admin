@@ -441,7 +441,8 @@ async function analyzeAnomalies(invoiceIds) {
     const stats = await prisma.receivedInvoice.aggregate({
       where: { supplierId: sid },
       _avg: { totalAmount: true },
-      _stddev: { totalAmount: true },
+      _min: { totalAmount: true },
+      _max: { totalAmount: true },
       _count: true,
     });
     supplierStats[sid] = stats;

@@ -387,29 +387,44 @@ async function runConciliation() {
   try {
     // Moviments bancaris no conciliats (despeses)
     const movements = await prisma.bankMovement.findMany({
-      where: { isConciliated: false, type: 'EXPENSE' },
+      where: {
+        isConciliated: false,
+        isDismissed: false,
+        type: 'EXPENSE',
+      },
       orderBy: { date: 'desc' },
       take: 50,
+      select: {
+        id: true,
+        date: true,
+        amount: true,
+        description: true,
+      },
     });
 
     // Factures sense conciliar
     const invoices = await prisma.receivedInvoice.findMany({
       where: {
         status: { notIn: ['PAID', 'REJECTED'] },
-        conciliations: { none: {} },
       },
-      include: { supplier: { select: { name: true } } },
+      include: {
+        supplier: { select: { name: true } },
+        conciliations: { select: { id: true }, take: 1 },
+      },
     });
+
+    // Filtrar només factures sense cap conciliació
+    const unconciliated = invoices.filter((inv) => !inv.conciliations || inv.conciliations.length === 0);
 
     let created = 0;
     const matched = [];
 
     for (const mov of movements) {
-      const amount = Math.abs(parseFloat(mov.amount));
+      const amount = Math.abs(Number(mov.amount));
 
       // Buscar factura amb import exacte (o molt proper, ±0.05€)
-      const match = invoices.find((inv) => {
-        const invAmount = parseFloat(inv.totalAmount);
+      const match = unconciliated.find((inv) => {
+        const invAmount = Number(inv.totalAmount);
         return Math.abs(invAmount - amount) < 0.05;
       });
 
