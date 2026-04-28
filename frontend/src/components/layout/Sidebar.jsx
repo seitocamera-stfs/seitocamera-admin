@@ -22,6 +22,7 @@ import {
   AlertTriangle,
   BookOpen,
   ShieldCheck,
+  ListTodo,
 } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
 import useCompanyStore from '../../stores/companyStore';
@@ -49,6 +50,7 @@ const operationsItems = [
   { to: '/operations/daily', icon: CalendarDays, label: 'Pla del Dia' },
   { to: '/operations/calendar', icon: CalendarDays, label: 'Calendari' },
   { to: '/operations/projects', icon: Package, label: 'Projectes' },
+  { to: '/operations/tasks', icon: ListTodo, label: 'Tasques' },
   { to: '/operations/incidents', icon: AlertTriangle, label: 'Incidències' },
   { to: '/operations/roles', icon: ShieldCheck, label: 'Rols i Personal' },
   { to: '/operations/protocols', icon: BookOpen, label: 'Protocols' },

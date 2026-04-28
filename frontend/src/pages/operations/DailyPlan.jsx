@@ -182,12 +182,12 @@ export default function DailyPlan() {
           />
         )}
 
-        {/* Sortides d'avui (inici rodatge) */}
+        {/* Sortides d'avui */}
         <ProjectSection
-          title="Rodatges d'avui"
+          title="Sortides d'avui"
           icon={<Package size={18} className="text-blue-600" />}
           projects={departuresToday}
-          emptyText="Cap rodatge programat per avui"
+          emptyText="Cap sortida programada per avui"
           refetch={refetch}
         />
 

@@ -52,6 +52,7 @@ model User {
   roleAssignments       RoleAssignment[]
   projectAssignments    ProjectAssignment[]
   ledProjects           RentalProject[]   @relation("ProjectLead")
+  techSupportProjects   RentalProject[]   @relation("ProjectTechSupport")
   createdTasks          ProjectTask[]     @relation("TaskCreator")
   assignedTasks         ProjectTask[]     @relation("TaskAssignee")
   completedTasks        ProjectTask[]     @relation("TaskCompleter")
@@ -927,6 +928,7 @@ model RentalProject {
 
   // Responsables
   leadUserId          String?
+  techSupportUserId   String?          // Tècnic de suport assignat
   leadRoleCode        OperationalRole?
 
   // Transport
@@ -957,6 +959,7 @@ model RentalProject {
   // Relacions
   client              Client?        @relation(fields: [clientId], references: [id])
   leadUser            User?          @relation("ProjectLead", fields: [leadUserId], references: [id])
+  techSupportUser     User?          @relation("ProjectTechSupport", fields: [techSupportUserId], references: [id])
   assignments         ProjectAssignment[]
   statusHistory       ProjectStatusChange[]
   incidents           Incident[]

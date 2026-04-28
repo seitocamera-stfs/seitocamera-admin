@@ -44,6 +44,9 @@ export default function Projects() {
   const [selectedProject, setSelectedProject] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkStatus, setBulkStatus] = useState('');
+  const [bulkChanging, setBulkChanging] = useState(false);
 
   const activeStatuses = statusFilter || ALL_STATUSES.filter(s => s !== 'CLOSED').join(',');
 
@@ -54,6 +57,42 @@ export default function Projects() {
   });
 
   const projects = data?.projects || [];
+
+  const toggleSelect = (id, e) => {
+    e.stopPropagation();
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === projects.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(projects.map((p) => p.id)));
+    }
+  };
+
+  const handleBulkStatusChange = async () => {
+    if (!bulkStatus || selectedIds.size === 0) return;
+    setBulkChanging(true);
+    try {
+      await Promise.all(
+        [...selectedIds].map((id) =>
+          api.put(`/operations/projects/${id}/status`, { status: bulkStatus })
+        )
+      );
+      setSelectedIds(new Set());
+      setBulkStatus('');
+      refetch();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error canviant estat');
+    } finally {
+      setBulkChanging(false);
+    }
+  };
 
   const handleSyncRentman = async () => {
     setSyncing(true);
@@ -162,12 +201,40 @@ export default function Projects() {
 
       {error && <div className="bg-red-50 text-red-600 p-4 rounded-lg">{error}</div>}
 
+      {/* Barra accions en bloc */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 bg-primary/5 border border-primary/20 rounded-lg px-4 py-2">
+          <span className="text-sm font-medium">{selectedIds.size} seleccionat{selectedIds.size > 1 ? 's' : ''}</span>
+          <select value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)}
+            className="border rounded-md px-2 py-1 text-sm bg-background">
+            <option value="">Canviar estat a...</option>
+            {ALL_STATUSES.map(s => (
+              <option key={s} value={s}>{STATUS_CONFIG[s].label}</option>
+            ))}
+          </select>
+          <button onClick={handleBulkStatusChange} disabled={!bulkStatus || bulkChanging}
+            className="bg-primary text-primary-foreground px-3 py-1 rounded-md text-sm hover:bg-primary/90 disabled:opacity-50">
+            {bulkChanging ? 'Canviant...' : 'Aplicar'}
+          </button>
+          <button onClick={() => setSelectedIds(new Set())}
+            className="text-sm text-muted-foreground hover:text-foreground ml-auto">
+            Desseleccionar
+          </button>
+        </div>
+      )}
+
       {/* Vista Llista */}
       {!loading && viewMode === 'list' && (
         <div className="bg-card border rounded-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-muted/50 border-b">
               <tr>
+                <th className="p-3 w-8">
+                  <input type="checkbox"
+                    checked={projects.length > 0 && selectedIds.size === projects.length}
+                    onChange={toggleSelectAll}
+                    className="cursor-pointer" />
+                </th>
                 <th className="text-left p-3 font-medium">Projecte</th>
                 <th className="text-left p-3 font-medium">Check</th>
                 <th className="text-left p-3 font-medium">Rodatge</th>
@@ -181,13 +248,19 @@ export default function Projects() {
             <tbody className="divide-y">
               {projects.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-8 text-center text-muted-foreground">
+                  <td colSpan={9} className="p-8 text-center text-muted-foreground">
                     Cap projecte trobat
                   </td>
                 </tr>
               ) : (
                 projects.map(p => (
-                  <tr key={p.id} className="hover:bg-accent/50 cursor-pointer" onClick={() => setSelectedProject(p.id)}>
+                  <tr key={p.id} className={`hover:bg-accent/50 cursor-pointer ${selectedIds.has(p.id) ? 'bg-primary/5' : ''}`} onClick={() => setSelectedProject(p.id)}>
+                    <td className="p-3" onClick={(e) => e.stopPropagation()}>
+                      <input type="checkbox"
+                        checked={selectedIds.has(p.id)}
+                        onChange={(e) => toggleSelect(p.id, e)}
+                        className="cursor-pointer" />
+                    </td>
                     <td className="p-3">
                       <div className="font-medium flex items-center gap-1.5">
                         {p.name}
@@ -360,7 +433,7 @@ function CreateProjectModal({ onClose, onCreated }) {
     departureDate: '', departureTime: '',
     shootEndDate: '', shootEndTime: '',
     returnDate: '', returnTime: '',
-    priority: 0, leadUserId: '',
+    priority: 0, leadUserId: '', techSupportUserId: '',
     transportType: '', transportNotes: '', pickupTime: '',
     internalNotes: '',
     techValidationRequired: false,
@@ -372,7 +445,7 @@ function CreateProjectModal({ onClose, onCreated }) {
     if (!form.name || !form.departureDate || !form.returnDate) return;
     setSaving(true);
     try {
-      const body = { ...form, leadUserId: form.leadUserId || undefined };
+      const body = { ...form, leadUserId: form.leadUserId || undefined, techSupportUserId: form.techSupportUserId || undefined };
       await api.post('/operations/projects', body);
       onCreated();
     } catch (err) {
@@ -407,6 +480,14 @@ function CreateProjectModal({ onClose, onCreated }) {
           <div>
             <label className="text-sm font-medium">Responsable</label>
             <select value={form.leadUserId} onChange={e => set('leadUserId', e.target.value)}
+              className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background">
+              <option value="">Sense assignar</option>
+              {teamUsers?.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-sm font-medium">Tècnic de suport</label>
+            <select value={form.techSupportUserId} onChange={e => set('techSupportUserId', e.target.value)}
               className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background">
               <option value="">Sense assignar</option>
               {teamUsers?.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
@@ -785,6 +866,7 @@ function GeneralTab({ project, projectId, refetch, onValidateWarehouse, onValida
   const startEditing = () => {
     setForm({
       leadUserId: project.leadUserId || '',
+      techSupportUserId: project.techSupportUserId || '',
       transportType: project.transportType || '',
       transportNotes: project.transportNotes || '',
       pickupTime: project.pickupTime || '',
@@ -799,6 +881,7 @@ function GeneralTab({ project, projectId, refetch, onValidateWarehouse, onValida
     try {
       await api.put(`/operations/projects/${projectId}`, {
         leadUserId: form.leadUserId || null,
+        techSupportUserId: form.techSupportUserId || null,
         transportType: form.transportType || null,
         transportNotes: form.transportNotes || null,
         pickupTime: form.pickupTime || null,
@@ -821,6 +904,14 @@ function GeneralTab({ project, projectId, refetch, onValidateWarehouse, onValida
           <div>
             <label className="text-muted-foreground font-medium">Responsable</label>
             <select value={form.leadUserId} onChange={e => setForm({ ...form, leadUserId: e.target.value })}
+              className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background">
+              <option value="">Sense assignar</option>
+              {teamUsers?.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-muted-foreground font-medium">Tècnic de suport</label>
+            <select value={form.techSupportUserId} onChange={e => setForm({ ...form, techSupportUserId: e.target.value })}
               className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background">
               <option value="">Sense assignar</option>
               {teamUsers?.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
@@ -891,6 +982,10 @@ function GeneralTab({ project, projectId, refetch, onValidateWarehouse, onValida
         <div>
           <span className="text-muted-foreground">Responsable:</span>
           <span className="ml-2 font-medium">{project.leadUser?.name || <span className="italic text-muted-foreground">Sense assignar</span>}</span>
+        </div>
+        <div>
+          <span className="text-muted-foreground">Tècnic suport:</span>
+          <span className="ml-2 font-medium">{project.techSupportUser?.name || <span className="italic text-muted-foreground">Sense assignar</span>}</span>
         </div>
         <div className="col-span-2 border-t pt-3 mt-1">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Cicle del projecte</p>

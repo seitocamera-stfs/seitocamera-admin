@@ -178,6 +178,7 @@ router.get('/projects', async (req, res, next) => {
         take: parseInt(limit),
         include: {
           leadUser: { select: { id: true, name: true } },
+          techSupportUser: { select: { id: true, name: true } },
           client: { select: { id: true, name: true } },
           assignments: {
             include: { user: { select: { id: true, name: true } } },
@@ -203,6 +204,7 @@ router.get('/projects/:id', async (req, res, next) => {
       where: { id: req.params.id },
       include: {
         leadUser: { select: { id: true, name: true, email: true } },
+        techSupportUser: { select: { id: true, name: true, email: true } },
         client: { select: { id: true, name: true, phone: true, email: true } },
         assignments: {
           include: { user: { select: { id: true, name: true } } },
@@ -249,7 +251,7 @@ router.post('/projects', async (req, res, next) => {
       departureDate, departureTime,
       shootEndDate, shootEndTime,
       returnDate, returnTime,
-      priority = 0, leadUserId, leadRoleCode,
+      priority = 0, leadUserId, techSupportUserId, leadRoleCode,
       transportType, transportNotes, pickupTime,
       techValidationRequired = false,
       rentmanProjectId, budgetReference,
@@ -271,6 +273,7 @@ router.post('/projects', async (req, res, next) => {
         returnTime,
         priority,
         leadUserId: leadUserId || null,
+        techSupportUserId: techSupportUserId || null,
         leadRoleCode,
         transportType,
         transportNotes,
@@ -324,6 +327,7 @@ router.put('/projects/:id', async (req, res, next) => {
     delete data.createdAt;
     delete data.updatedAt;
     delete data.leadUser;
+    delete data.techSupportUser;
     delete data.client;
     delete data.assignments;
     delete data.statusHistory;
@@ -338,6 +342,7 @@ router.put('/projects/:id', async (req, res, next) => {
       data,
       include: {
         leadUser: { select: { id: true, name: true } },
+        techSupportUser: { select: { id: true, name: true } },
         client: { select: { id: true, name: true } },
       },
     });
@@ -1099,6 +1104,63 @@ router.get('/calendar/:year/:month', async (req, res, next) => {
     });
 
     res.json({ projects, tasks, year, month: month + 1 });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ===========================================
+// TASQUES GENERALS
+// ===========================================
+
+// GET /api/operations/tasks — Llistat de totes les tasques
+// ADMIN/EDITOR: veu totes. Altres: només les pròpies (assignades o creades).
+router.get('/tasks', async (req, res, next) => {
+  try {
+    const { status, assignedToId, projectId, page = 1, limit = 100 } = req.query;
+    const isAdmin = req.user.role === 'ADMIN' || req.user.role === 'EDITOR';
+
+    const where = {};
+
+    // Filtre per estat
+    if (status) {
+      const statuses = status.split(',');
+      where.status = statuses.length > 1 ? { in: statuses } : statuses[0];
+    }
+
+    // Filtre per projecte
+    if (projectId) where.projectId = projectId;
+
+    // Filtre per assignat
+    if (assignedToId) {
+      where.assignedToId = assignedToId;
+    } else if (!isAdmin) {
+      // Usuaris no-admin només veuen les seves
+      where.OR = [
+        { assignedToId: req.user.id },
+        { createdById: req.user.id },
+      ];
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const [tasks, total] = await Promise.all([
+      prisma.projectTask.findMany({
+        where,
+        include: {
+          project: { select: { id: true, name: true } },
+          createdBy: { select: { id: true, name: true } },
+          assignedTo: { select: { id: true, name: true } },
+          completedBy: { select: { id: true, name: true } },
+        },
+        orderBy: [{ status: 'asc' }, { dueAt: 'asc' }, { createdAt: 'desc' }],
+        skip,
+        take: parseInt(limit),
+      }),
+      prisma.projectTask.count({ where }),
+    ]);
+
+    res.json({ tasks, total, isAdmin });
   } catch (err) {
     next(err);
   }
