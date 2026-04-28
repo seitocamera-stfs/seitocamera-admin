@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   ShieldCheck, User, Users, Phone, Warehouse, Package,
-  Wrench, Shield, Loader2, Plus, X, Check,
+  Wrench, Shield, Loader2, Plus, X, Check, Pencil, Save, Trash2,
 } from 'lucide-react';
 import { useApiGet } from '../../hooks/useApi';
 import api from '../../lib/api';
@@ -33,11 +33,162 @@ const LEVEL_COLORS = {
   FULL_ADMIN: 'bg-red-50 text-red-600',
 };
 
+// ===========================================
+// Modal d'edició del rol
+// ===========================================
+
+function EditRoleModal({ role, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    name: role.name || '',
+    shortName: role.shortName || '',
+    description: role.description || '',
+    color: role.color || '#2390A0',
+    responsibilities: (role.responsibilities || []).join('\n'),
+    limitations: (role.limitations || []).join('\n'),
+  });
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const responsibilities = form.responsibilities
+        .split('\n')
+        .map((r) => r.trim())
+        .filter(Boolean);
+      const limitations = form.limitations
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean);
+
+      await api.put(`/operations/roles/${role.id}`, {
+        name: form.name,
+        shortName: form.shortName,
+        description: form.description || null,
+        color: form.color,
+        responsibilities,
+        limitations: limitations.length > 0 ? limitations : null,
+      });
+      onSaved();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error desant');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b">
+          <h2 className="font-semibold flex items-center gap-2">
+            <Pencil size={16} /> Editar rol: {role.shortName}
+          </h2>
+          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded"><X size={18} /></button>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {/* Nom i nom curt */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Nom complet</label>
+              <input
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                className="w-full border rounded-md px-3 py-2 text-sm mt-1"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Nom curt</label>
+              <input
+                value={form.shortName}
+                onChange={(e) => setForm({ ...form, shortName: e.target.value })}
+                className="w-full border rounded-md px-3 py-2 text-sm mt-1"
+              />
+            </div>
+          </div>
+
+          {/* Descripció */}
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Descripció</label>
+            <textarea
+              value={form.description}
+              onChange={(e) => setForm({ ...form, description: e.target.value })}
+              rows={2}
+              className="w-full border rounded-md px-3 py-2 text-sm mt-1 resize-none"
+              placeholder="Breu descripció del rol..."
+            />
+          </div>
+
+          {/* Color */}
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Color</label>
+            <div className="flex items-center gap-2 mt-1">
+              <input
+                type="color"
+                value={form.color}
+                onChange={(e) => setForm({ ...form, color: e.target.value })}
+                className="w-10 h-8 rounded border cursor-pointer"
+              />
+              <span className="text-xs text-muted-foreground">{form.color}</span>
+            </div>
+          </div>
+
+          {/* Responsabilitats */}
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">
+              Responsabilitats <span className="font-normal">(una per línia)</span>
+            </label>
+            <textarea
+              value={form.responsibilities}
+              onChange={(e) => setForm({ ...form, responsibilities: e.target.value })}
+              rows={5}
+              className="w-full border rounded-md px-3 py-2 text-sm mt-1 resize-none font-mono"
+              placeholder="Coordinar amb l'equip&#10;Gestionar inventari&#10;Preparar equips..."
+            />
+          </div>
+
+          {/* Limitacions */}
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">
+              Limitacions <span className="font-normal">(una per línia, opcional)</span>
+            </label>
+            <textarea
+              value={form.limitations}
+              onChange={(e) => setForm({ ...form, limitations: e.target.value })}
+              rows={3}
+              className="w-full border rounded-md px-3 py-2 text-sm mt-1 resize-none font-mono"
+              placeholder="No pot aprovar pressupostos&#10;No pot modificar protocols..."
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 p-4 border-t">
+          <button onClick={onClose} className="px-4 py-2 text-sm border rounded-md hover:bg-gray-50">
+            Cancel·lar
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving || !form.name.trim()}
+            className="flex items-center gap-1 px-4 py-2 text-sm bg-[#00617F] text-white rounded-md hover:bg-[#004d66] disabled:opacity-50"
+          >
+            <Save size={14} /> {saving ? 'Desant...' : 'Desar canvis'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ===========================================
+// Pàgina principal
+// ===========================================
+
 export default function Roles() {
   const { data: roles, loading, error, refetch } = useApiGet('/operations/roles');
   const { data: allUsers } = useApiGet('/users');
-  const [assigning, setAssigning] = useState(null); // roleId
+  const [assigning, setAssigning] = useState(null);
   const [selectedUser, setSelectedUser] = useState('');
+  const [editing, setEditing] = useState(null); // role object
 
   const handleAssign = async (roleId) => {
     if (!selectedUser) return;
@@ -92,6 +243,13 @@ export default function Roles() {
                     <h3 className="font-semibold text-sm truncate">{role.name}</h3>
                     <p className="text-xs text-muted-foreground">{role.shortName}</p>
                   </div>
+                  <button
+                    onClick={() => setEditing(role)}
+                    className="p-1.5 rounded-md hover:bg-gray-100 text-muted-foreground hover:text-[#00617F] transition-colors"
+                    title="Editar rol"
+                  >
+                    <Pencil size={14} />
+                  </button>
                 </div>
                 {role.description && (
                   <p className="text-xs text-muted-foreground mt-2">{role.description}</p>
@@ -209,6 +367,15 @@ export default function Roles() {
           </table>
         </div>
       </div>
+
+      {/* Modal d'edició */}
+      {editing && (
+        <EditRoleModal
+          role={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); refetch(); }}
+        />
+      )}
     </div>
   );
 }
