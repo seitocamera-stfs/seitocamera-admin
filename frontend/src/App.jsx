@@ -5,6 +5,7 @@ import ProtectedRoute from './components/shared/ProtectedRoute';
 import RoleGuard from './components/shared/RoleGuard';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
+import DashboardComptabilitat from './pages/DashboardComptabilitat';
 import Suppliers from './pages/Suppliers';
 import Clients from './pages/Clients';
 import ReceivedInvoices from './pages/ReceivedInvoices';
@@ -47,6 +48,7 @@ function App() {
         }
       >
         <Route index element={<Dashboard />} />
+        <Route path="accounting" element={<DashboardComptabilitat />} />
         <Route path="invoices/received" element={<RoleGuard section="receivedInvoices"><ReceivedInvoices /></RoleGuard>} />
         <Route path="invoices/issued" element={<RoleGuard section="issuedInvoices"><IssuedInvoices /></RoleGuard>} />
         <Route path="suppliers" element={<RoleGuard section="suppliers"><Suppliers /></RoleGuard>} />

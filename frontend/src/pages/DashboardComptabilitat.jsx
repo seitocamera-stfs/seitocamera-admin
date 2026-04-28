@@ -369,7 +369,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div>
+    <div className="p-6">
       <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between mb-6 gap-4">
         <div>
           <h2 className="text-2xl font-bold mb-1">Hola, {user?.name?.split(' ')[0] || 'Sergi'}!</h2>
