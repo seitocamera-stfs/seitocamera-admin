@@ -3,6 +3,8 @@ const { prisma } = require('../config/database');
 const { authenticate, authorize } = require('../middleware/auth');
 const { requireSection } = require('../middleware/sectionAccess');
 const agent = require('../services/accountingAgentService');
+const { rescheduleJob, runJobManually } = require('../services/agentJobsService');
+const { logger } = require('../config/logger');
 
 const router = express.Router();
 
@@ -590,6 +592,117 @@ Respon en JSON:
     });
 
     res.status(201).json(rule);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================
+// JOBS — Configuració i historial de l'agent automàtic
+// ===========================================
+
+/**
+ * GET /api/agent/jobs/config — Llistar configuració de jobs
+ */
+router.get('/jobs/config', async (req, res, next) => {
+  try {
+    const configs = await prisma.agentJobConfig.findMany({
+      orderBy: { jobType: 'asc' },
+    });
+    res.json(configs);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * PUT /api/agent/jobs/config/:jobType — Actualitzar configuració d'un job
+ */
+router.put('/jobs/config/:jobType', authorize('ADMIN'), async (req, res, next) => {
+  try {
+    const { isEnabled, cronSchedule } = req.body;
+    const data = {};
+    if (isEnabled !== undefined) data.isEnabled = isEnabled;
+    if (cronSchedule) data.cronSchedule = cronSchedule;
+
+    const config = await prisma.agentJobConfig.update({
+      where: { jobType: req.params.jobType },
+      data,
+    });
+
+    // Reprogramar el job
+    await rescheduleJob(req.params.jobType);
+
+    res.json(config);
+  } catch (error) {
+    if (error.code === 'P2025') return res.status(404).json({ error: 'Job no trobat' });
+    next(error);
+  }
+});
+
+/**
+ * POST /api/agent/jobs/run/:jobType — Executar un job manualment
+ */
+router.post('/jobs/run/:jobType', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    // Executar en background, no bloquejar la resposta
+    runJobManually(req.params.jobType).catch((err) => {
+      logger.error(`[Agent Jobs] Error manual ${req.params.jobType}: ${err.message}`);
+    });
+    res.json({ message: `Job "${req.params.jobType}" iniciat` });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/agent/jobs/history — Historial d'execucions
+ */
+router.get('/jobs/history', async (req, res, next) => {
+  try {
+    const { jobType, limit = 50 } = req.query;
+    const where = {};
+    if (jobType) where.jobType = jobType;
+
+    const jobs = await prisma.agentJob.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: parseInt(limit),
+    });
+
+    res.json(jobs);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/agent/jobs/stats — Estadístiques resum
+ */
+router.get('/jobs/stats', async (req, res, next) => {
+  try {
+    const [totalRuns, last24h, pendingSuggestions, configs] = await Promise.all([
+      prisma.agentJob.count(),
+      prisma.agentJob.count({ where: { createdAt: { gte: new Date(Date.now() - 24 * 3600 * 1000) } } }),
+      prisma.agentSuggestion.count({ where: { status: 'PENDING' } }),
+      prisma.agentJobConfig.findMany(),
+    ]);
+
+    const lastByType = await prisma.agentJob.findMany({
+      where: { status: 'completed' },
+      distinct: ['jobType'],
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+    });
+
+    res.json({
+      totalRuns,
+      last24h,
+      pendingSuggestions,
+      enabledJobs: configs.filter((c) => c.isEnabled).length,
+      totalJobs: configs.length,
+      lastRuns: lastByType,
+    });
   } catch (error) {
     next(error);
   }

@@ -182,6 +182,8 @@ async function start() {
     startQontoBankSyncJob();
     const { startAccountingReviewJob } = require('./jobs/accountingReviewJob');
     startAccountingReviewJob();
+    const { initJobs } = require('./services/agentJobsService');
+    initJobs();
 
     const server = app.listen(PORT, () => {
       logger.info(`Servidor escoltant al port ${PORT}`);

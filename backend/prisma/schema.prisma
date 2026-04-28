@@ -654,6 +654,7 @@ enum SuggestionType {
   DUPLICATE             // Possible duplicat
   MISSING_DATA          // Dades que falten
   TAX_WARNING           // IVA incorrecte o inusual
+  CONCILIATION_MATCH    // Coincidència banc-factura proposada
 }
 
 enum SuggestionStatus {
@@ -1243,6 +1244,43 @@ model AgentRule {
   @@index([category])
   @@index([isActive])
   @@map("agent_rules")
+}
+
+// ===========================================
+// Jobs automàtics de l'agent
+// ===========================================
+
+model AgentJob {
+  id              String    @id @default(cuid())
+  jobType         String    // "classify", "anomalies", "duplicates", "overdue", "conciliation"
+  status          String    @default("running") // "running", "completed", "failed"
+  itemsProcessed  Int       @default(0)
+  itemsCreated    Int       @default(0) // suggeriments creats
+  summary         String?   // Resum breu del que ha fet
+  details         Json?     // Detalls complets (llista de factures processades, etc.)
+  error           String?   // Error si ha fallat
+  durationMs      Int?      // Temps d'execució en ms
+  startedAt       DateTime  @default(now())
+  completedAt     DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([jobType])
+  @@index([createdAt])
+  @@map("agent_jobs")
+}
+
+// Configuració de quins jobs estan actius
+model AgentJobConfig {
+  id              String    @id @default(cuid())
+  jobType         String    @unique // "classify", "anomalies", etc.
+  label           String    // Nom llegible
+  description     String?   // Descripció del que fa
+  isEnabled       Boolean   @default(true)
+  cronSchedule    String    @default("0 */2 * * *") // Per defecte cada 2 hores
+  lastRunAt       DateTime?
+  updatedAt       DateTime  @updatedAt
+
+  @@map("agent_job_configs")
 }
 
 model OpNotification {
