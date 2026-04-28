@@ -831,8 +831,33 @@ enum IncidentSeverity {
 enum OpTaskStatus {
   OP_PENDING
   OP_IN_PROGRESS
+  OP_BLOCKED
   OP_DONE
   OP_CANCELLED
+}
+
+enum TaskCategory {
+  WAREHOUSE      // Magatzem
+  TECH           // Tècnica
+  ADMIN          // Administració
+  TRANSPORT      // Transport
+  GENERAL        // General
+}
+
+enum TaskReminder {
+  NONE           // Sense recordatori
+  AT_TIME        // A l'hora de la tasca
+  HOUR_BEFORE    // 1 hora abans
+  DAY_BEFORE     // 1 dia abans
+  CUSTOM         // Personalitzat
+}
+
+enum TaskRecurrence {
+  NONE           // No es repeteix
+  DAILY          // Cada dia
+  WEEKLY         // Cada setmana
+  MONTHLY        // Cada mes
+  CUSTOM         // Personalitzada
 }
 
 enum PermissionLevel {
@@ -1035,21 +1060,42 @@ model ProjectEquipment {
 
 model ProjectTask {
   id              String         @id @default(cuid())
-  projectId       String
+  projectId       String?        // Opcional: tasca pot ser independent d'un projecte
   title           String
   description     String?
+  notes           String?        // Notes addicionals
+
+  // Responsables
   createdById     String?
   assignedToId    String?
-  status          OpTaskStatus   @default(OP_PENDING)
-  dueAt           DateTime?
-  completedAt     DateTime?
   completedById   String?
+
+  // Estat i categoria
+  status          OpTaskStatus   @default(OP_PENDING)
+  category        TaskCategory   @default(GENERAL)
+
+  // Data i hora (tot opcional)
+  dueAt           DateTime?      // Data límit
+  dueTime         String?        // Hora (HH:MM), opcional
+  completedAt     DateTime?
+
+  // Recordatori
+  reminder        TaskReminder   @default(NONE)
+  reminderCustom  String?        // Per recordatori personalitzat (ex: "30m", "2h")
+
+  // Repetició
+  recurrence      TaskRecurrence @default(NONE)
+  recurrenceCustom String?       // Per repetició personalitzada (ex: "cada 2 setmanes")
+  recurrenceEndAt DateTime?      // Fi de la repetició
+
+  // Legacy
   requiresSupervision Boolean   @default(false)
+
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
   // Relacions
-  project         RentalProject  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project         RentalProject? @relation(fields: [projectId], references: [id], onDelete: Cascade)
   createdBy       User?          @relation("TaskCreator", fields: [createdById], references: [id])
   assignedTo      User?          @relation("TaskAssignee", fields: [assignedToId], references: [id])
   completedBy     User?          @relation("TaskCompleter", fields: [completedById], references: [id])
@@ -1059,6 +1105,7 @@ model ProjectTask {
   @@index([createdById])
   @@index([status])
   @@index([dueAt])
+  @@index([category])
   @@map("project_tasks")
 }
 

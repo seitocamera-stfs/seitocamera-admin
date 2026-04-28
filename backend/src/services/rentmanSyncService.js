@@ -314,14 +314,24 @@ async function fetchAllRentmanProjects({ pageSize = 500 } = {}) {
 
 /**
  * Filtra projectes Rentman per obtenir només els actuals i futurs.
- * Exclou projectes amb data de retorn anterior a fa 7 dies (marge de seguretat).
+ * Exclou:
+ *   - Projectes cancel·lats (cancelled)
+ *   - Projectes en estat de consulta (quotation, option, draft)
+ *   - Projectes amb data de retorn anterior a fa 7 dies
  */
 function filterCurrentAndFutureProjects(projects) {
   const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - 7); // 7 dies de marge per projectes acabats recentment
+  cutoff.setDate(cutoff.getDate() - 7);
+
+  // Estats que NO volem importar
+  const excludedStatuses = ['cancelled', 'quotation', 'option', 'draft'];
 
   return projects.filter((p) => {
-    // Si no té dates, l'incloem (potser encara s'ha de planificar)
+    // Excloure cancel·lats i consultes
+    const status = (p.status || '').toLowerCase();
+    if (excludedStatuses.includes(status)) return false;
+
+    // Excloure projectes antics
     const endDate = p.planperiod_end || p.end;
     if (!endDate) return true;
 

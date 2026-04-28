@@ -591,22 +591,41 @@ router.post('/projects/:id/tasks', async (req, res, next) => {
 // PUT /api/operations/tasks/:id — Actualitzar tasca
 router.put('/tasks/:id', async (req, res, next) => {
   try {
-    const { title, description, assignedToId, status, dueAt, requiresSupervision } = req.body;
+    const {
+      title, description, notes, assignedToId, status,
+      category, dueAt, dueTime,
+      reminder, reminderCustom,
+      recurrence, recurrenceCustom, recurrenceEndAt,
+      requiresSupervision, projectId,
+    } = req.body;
+
     const data = {};
     if (title !== undefined) data.title = title;
     if (description !== undefined) data.description = description;
+    if (notes !== undefined) data.notes = notes;
     if (assignedToId !== undefined) data.assignedToId = assignedToId;
+    if (category !== undefined) data.category = category;
     if (dueAt !== undefined) data.dueAt = dueAt ? new Date(dueAt) : null;
+    if (dueTime !== undefined) data.dueTime = dueTime || null;
+    if (reminder !== undefined) data.reminder = reminder;
+    if (reminderCustom !== undefined) data.reminderCustom = reminderCustom;
+    if (recurrence !== undefined) data.recurrence = recurrence;
+    if (recurrenceCustom !== undefined) data.recurrenceCustom = recurrenceCustom;
+    if (recurrenceEndAt !== undefined) data.recurrenceEndAt = recurrenceEndAt ? new Date(recurrenceEndAt) : null;
     if (requiresSupervision !== undefined) data.requiresSupervision = requiresSupervision;
+    if (projectId !== undefined) data.projectId = projectId || null;
+
     if (status !== undefined) {
       data.status = status;
       if (status === 'OP_DONE') {
         data.completedAt = new Date();
         data.completedById = req.user.id;
+      } else if (status !== 'OP_DONE') {
+        data.completedAt = null;
+        data.completedById = null;
       }
     }
 
-    // Obtenir tasca actual per saber si l'assignació canvia
     const currentTask = await prisma.projectTask.findUnique({
       where: { id: req.params.id },
       select: { assignedToId: true, title: true, projectId: true },
@@ -616,27 +635,24 @@ router.put('/tasks/:id', async (req, res, next) => {
       where: { id: req.params.id },
       data,
       include: {
+        project: { select: { id: true, name: true } },
         createdBy: { select: { id: true, name: true } },
         assignedTo: { select: { id: true, name: true } },
       },
     });
 
-    // Notificar si s'ha reassignat a algú diferent
+    // Notificar si s'ha reassignat
     if (assignedToId && assignedToId !== currentTask?.assignedToId && assignedToId !== req.user.id) {
-      const project = await prisma.rentalProject.findUnique({
-        where: { id: currentTask.projectId },
-        select: { name: true },
-      });
-      await prisma.opNotification.create({
+      await prisma.notification.create({
         data: {
           userId: assignedToId,
           type: 'task_assigned',
-          title: `Tasca reassignada per ${req.user.name || 'un company'}`,
-          message: `${currentTask.title}${project ? ` — Projecte: ${project.name}` : ''}`,
-          entityType: 'rental_project',
-          entityId: currentTask.projectId,
+          title: `Tasca assignada per ${req.user.name || 'un company'}`,
+          message: `${currentTask?.title || title}`,
+          entityType: 'project_task',
+          entityId: task.id,
         },
-      });
+      }).catch(() => {});
     }
 
     res.json(task);
@@ -1113,33 +1129,64 @@ router.get('/calendar/:year/:month', async (req, res, next) => {
 // TASQUES GENERALS
 // ===========================================
 
-// GET /api/operations/tasks — Llistat de totes les tasques
-// ADMIN/EDITOR: veu totes. Altres: només les pròpies (assignades o creades).
+// GET /api/operations/tasks — Llistat de tasques amb vistes
+// Vistes: today, pending, blocked, done, all
 router.get('/tasks', async (req, res, next) => {
   try {
-    const { status, assignedToId, projectId, page = 1, limit = 100 } = req.query;
+    const { view = 'pending', category, assignedToId, projectId, page = 1, limit = 200 } = req.query;
     const isAdmin = req.user.role === 'ADMIN' || req.user.role === 'EDITOR';
 
     const where = {};
 
-    // Filtre per estat
-    if (status) {
-      const statuses = status.split(',');
-      where.status = statuses.length > 1 ? { in: statuses } : statuses[0];
+    // Vista
+    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
+
+    switch (view) {
+      case 'today':
+        where.OR = [
+          { dueAt: { gte: todayStart, lte: todayEnd } },
+          { dueAt: null, status: { in: ['OP_PENDING', 'OP_IN_PROGRESS'] } },
+        ];
+        where.status = { not: 'OP_CANCELLED' };
+        break;
+      case 'pending':
+        where.status = { in: ['OP_PENDING', 'OP_IN_PROGRESS'] };
+        break;
+      case 'blocked':
+        where.status = 'OP_BLOCKED';
+        break;
+      case 'done':
+        where.status = 'OP_DONE';
+        break;
+      default: // 'all'
+        where.status = { not: 'OP_CANCELLED' };
+        break;
     }
+
+    // Filtre per categoria
+    if (category) where.category = category;
 
     // Filtre per projecte
     if (projectId) where.projectId = projectId;
 
-    // Filtre per assignat
+    // Filtre per assignat / visibilitat
     if (assignedToId) {
       where.assignedToId = assignedToId;
     } else if (!isAdmin) {
-      // Usuaris no-admin només veuen les seves
-      where.OR = [
+      // Combinar amb filtre de vista (pot tenir OR)
+      const userFilter = [
         { assignedToId: req.user.id },
         { createdById: req.user.id },
+        { assignedToId: null }, // tasques sense assignar les veu tothom
       ];
+      if (where.OR) {
+        // La vista ja té OR → AND amb el filtre d'usuari
+        where.AND = [{ OR: where.OR }, { OR: userFilter }];
+        delete where.OR;
+      } else {
+        where.OR = userFilter;
+      }
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -1153,14 +1200,101 @@ router.get('/tasks', async (req, res, next) => {
           assignedTo: { select: { id: true, name: true } },
           completedBy: { select: { id: true, name: true } },
         },
-        orderBy: [{ status: 'asc' }, { dueAt: 'asc' }, { createdAt: 'desc' }],
+        orderBy: [
+          { dueAt: { sort: 'asc', nulls: 'last' } },
+          { createdAt: 'desc' },
+        ],
         skip,
         take: parseInt(limit),
       }),
       prisma.projectTask.count({ where }),
     ]);
 
-    res.json({ tasks, total, isAdmin });
+    // Comptadors per les vistes (sempre retornar-los per al badge)
+    const [pendingCount, blockedCount, todayCount] = await Promise.all([
+      prisma.projectTask.count({
+        where: {
+          status: { in: ['OP_PENDING', 'OP_IN_PROGRESS'] },
+          ...(isAdmin ? {} : { OR: [{ assignedToId: req.user.id }, { createdById: req.user.id }, { assignedToId: null }] }),
+        },
+      }),
+      prisma.projectTask.count({
+        where: {
+          status: 'OP_BLOCKED',
+          ...(isAdmin ? {} : { OR: [{ assignedToId: req.user.id }, { createdById: req.user.id }, { assignedToId: null }] }),
+        },
+      }),
+      prisma.projectTask.count({
+        where: {
+          status: { not: 'OP_CANCELLED' },
+          OR: [
+            { dueAt: { gte: todayStart, lte: todayEnd } },
+            { dueAt: null, status: { in: ['OP_PENDING', 'OP_IN_PROGRESS'] } },
+          ],
+          ...(isAdmin ? {} : { AND: [{ OR: [{ assignedToId: req.user.id }, { createdById: req.user.id }, { assignedToId: null }] }] }),
+        },
+      }),
+    ]);
+
+    res.json({ tasks, total, isAdmin, counts: { pending: pendingCount, blocked: blockedCount, today: todayCount } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/operations/tasks — Crear tasca independent (no lligada a projecte obligatòriament)
+router.post('/tasks', async (req, res, next) => {
+  try {
+    const {
+      title, description, notes,
+      assignedToId, projectId,
+      category = 'GENERAL',
+      dueAt, dueTime,
+      reminder = 'NONE', reminderCustom,
+      recurrence = 'NONE', recurrenceCustom, recurrenceEndAt,
+    } = req.body;
+
+    if (!title?.trim()) return res.status(400).json({ error: 'El títol és obligatori' });
+
+    const task = await prisma.projectTask.create({
+      data: {
+        title: title.trim(),
+        description: description || null,
+        notes: notes || null,
+        createdById: req.user.id,
+        assignedToId: assignedToId || null,
+        projectId: projectId || null,
+        category,
+        dueAt: dueAt ? new Date(dueAt) : null,
+        dueTime: dueTime || null,
+        reminder,
+        reminderCustom: reminderCustom || null,
+        recurrence,
+        recurrenceCustom: recurrenceCustom || null,
+        recurrenceEndAt: recurrenceEndAt ? new Date(recurrenceEndAt) : null,
+      },
+      include: {
+        project: { select: { id: true, name: true } },
+        createdBy: { select: { id: true, name: true } },
+        assignedTo: { select: { id: true, name: true } },
+      },
+    });
+
+    // Notificar l'assignat si no és el creador
+    if (assignedToId && assignedToId !== req.user.id) {
+      await prisma.notification.create({
+        data: {
+          userId: assignedToId,
+          type: 'task_assigned',
+          title: 'Nova tasca assignada',
+          message: `${req.user.name} t'ha assignat: ${title}`,
+          entityType: 'project_task',
+          entityId: task.id,
+        },
+      }).catch(() => {}); // No bloquejar si falla
+    }
+
+    res.status(201).json(task);
   } catch (err) {
     next(err);
   }

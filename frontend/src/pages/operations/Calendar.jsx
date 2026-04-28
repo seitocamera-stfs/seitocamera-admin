@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import {
-  CalendarDays, ChevronLeft, ChevronRight, Package,
+  CalendarDays, ChevronLeft, ChevronRight,
   Loader2,
 } from 'lucide-react';
 import { useApiGet } from '../../hooks/useApi';
@@ -9,27 +9,6 @@ import { useApiGet } from '../../hooks/useApi';
 // Constants
 // ===========================================
 
-const STATUS_BG = {
-  PENDING_PREP:        '#d1d5db',
-  IN_PREPARATION:      '#93c5fd',
-  PENDING_TECH_REVIEW: '#fcd34d',
-  PENDING_FINAL_CHECK: '#fdba74',
-  READY:               '#86efac',
-  PENDING_LOAD:        '#5eead4',
-  OUT:                 '#818cf8',
-  RETURNED:            '#c4b5fd',
-  RETURN_REVIEW:       '#fde68a',
-  WITH_INCIDENT:       '#fca5a5',
-  EQUIPMENT_BLOCKED:   '#f87171',
-  CLOSED:              '#9ca3af',
-};
-
-const STATUS_TEXT = {
-  OUT: '#fff',
-  EQUIPMENT_BLOCKED: '#fff',
-};
-
-// Colors fixes per projectes (es roten)
 const PROJECT_COLORS = [
   '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444',
   '#06b6d4', '#ec4899', '#14b8a6', '#f97316', '#6366f1',
@@ -42,16 +21,58 @@ const MONTH_NAMES = [
   'Juliol', 'Agost', 'Setembre', 'Octubre', 'Novembre', 'Desembre',
 ];
 
+const BAR_H = 18;  // px per barra
+const BAR_GAP = 2; // px entre barres
+const BAR_PAD = 2; // px padding superior
+
 function toDateStr(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 function dateToDayNum(dateStr, year, month) {
   const d = new Date(dateStr);
-  // Retorna el dia del mes, clampat dins del mes visible
   if (d.getFullYear() < year || (d.getFullYear() === year && d.getMonth() < month - 1)) return 0;
   if (d.getFullYear() > year || (d.getFullYear() === year && d.getMonth() > month - 1)) return 32;
   return d.getDate();
+}
+
+/**
+ * Distribueix barres en lanes (files) per un rang de dies concret.
+ * Retorna un Map<barId, laneIndex> i el nombre total de lanes.
+ */
+function assignLanesForRange(bars, rangeStart, rangeEnd) {
+  // Filtrar barres que toquen aquest rang
+  const relevant = bars
+    .filter((b) => !(b.startDay > rangeEnd || b.endDay < rangeStart))
+    .sort((a, b) => a.startDay - b.startDay || (b.endDay - b.startDay) - (a.endDay - a.startDay));
+
+  const lanes = []; // Array d'arrays: cada lane conté barres sense solapament
+  const barLane = new Map();
+
+  relevant.forEach((bar) => {
+    let placed = false;
+    for (let i = 0; i < lanes.length; i++) {
+      const overlaps = lanes[i].some((b) => {
+        const bStart = Math.max(b.startDay, rangeStart);
+        const bEnd = Math.min(b.endDay, rangeEnd);
+        const barStart = Math.max(bar.startDay, rangeStart);
+        const barEnd = Math.min(bar.endDay, rangeEnd);
+        return !(barStart > bEnd || barEnd < bStart);
+      });
+      if (!overlaps) {
+        lanes[i].push(bar);
+        barLane.set(bar.id, i);
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) {
+      lanes.push([bar]);
+      barLane.set(bar.id, lanes.length - 1);
+    }
+  });
+
+  return { barLane, totalLanes: lanes.length };
 }
 
 // ===========================================
@@ -81,13 +102,11 @@ export default function Calendar() {
 
   const daysInMonth = new Date(year, month, 0).getDate();
 
-  // Dia de la setmana del primer dia (dilluns=0)
   const firstDow = useMemo(() => {
     const dow = new Date(year, month - 1, 1).getDay();
     return dow === 0 ? 6 : dow - 1;
   }, [year, month]);
 
-  // Construir graella de dies (amb buits al principi)
   const calendarDays = useMemo(() => {
     const days = [];
     for (let i = 0; i < firstDow; i++) days.push(null);
@@ -97,7 +116,7 @@ export default function Calendar() {
 
   const totalRows = Math.ceil(calendarDays.length / 7);
 
-  // Preparar les barres dels projectes
+  // Preparar barres i tasques
   const { projectBars, tasksByDay } = useMemo(() => {
     const bars = [];
     const tByDay = {};
@@ -108,12 +127,11 @@ export default function Calendar() {
         const endDay = Math.min(daysInMonth, dateToDayNum(p.returnDate, year, month));
         if (startDay > daysInMonth || endDay < 1) return;
 
-        const color = PROJECT_COLORS[idx % PROJECT_COLORS.length];
         bars.push({
           ...p,
           startDay: Math.max(startDay, 1),
           endDay: Math.min(endDay, daysInMonth),
-          color,
+          color: PROJECT_COLORS[idx % PROJECT_COLORS.length],
         });
       });
     }
@@ -132,28 +150,20 @@ export default function Calendar() {
     return { projectBars: bars, tasksByDay: tByDay };
   }, [data, year, month, daysInMonth]);
 
-  // Distribuir barres en "lanes" (files) per evitar solapaments
-  const projectLanes = useMemo(() => {
-    const lanes = []; // Array de arrays, cada lane té barres no solapades
-    const sortedBars = [...projectBars].sort((a, b) => a.startDay - b.startDay || b.endDay - a.endDay);
+  // Calcular lanes per fila (independent per cada setmana)
+  const rowLaneData = useMemo(() => {
+    return Array.from({ length: totalRows }).map((_, rowIdx) => {
+      const rowStart = rowIdx * 7;
+      const rowDays = calendarDays.slice(rowStart, rowStart + 7);
+      const rowFirstDay = rowDays.find((d) => d !== null) || 0;
+      const rowLastDay = [...rowDays].reverse().find((d) => d !== null) || 0;
 
-    sortedBars.forEach((bar) => {
-      let placed = false;
-      for (const lane of lanes) {
-        const overlaps = lane.some((b) => !(bar.startDay > b.endDay || bar.endDay < b.startDay));
-        if (!overlaps) {
-          lane.push(bar);
-          placed = true;
-          break;
-        }
-      }
-      if (!placed) {
-        lanes.push([bar]);
-      }
+      if (rowFirstDay === 0) return { barLane: new Map(), totalLanes: 0, rowFirstDay, rowLastDay, rowDays };
+
+      const { barLane, totalLanes } = assignLanesForRange(projectBars, rowFirstDay, rowLastDay);
+      return { barLane, totalLanes, rowFirstDay, rowLastDay, rowDays };
     });
-
-    return lanes;
-  }, [projectBars]);
+  }, [projectBars, calendarDays, totalRows]);
 
   const todayStr = toDateStr(today);
 
@@ -199,13 +209,14 @@ export default function Calendar() {
             </div>
 
             {/* Files del calendari */}
-            {Array.from({ length: totalRows }).map((_, rowIdx) => {
-              const rowStart = rowIdx * 7;
-              const rowDays = calendarDays.slice(rowStart, rowStart + 7);
+            {rowLaneData.map(({ barLane, totalLanes, rowFirstDay, rowLastDay, rowDays }, rowIdx) => {
+              // Altura de la zona de barres: adaptada al nombre de lanes d'aquesta fila
+              const barsHeight = totalLanes > 0
+                ? totalLanes * (BAR_H + BAR_GAP) + BAR_PAD
+                : 8; // mínim si no hi ha barres
 
-              // Trobar barres que passen per aquesta fila
-              const rowFirstDay = rowDays.find((d) => d !== null) || 0;
-              const rowLastDay = [...rowDays].reverse().find((d) => d !== null) || 0;
+              // Comprovar si hi ha tasques en aquesta fila
+              const hasRowTasks = rowDays.some((d) => d && tasksByDay[d]);
 
               return (
                 <div key={rowIdx}>
@@ -227,64 +238,65 @@ export default function Calendar() {
                     })}
                   </div>
 
-                  {/* Barres de projectes per aquesta fila */}
-                  <div className="relative" style={{ minHeight: `${Math.max(projectLanes.length * 20 + 4, 24)}px` }}>
-                    {/* Línies verticals de les columnes */}
+                  {/* Zona de barres — altura dinàmica per fila */}
+                  <div className="relative" style={{ height: `${barsHeight}px` }}>
+                    {/* Línies verticals */}
                     <div className="absolute inset-0 grid grid-cols-7 pointer-events-none">
                       {rowDays.map((day, colIdx) => (
                         <div key={colIdx} className={`border-r ${day === null ? 'bg-muted/20' : ''}`} />
                       ))}
                     </div>
 
-                    {/* Barres */}
-                    {projectLanes.map((lane, laneIdx) => {
-                      return lane.map((bar) => {
-                        // Calcular si la barra toca aquesta fila
-                        const barRowStart = Math.max(bar.startDay, rowFirstDay);
-                        const barRowEnd = Math.min(bar.endDay, rowLastDay);
-                        if (barRowStart > barRowEnd) return null;
+                    {/* Barres dels projectes */}
+                    {projectBars.map((bar) => {
+                      const laneIdx = barLane.get(bar.id);
+                      if (laneIdx === undefined) return null;
 
-                        // Calcular posició en columnes de la graella
-                        // La columna del dia "barRowStart" dins la fila
-                        const startColIdx = rowDays.indexOf(barRowStart);
-                        const endColIdx = rowDays.indexOf(barRowEnd);
-                        if (startColIdx === -1 || endColIdx === -1) return null;
+                      const barRowStart = Math.max(bar.startDay, rowFirstDay);
+                      const barRowEnd = Math.min(bar.endDay, rowLastDay);
+                      if (barRowStart > barRowEnd) return null;
 
-                        const leftPct = (startColIdx / 7) * 100;
-                        const widthPct = ((endColIdx - startColIdx + 1) / 7) * 100;
+                      const startColIdx = rowDays.indexOf(barRowStart);
+                      const endColIdx = rowDays.indexOf(barRowEnd);
+                      if (startColIdx === -1 || endColIdx === -1) return null;
 
-                        const isStart = bar.startDay >= rowFirstDay && bar.startDay <= rowLastDay;
-                        const isEnd = bar.endDay >= rowFirstDay && bar.endDay <= rowLastDay;
+                      const leftPct = (startColIdx / 7) * 100;
+                      const widthPct = ((endColIdx - startColIdx + 1) / 7) * 100;
 
-                        return (
-                          <div
-                            key={`${bar.id}-${rowIdx}`}
-                            className="absolute overflow-hidden cursor-default"
-                            style={{
-                              left: `calc(${leftPct}% + 2px)`,
-                              width: `calc(${widthPct}% - 4px)`,
-                              top: `${laneIdx * 20 + 2}px`,
-                              height: '17px',
-                              backgroundColor: bar.color,
-                              borderRadius: isStart && isEnd ? '4px'
-                                : isStart ? '4px 0 0 4px'
-                                : isEnd ? '0 4px 4px 0'
-                                : '0',
-                              opacity: 0.9,
-                            }}
-                            title={`${bar.name}${bar.clientName ? ` — ${bar.clientName}` : ''}`}
+                      const isStart = bar.startDay >= rowFirstDay && bar.startDay <= rowLastDay;
+                      const isEnd = bar.endDay >= rowFirstDay && bar.endDay <= rowLastDay;
+
+                      return (
+                        <div
+                          key={`${bar.id}-${rowIdx}`}
+                          className="absolute overflow-hidden cursor-default"
+                          style={{
+                            left: `calc(${leftPct}% + 2px)`,
+                            width: `calc(${widthPct}% - 4px)`,
+                            top: `${laneIdx * (BAR_H + BAR_GAP) + BAR_PAD}px`,
+                            height: `${BAR_H}px`,
+                            backgroundColor: bar.color,
+                            borderRadius: isStart && isEnd ? '4px'
+                              : isStart ? '4px 0 0 4px'
+                              : isEnd ? '0 4px 4px 0'
+                              : '0',
+                            opacity: 0.9,
+                          }}
+                          title={`${bar.name}${bar.clientName ? ` — ${bar.clientName}` : ''}`}
+                        >
+                          <span
+                            className="text-[9px] text-white font-medium px-1.5 whitespace-nowrap block truncate drop-shadow-sm"
+                            style={{ lineHeight: `${BAR_H}px` }}
                           >
-                            <span className="text-[9px] text-white font-medium px-1.5 leading-[17px] whitespace-nowrap block truncate drop-shadow-sm">
-                              {isStart ? bar.name : ''}
-                            </span>
-                          </div>
-                        );
-                      });
+                            {isStart ? bar.name : ''}
+                          </span>
+                        </div>
+                      );
                     })}
                   </div>
 
                   {/* Tasques */}
-                  {rowDays.some((d) => d && tasksByDay[d]) && (
+                  {hasRowTasks && (
                     <div className="grid grid-cols-7">
                       {rowDays.map((day, colIdx) => {
                         if (!day || !tasksByDay[day]) {
@@ -292,7 +304,7 @@ export default function Calendar() {
                         }
                         return (
                           <div key={`t-${rowIdx}-${colIdx}`} className="border-r px-0.5 pb-0.5">
-                            {tasksByDay[day].slice(0, 2).map((t) => (
+                            {tasksByDay[day].map((t) => (
                               <div
                                 key={t.id}
                                 className={`text-[8px] leading-tight px-1 py-0.5 rounded truncate border mb-0.5 ${
@@ -305,9 +317,6 @@ export default function Calendar() {
                                 {t.title}
                               </div>
                             ))}
-                            {tasksByDay[day].length > 2 && (
-                              <div className="text-[8px] text-muted-foreground px-1">+{tasksByDay[day].length - 2}</div>
-                            )}
                           </div>
                         );
                       })}
@@ -316,8 +325,8 @@ export default function Calendar() {
 
                   {/* Separador de fila */}
                   <div className="grid grid-cols-7">
-                    {rowDays.map((day, colIdx) => (
-                      <div key={`sep-${colIdx}`} className={`border-r border-b h-0 ${day === null ? 'bg-muted/20' : ''}`} />
+                    {rowDays.map((_, colIdx) => (
+                      <div key={`sep-${colIdx}`} className="border-r border-b h-0" />
                     ))}
                   </div>
                 </div>
@@ -325,7 +334,7 @@ export default function Calendar() {
             })}
           </div>
 
-          {/* Llegenda de projectes */}
+          {/* Llegenda */}
           {projectBars.length > 0 && (
             <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
               {projectBars.map((bar) => (
