@@ -4,6 +4,7 @@ import { useRef } from 'react';
 import { useApiGet } from '../hooks/useApi';
 import { formatCurrency, formatDate } from '../lib/utils';
 import api from '../lib/api';
+import ShellyConsumptionPanel from '../components/ShellyConsumptionPanel';
 
 export default function SharedInvoices() {
   const currentYear = new Date().getFullYear();
@@ -22,6 +23,9 @@ export default function SharedInvoices() {
   // Upload PDF
   const [uploadLoading, setUploadLoading] = useState(false);
   const fileInputRef = useRef(null);
+
+  // Shelly consumption panel
+  const [shellyMonth, setShellyMonth] = useState(new Date().getMonth() + 1);
 
   // Estat de bloqueig/compensació
   const [locks, setLocks] = useState({});
@@ -337,6 +341,26 @@ export default function SharedInvoices() {
             <p className="text-xs text-muted-foreground">Logistik</p>
             <p className="text-2xl font-bold text-orange-600">{formatCurrency(data.totals.totalLogistik)}</p>
           </div>
+        </div>
+      )}
+
+      {/* Panell Shelly - Consum elèctric */}
+      {year !== 'all' && groupBy === 'month' && (
+        <div className="mb-6">
+          <div className="flex items-center gap-2 mb-2">
+            <select
+              value={shellyMonth}
+              onChange={(e) => setShellyMonth(parseInt(e.target.value))}
+              className="rounded-md border bg-background px-2 py-1 text-xs"
+            >
+              {Array.from({ length: 12 }, (_, i) => (
+                <option key={i + 1} value={i + 1}>
+                  {new Date(year, i).toLocaleString('ca', { month: 'long' })}
+                </option>
+              ))}
+            </select>
+          </div>
+          <ShellyConsumptionPanel year={year} month={shellyMonth} />
         </div>
       )}
 

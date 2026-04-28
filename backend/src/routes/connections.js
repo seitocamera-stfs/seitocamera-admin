@@ -120,7 +120,7 @@ router.get('/', async (req, res, next) => {
     }));
 
     // Afegir proveïdors no connectats com a DISCONNECTED
-    const allProviders = ['ZOHO_MAIL', 'GOOGLE_DRIVE', 'QONTO', 'GOCARDLESS', 'RENTMAN', 'SMTP'];
+    const allProviders = ['ZOHO_MAIL', 'GOOGLE_DRIVE', 'QONTO', 'GOCARDLESS', 'RENTMAN', 'SMTP', 'SHELLY'];
     const connected = new Set(safe.map((c) => c.provider));
     for (const provider of allProviders) {
       if (!connected.has(provider)) {
@@ -498,6 +498,59 @@ router.put('/rentman/credentials', async (req, res, next) => {
     });
 
     res.json({ success: true, message: 'Credencials Rentman guardades.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================
+// PUT /api/connections/shelly/credentials — Guardar credencials Shelly Pro 3EM
+// ===========================================
+router.put('/shelly/credentials', async (req, res, next) => {
+  try {
+    const { authKey, serverUri, deviceId } = req.body;
+    if (!authKey || !serverUri || !deviceId) {
+      return res.status(400).json({ error: 'Cal indicar authKey, serverUri i deviceId' });
+    }
+
+    await prisma.serviceConnection.upsert({
+      where: { provider: 'SHELLY' },
+      update: {
+        apiKey: authKey,
+        config: { serverUri, deviceId },
+        displayName: 'Shelly Pro 3EM',
+        status: 'ACTIVE',
+        connectedBy: req.user?.id || null,
+        connectedAt: new Date(),
+        lastError: null,
+      },
+      create: {
+        provider: 'SHELLY',
+        apiKey: authKey,
+        config: { serverUri, deviceId },
+        displayName: 'Shelly Pro 3EM',
+        status: 'ACTIVE',
+        connectedBy: req.user?.id || null,
+        connectedAt: new Date(),
+      },
+    });
+
+    // Provar connexió
+    try {
+      const shellyService = require('../services/shellyService');
+      const test = await shellyService.testConnection();
+      if (!test.connected) {
+        await prisma.serviceConnection.update({
+          where: { provider: 'SHELLY' },
+          data: { status: 'ERROR', lastError: test.error },
+        });
+        return res.json({ success: true, warning: `Credencials guardades, però test fallit: ${test.error}` });
+      }
+    } catch (testErr) {
+      // No crític — les credencials s'han guardat igualment
+    }
+
+    res.json({ success: true, message: 'Connexió Shelly configurada correctament.' });
   } catch (error) {
     next(error);
   }

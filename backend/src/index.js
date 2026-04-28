@@ -142,6 +142,7 @@ app.use('/api/shared-invoices', require('./routes/sharedInvoices'));
 app.use('/api/ai-costs', require('./routes/aiCosts'));
 app.use('/api/connections', require('./routes/connections'));
 app.use('/api/operations', require('./routes/operations'));
+app.use('/api/shelly', require('./routes/shelly'));
 
 // ===========================================
 // Gestió d'errors
@@ -180,6 +181,8 @@ async function start() {
     startGdriveSyncJob();
     startRentmanSyncJob();
     startQontoBankSyncJob();
+    const { startShellySyncJob } = require('./jobs/shellySyncJob');
+    startShellySyncJob();
     const { startAccountingReviewJob } = require('./jobs/accountingReviewJob');
     startAccountingReviewJob();
     const { initJobs } = require('./services/agentJobsService');

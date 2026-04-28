@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import {
-  Plug, PlugZap, Mail, HardDrive, Building2, CreditCard, Truck,
+  Plug, PlugZap, Mail, HardDrive, Building2, CreditCard, Truck, Zap,
   CheckCircle2, XCircle, AlertTriangle, Loader2, ExternalLink, Settings, RefreshCw
 } from 'lucide-react';
 import api from '../lib/api';
@@ -46,6 +46,13 @@ const PROVIDER_INFO = {
     icon: Mail,
     color: 'text-gray-600 bg-gray-50',
     description: 'Enviament de correus via SMTP (Gmail, Outlook, o qualsevol proveïdor).',
+    supportsOAuth: false,
+  },
+  SHELLY: {
+    label: 'Shelly Pro 3EM',
+    icon: Zap,
+    color: 'text-green-600 bg-green-50',
+    description: 'Monitor de consum elèctric per calcular el repartiment de factures compartides.',
     supportsOAuth: false,
   },
 };
@@ -438,6 +445,29 @@ export default function Connections() {
                     <label className="block text-xs font-medium mb-1">API Token *</label>
                     <input type="password" value={apiSetup.apiToken || ''} onChange={(e) => setApiSetup({ ...apiSetup, apiToken: e.target.value })}
                       className="w-full px-3 py-2 border rounded-md text-sm bg-background" placeholder="••••••••" />
+                  </div>
+                </>
+              )}
+
+              {apiSetup.provider === 'SHELLY' && (
+                <>
+                  <div className="bg-green-50 text-green-800 rounded-lg p-3 text-xs">
+                    <p>Obtén les credencials a l'app Shelly → Configuració d'usuari → "Authorization cloud key"</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium mb-1">Auth Key *</label>
+                    <input type="password" value={apiSetup.authKey || ''} onChange={(e) => setApiSetup({ ...apiSetup, authKey: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-md text-sm bg-background" placeholder="Cloud auth key" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium mb-1">Server URI *</label>
+                    <input type="text" value={apiSetup.serverUri || ''} onChange={(e) => setApiSetup({ ...apiSetup, serverUri: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-md text-sm bg-background" placeholder="shelly-243-eu.shelly.cloud" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium mb-1">Device ID *</label>
+                    <input type="text" value={apiSetup.deviceId || ''} onChange={(e) => setApiSetup({ ...apiSetup, deviceId: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-md text-sm bg-background" placeholder="ece334e4da34" />
                   </div>
                 </>
               )}
