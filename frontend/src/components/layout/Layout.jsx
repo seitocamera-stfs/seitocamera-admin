@@ -12,7 +12,7 @@ export default function Layout() {
   return (
     <div className="flex h-screen bg-background">
       <Sidebar />
-      <main className="flex-1 overflow-auto p-6 min-w-0">
+      <main className="flex-1 overflow-auto min-w-0" style={{ background: '#f8f9fa' }}>
         <Outlet />
       </main>
     </div>

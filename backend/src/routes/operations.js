@@ -1539,6 +1539,106 @@ router.get('/stats', async (req, res, next) => {
   }
 });
 
+// GET /api/operations/dashboard — Dashboard operatiu complet
+router.get('/dashboard', async (req, res, next) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const weekEnd = new Date(today);
+    weekEnd.setDate(weekEnd.getDate() + 7);
+
+    const [
+      activeProjects,
+      readyProjects,
+      pendingTasks,
+      todayTasks,
+      openIncidents,
+      criticalIncidents,
+      upcomingDepartures,
+      tasksToday,
+    ] = await Promise.all([
+      // Projectes actius (no tancats)
+      prisma.rentalProject.count({
+        where: { status: { notIn: ['CLOSED'] } },
+      }),
+      // Projectes preparats
+      prisma.rentalProject.count({
+        where: { status: 'READY' },
+      }),
+      // Tasques pendents totals
+      prisma.projectTask.count({
+        where: { status: { in: ['OP_PENDING', 'OP_IN_PROGRESS'] } },
+      }),
+      // Tasques per avui
+      prisma.projectTask.count({
+        where: {
+          status: { in: ['OP_PENDING', 'OP_IN_PROGRESS'] },
+          dueAt: { gte: today, lt: tomorrow },
+        },
+      }),
+      // Incidències obertes
+      prisma.incident.count({
+        where: { status: { in: ['INC_OPEN', 'INC_IN_PROGRESS'] } },
+      }),
+      // Incidències crítiques
+      prisma.incident.count({
+        where: { severity: 'CRITICAL', status: { in: ['INC_OPEN', 'INC_IN_PROGRESS'] } },
+      }),
+      // Pròximes sortides (7 dies)
+      prisma.rentalProject.findMany({
+        where: {
+          departureDate: { gte: today, lte: weekEnd },
+          status: { notIn: ['CLOSED'] },
+        },
+        select: {
+          id: true, name: true, clientName: true, status: true,
+          departureDate: true, departureTime: true,
+          checkDate: true, returnDate: true,
+          leadUser: { select: { id: true, name: true } },
+          client: { select: { id: true, name: true } },
+        },
+        orderBy: { departureDate: 'asc' },
+        take: 8,
+      }),
+      // Tasques del dia
+      prisma.projectTask.findMany({
+        where: {
+          status: { in: ['OP_PENDING', 'OP_IN_PROGRESS', 'OP_DONE'] },
+          OR: [
+            { dueAt: { gte: today, lt: tomorrow } },
+            { status: 'OP_DONE', completedAt: { gte: today } },
+          ],
+        },
+        select: {
+          id: true, title: true, status: true, category: true,
+          dueAt: true, completedAt: true,
+          assignedTo: { select: { id: true, name: true } },
+          project: { select: { id: true, name: true } },
+        },
+        orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
+        take: 10,
+      }),
+    ]);
+
+    res.json({
+      stats: {
+        activeProjects,
+        readyProjects,
+        pendingTasks,
+        todayTasks,
+        openIncidents,
+        criticalIncidents,
+      },
+      upcomingDepartures,
+      tasksToday,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ===========================================
 // HELPERS
 // ===========================================

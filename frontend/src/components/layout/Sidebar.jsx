@@ -16,7 +16,6 @@ import {
   BrainCircuit,
   Calculator,
   Plug,
-  ClipboardList,
   CalendarDays,
   Package,
   AlertTriangle,
@@ -26,6 +25,7 @@ import {
   Coins,
   FolderCog,
   Settings,
+  Calendar,
 } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
 import useCompanyStore from '../../stores/companyStore';
@@ -39,11 +39,10 @@ const sections = [
   {
     key: 'operations',
     label: 'Operacions',
-    icon: ClipboardList,
     items: [
       { to: '/', icon: LayoutDashboard, label: 'Dashboard', section: 'dashboard' },
-      { to: '/operations/daily', icon: CalendarDays, label: 'Pla del Dia' },
-      { to: '/operations/calendar', icon: CalendarDays, label: 'Calendari' },
+      { to: '/operations/daily', icon: CalendarDays, label: 'Pla del dia' },
+      { to: '/operations/calendar', icon: Calendar, label: 'Calendari' },
       { to: '/operations/projects', icon: Package, label: 'Projectes' },
       { to: '/operations/tasks', icon: ListTodo, label: 'Tasques' },
       { to: '/operations/incidents', icon: AlertTriangle, label: 'Incidències' },
@@ -53,7 +52,6 @@ const sections = [
   {
     key: 'accounting',
     label: 'Comptabilitat',
-    icon: Coins,
     items: [
       { to: '/invoices/received', icon: FileInput, label: 'Factures rebudes', section: 'receivedInvoices' },
       { to: '/invoices/issued', icon: FileOutput, label: 'Factures emeses', section: 'issuedInvoices' },
@@ -68,18 +66,16 @@ const sections = [
   {
     key: 'management',
     label: 'Gestió',
-    icon: FolderCog,
     items: [
       { to: '/suppliers', icon: Truck, label: 'Proveïdors', section: 'suppliers' },
       { to: '/clients', icon: Users, label: 'Clients', section: 'clients' },
       { to: '/equipment', icon: Camera, label: 'Inventari equips', section: 'equipment' },
-      { to: '/operations/roles', icon: ShieldCheck, label: 'Rols i Personal' },
+      { to: '/operations/roles', icon: ShieldCheck, label: 'Rols i personal' },
     ],
   },
   {
     key: 'admin',
     label: 'Administració',
-    icon: Settings,
     items: [
       { to: '/users', icon: UserCog, label: 'Usuaris', section: 'users' },
       { to: '/settings/connections', icon: Plug, label: 'Connexions', section: null, adminOnly: true },
@@ -91,13 +87,6 @@ const sections = [
 // ===========================================
 // Component
 // ===========================================
-
-const linkClass = ({ isActive }) =>
-  `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
-    isActive
-      ? 'bg-primary text-primary-foreground'
-      : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-  }`;
 
 export default function Sidebar() {
   const user = useAuthStore((s) => s.user);
@@ -116,32 +105,62 @@ export default function Sidebar() {
     return true;
   };
 
+  const initials = user?.name
+    ? user.name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()
+    : '??';
+
   return (
-    <aside className="w-64 border-r bg-card flex flex-col">
+    <aside
+      className="w-60 flex flex-col flex-shrink-0"
+      style={{ background: 'var(--seito-sidebar)' }}
+    >
       {/* Logo */}
-      <div className="p-6 border-b">
-        <h1 className="text-xl font-bold text-primary">
-          {companyName}
-        </h1>
-        <p className="text-xs text-muted-foreground mt-1">Panel d'administració</p>
+      <div className="px-5 py-5" style={{ borderBottom: '1px solid rgba(255,255,255,0.12)' }}>
+        <div className="flex items-center gap-3">
+          {/* Logo SC simplificat */}
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-white/15 text-white font-semibold text-sm tracking-wider">
+            SC
+          </div>
+          <div>
+            <div className="text-white font-medium text-sm tracking-widest">SEITO</div>
+            <div className="text-[9px] tracking-[3px]" style={{ color: 'rgba(255,255,255,0.5)' }}>CAMERA</div>
+          </div>
+        </div>
       </div>
 
       {/* Navegació */}
-      <nav className="flex-1 p-4 overflow-y-auto">
+      <nav className="flex-1 py-2 px-2 overflow-y-auto">
         {sections.map((section, idx) => {
           const visibleItems = section.items.filter(isVisible);
           if (visibleItems.length === 0) return null;
 
           return (
-            <div key={section.key} className={idx > 0 ? 'pt-4 mt-4 border-t' : ''}>
-              <p className="px-3 py-1 mb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
-                <section.icon size={14} />
+            <div key={section.key} className={idx > 0 ? 'mt-5' : ''}>
+              <p
+                className="px-3 py-1.5 text-[9px] font-medium uppercase tracking-[1.5px]"
+                style={{ color: 'rgba(255,255,255,0.4)' }}
+              >
                 {section.label}
               </p>
               <div className="space-y-0.5">
                 {visibleItems.map(({ to, icon: Icon, label }) => (
-                  <NavLink key={to} to={to} end={to === '/'} className={linkClass}>
-                    <Icon size={18} />
+                  <NavLink
+                    key={to}
+                    to={to}
+                    end={to === '/'}
+                    className={({ isActive }) =>
+                      `flex items-center gap-2.5 px-3 py-[7px] rounded-md text-[12px] transition-all ${
+                        isActive
+                          ? 'font-medium'
+                          : 'hover:bg-white/[0.08]'
+                      }`
+                    }
+                    style={({ isActive }) => ({
+                      color: isActive ? '#fff' : 'rgba(255,255,255,0.65)',
+                      background: isActive ? 'rgba(255,255,255,0.18)' : undefined,
+                    })}
+                  >
+                    <Icon size={15} style={{ opacity: 0.85 }} />
                     {label}
                   </NavLink>
                 ))}
@@ -151,20 +170,27 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* Footer */}
-      <div className="p-4 border-t space-y-1">
-        {user && (
-          <div className="px-3 py-2 text-xs text-muted-foreground">
-            {user.name} ({user.role})
+      {/* Footer usuari */}
+      <div className="px-3 py-3" style={{ borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+        <div className="flex items-center gap-2.5 px-2 py-1.5">
+          <div
+            className="w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-medium text-white"
+            style={{ background: 'rgba(255,255,255,0.2)' }}
+          >
+            {initials}
           </div>
-        )}
-        <button
-          onClick={handleLogout}
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-        >
-          <LogOut size={18} />
-          Tancar sessió
-        </button>
+          <div className="flex-1 min-w-0">
+            <div className="text-[11px] font-medium text-white truncate">{user?.name}</div>
+            <div className="text-[9px]" style={{ color: 'rgba(255,255,255,0.45)' }}>{user?.role}</div>
+          </div>
+          <button
+            onClick={handleLogout}
+            className="p-1.5 rounded-md hover:bg-white/10 transition-colors"
+            title="Tancar sessió"
+          >
+            <LogOut size={14} style={{ color: 'rgba(255,255,255,0.5)' }} />
+          </button>
+        </div>
       </div>
     </aside>
   );

@@ -89,7 +89,7 @@ export default function Clients() {
   };
 
   return (
-    <div>
+    <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold">Clients</h2>
         <button onClick={() => { setEditing(null); setForm({ name: '', nif: '', email: '', phone: '', address: '', city: '', postalCode: '' }); setShowModal(true); }} className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90">

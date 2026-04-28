@@ -246,7 +246,7 @@ export default function AccountingAgent() {
   ];
 
   return (
-    <div className="h-[calc(100vh-4rem)]">
+    <div className="p-6 h-[calc(100vh-4rem)]">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
           <h2 className="text-2xl font-bold">Agent comptable</h2>

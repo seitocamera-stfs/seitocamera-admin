@@ -616,7 +616,7 @@ export default function Conciliation() {
   const pagination = activeQuery.data?.pagination;
 
   return (
-    <div>
+    <div className="p-6">
       {/* Capçalera */}
       <div className="flex items-center justify-between mb-4">
         <div>

@@ -56,7 +56,7 @@ export default function Reminders() {
   const isOverdue = (dueAt) => new Date(dueAt) < new Date();
 
   return (
-    <div>
+    <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <h2 className="text-2xl font-bold">Recordatoris</h2>

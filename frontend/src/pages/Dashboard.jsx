@@ -1,994 +1,293 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
-  FileInput, FileOutput, Landmark, Bell, Calendar,
-  TrendingUp, Users, Building2, PieChart as PieIcon,
-  AlertTriangle, Clock, CreditCard, CheckCircle2, Mail, X,
+  Package, CheckCircle2, ListTodo, AlertTriangle,
+  ArrowRight, Calendar, User, Loader2, RefreshCw,
 } from 'lucide-react';
-import {
-  LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-} from 'recharts';
 import { useApiGet } from '../hooks/useApi';
-import { formatCurrency } from '../lib/utils';
 import api from '../lib/api';
-import useAuthStore from '../stores/authStore';
-import { canSeeDashboardPanel } from '../lib/permissions';
 
 // ===========================================
-// Helpers
+// Constants
 // ===========================================
 
-// Format YYYY-MM → "gen 2026" (català)
-const MONTH_LABELS = ['gen', 'feb', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'oct', 'nov', 'des'];
-function formatMonth(ym) {
-  if (!ym) return '';
-  const [y, m] = ym.split('-');
-  return `${MONTH_LABELS[parseInt(m, 10) - 1] || m} ${y.slice(2)}`;
-}
-
-// Labels per estats de factura
-const STATUS_LABELS = {
-  PENDING: 'Pendent',
-  PDF_PENDING: 'Cal revisar',
-  REVIEWED: 'Revisada',
-  APPROVED: 'Aprovada',
-  REJECTED: 'Rebutjada',
-  PAID: 'Pagada',
-  PARTIALLY_PAID: 'Pagament parcial',
-  NOT_INVOICE: 'No és factura',
-};
-const STATUS_COLORS = {
-  PENDING: '#f59e0b',
-  PDF_PENDING: '#ea580c',
-  REVIEWED: '#3b82f6',
-  APPROVED: '#0d9488',
-  REJECTED: '#dc2626',
-  PAID: '#16a34a',
-  PARTIALLY_PAID: '#84cc16',
-  NOT_INVOICE: '#9ca3af',
+const STATUS_CONFIG = {
+  PENDING_PREP:        { label: 'Pendent preparar',   color: 'bg-gray-100 text-gray-600' },
+  IN_PREPARATION:      { label: 'En preparació',      color: 'bg-blue-50 text-blue-700' },
+  PENDING_TECH_REVIEW: { label: 'Revisió tècnica',    color: 'bg-amber-50 text-amber-700' },
+  PENDING_FINAL_CHECK: { label: 'Validació final',    color: 'bg-orange-50 text-orange-700' },
+  READY:               { label: 'Preparat',           color: 'bg-emerald-50 text-emerald-700' },
+  OUT:                 { label: 'Sortit',             color: 'bg-violet-50 text-violet-700' },
+  RETURNED:            { label: 'Retornat',           color: 'bg-purple-50 text-purple-700' },
 };
 
-// Paleta de colors per línies/barres
-const CHART_COLORS = ['#0d9488', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#10b981'];
+const CATEGORY_LABELS = {
+  WAREHOUSE: 'Magatzem',
+  TECH: 'Tècnica',
+  ADMIN: 'Admin',
+  TRANSPORT: 'Transport',
+  GENERAL: 'General',
+};
 
-// Preset de rang (últims N mesos fins avui)
-function getRangePreset(months) {
-  const now = new Date();
-  const to = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-  const from = new Date(now.getFullYear(), now.getMonth() - (months - 1), 1);
-  return {
-    from: from.toISOString().split('T')[0],
-    to: to.toISOString().split('T')[0],
+const CATEGORY_COLORS = {
+  TECH: 'bg-sky-50 text-[#00617F]',
+  WAREHOUSE: 'bg-amber-50 text-amber-700',
+  ADMIN: 'bg-gray-100 text-gray-600',
+  TRANSPORT: 'bg-violet-50 text-violet-700',
+  GENERAL: 'bg-gray-50 text-gray-500',
+};
+
+// ===========================================
+// Component principal
+// ===========================================
+
+export default function Dashboard() {
+  const navigate = useNavigate();
+  const { data, loading, refetch } = useApiGet('/operations/dashboard');
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      await api.post('/rentman/sync/projects');
+      refetch();
+    } catch (err) {
+      alert('Error sincronitzant');
+    } finally {
+      setSyncing(false);
+    }
   };
-}
 
-// Format intel·ligent per l'eix Y (adapta unitats: €, k€, M€)
-function formatYAxis(value) {
-  if (value === 0) return '0';
-  const abs = Math.abs(value);
-  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (abs >= 1_000) return `${(value / 1_000).toFixed(0)}k`;
-  return value.toFixed(0);
-}
+  const stats = data?.stats || {};
+  const departures = data?.upcomingDepartures || [];
+  const tasks = data?.tasksToday || [];
 
-// Tooltip personalitzat per moneda
-function CurrencyTooltip({ active, payload, label }) {
-  if (!active || !payload || !payload.length) return null;
+  const today = new Date();
+  const dayNames = ['Diumenge', 'Dilluns', 'Dimarts', 'Dimecres', 'Dijous', 'Divendres', 'Dissabte'];
+  const monthNames = ['gener', 'febrer', 'març', 'abril', 'maig', 'juny', 'juliol', 'agost', 'setembre', 'octubre', 'novembre', 'desembre'];
+  const dateStr = `${dayNames[today.getDay()]}, ${today.getDate()} ${monthNames[today.getMonth()]} ${today.getFullYear()}`;
+
+  const handleToggleTask = async (task) => {
+    const newStatus = task.status === 'OP_DONE' ? 'OP_PENDING' : 'OP_DONE';
+    try {
+      await api.put(`/operations/tasks/${task.id}`, { status: newStatus });
+      refetch();
+    } catch {
+      // silently fail
+    }
+  };
+
   return (
-    <div className="bg-card border rounded-md p-2 shadow-lg text-sm">
-      <p className="font-medium mb-1">{label}</p>
-      {payload.map((entry, i) => (
-        <p key={i} style={{ color: entry.color }}>
-          {entry.name}: {formatCurrency(entry.value)}
-        </p>
-      ))}
+    <div className="min-h-screen" style={{ background: '#f8f9fa' }}>
+      {/* Top bar */}
+      <div className="bg-white border-b px-6 py-4 flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-medium text-gray-900">Dashboard</h1>
+          <p className="text-xs text-gray-400 mt-0.5">{dateStr}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleSync}
+            disabled={syncing}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs border rounded-lg text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+          >
+            <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} />
+            Sync Rentman
+          </button>
+          <button
+            onClick={() => navigate('/operations/projects')}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs rounded-lg text-white transition-colors"
+            style={{ background: '#00617F' }}
+          >
+            <Package size={13} />
+            Nou projecte
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-20">
+          <Loader2 className="animate-spin text-gray-300" size={32} />
+        </div>
+      ) : (
+        <div className="px-6 py-5 max-w-7xl mx-auto space-y-5">
+          {/* Mètriques */}
+          <div className="grid grid-cols-4 gap-3">
+            <StatCard
+              label="Projectes actius"
+              value={stats.activeProjects || 0}
+              sub={`${stats.readyProjects || 0} preparats`}
+              color="#00617F"
+              icon={Package}
+            />
+            <StatCard
+              label="Preparats"
+              value={stats.readyProjects || 0}
+              sub="Llestos per sortir"
+              color="#059669"
+              icon={CheckCircle2}
+            />
+            <StatCard
+              label="Tasques pendents"
+              value={stats.pendingTasks || 0}
+              sub={`${stats.todayTasks || 0} per avui`}
+              color="#d97706"
+              icon={ListTodo}
+            />
+            <StatCard
+              label="Incidències"
+              value={stats.openIncidents || 0}
+              sub={stats.criticalIncidents > 0 ? `${stats.criticalIncidents} crítica` : 'Cap crítica'}
+              color={stats.openIncidents > 0 ? '#dc2626' : '#059669'}
+              icon={AlertTriangle}
+            />
+          </div>
+
+          {/* Panells */}
+          <div className="grid grid-cols-2 gap-4">
+            {/* Pròximes sortides */}
+            <div className="bg-white rounded-xl border overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b">
+                <h3 className="text-xs font-medium text-gray-900">Pròximes sortides</h3>
+                <span
+                  className="text-[9px] font-medium px-2 py-0.5 rounded-full"
+                  style={{ background: '#e6f3f7', color: '#00617F' }}
+                >
+                  Aquesta setmana
+                </span>
+              </div>
+              <div>
+                {departures.length === 0 ? (
+                  <p className="text-xs text-gray-400 text-center py-8">Cap sortida programada</p>
+                ) : (
+                  departures.map((p) => (
+                    <div
+                      key={p.id}
+                      className="flex items-center gap-2.5 px-4 py-2.5 border-b last:border-b-0 hover:bg-gray-50/50 cursor-pointer transition-colors"
+                      onClick={() => navigate('/operations/projects')}
+                    >
+                      <span
+                        className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                        style={{
+                          background: p.status === 'READY' ? '#059669'
+                            : p.status === 'OUT' ? '#7c3aed'
+                            : p.status === 'PENDING_PREP' ? '#d97706'
+                            : '#00617F',
+                        }}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[11px] font-medium text-gray-900 truncate">{p.name}</div>
+                        <div className="text-[9px] text-gray-400">{p.clientName || p.client?.name || ''}</div>
+                      </div>
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${STATUS_CONFIG[p.status]?.color || 'bg-gray-100 text-gray-500'}`}>
+                        {STATUS_CONFIG[p.status]?.label || p.status}
+                      </span>
+                      <div className="text-[9px] text-gray-400 w-14 text-right">
+                        {new Date(p.departureDate).toLocaleDateString('ca-ES', { day: 'numeric', month: 'short' })}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+              {departures.length > 0 && (
+                <button
+                  onClick={() => navigate('/operations/projects')}
+                  className="w-full flex items-center justify-center gap-1 py-2.5 text-[10px] font-medium border-t hover:bg-gray-50 transition-colors"
+                  style={{ color: '#00617F' }}
+                >
+                  Veure tots els projectes
+                  <ArrowRight size={11} />
+                </button>
+              )}
+            </div>
+
+            {/* Tasques del dia */}
+            <div className="bg-white rounded-xl border overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b">
+                <h3 className="text-xs font-medium text-gray-900">Tasques del dia</h3>
+                <span
+                  className="text-[9px] font-medium px-2 py-0.5 rounded-full"
+                  style={{ background: '#e6f3f7', color: '#00617F' }}
+                >
+                  {tasks.filter((t) => t.status !== 'OP_DONE').length} pendents
+                </span>
+              </div>
+              <div>
+                {tasks.length === 0 ? (
+                  <p className="text-xs text-gray-400 text-center py-8">Cap tasca per avui</p>
+                ) : (
+                  tasks.map((t) => (
+                    <div
+                      key={t.id}
+                      className="flex items-center gap-2.5 px-4 py-2.5 border-b last:border-b-0"
+                    >
+                      <button
+                        onClick={() => handleToggleTask(t)}
+                        className={`w-4 h-4 rounded flex-shrink-0 border-[1.5px] flex items-center justify-center transition-colors ${
+                          t.status === 'OP_DONE'
+                            ? 'bg-emerald-500 border-emerald-500'
+                            : 'border-gray-300 hover:border-gray-400'
+                        }`}
+                      >
+                        {t.status === 'OP_DONE' && (
+                          <svg width="8" height="8" viewBox="0 0 12 12" fill="none">
+                            <path d="M2 6l3 3 5-5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        )}
+                      </button>
+                      <div className="flex-1 min-w-0">
+                        <span className={`text-[11px] ${t.status === 'OP_DONE' ? 'text-gray-400 line-through' : 'text-gray-700'}`}>
+                          {t.title}
+                          {t.project && (
+                            <span className="text-gray-400 font-normal"> — {t.project.name}</span>
+                          )}
+                        </span>
+                      </div>
+                      {t.category && t.category !== 'GENERAL' && (
+                        <span className={`text-[8px] px-1.5 py-0.5 rounded font-medium ${CATEGORY_COLORS[t.category] || 'bg-gray-50 text-gray-500'}`}>
+                          {CATEGORY_LABELS[t.category] || t.category}
+                        </span>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+              {tasks.length > 0 && (
+                <button
+                  onClick={() => navigate('/operations/tasks')}
+                  className="w-full flex items-center justify-center gap-1 py-2.5 text-[10px] font-medium border-t hover:bg-gray-50 transition-colors"
+                  style={{ color: '#00617F' }}
+                >
+                  Veure totes les tasques
+                  <ArrowRight size={11} />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // ===========================================
-// Component
+// Stat Card
 // ===========================================
 
-export default function Dashboard() {
-  const user = useAuthStore((s) => s.user);
-
-  // Estat: modal recordatori de pagament
-  const [reminderModal, setReminderModal] = useState(null); // { to, subject, body, clientName, invoiceNumber, ... }
-  const [reminderLoading, setReminderLoading] = useState(false);
-
-  // Estat: ordenació taules pendents
-  const [paymentSort, setPaymentSort] = useState({ field: 'dueDate', dir: 'asc' });
-  const [collectionSort, setCollectionSort] = useState({ field: 'daysPending', dir: 'desc' });
-
-  // Estat: rang de dates configurable (per defecte any natural)
-  const currentYear = new Date().getFullYear();
-  const [dateFrom, setDateFrom] = useState(`${currentYear}-01-01`);
-  const [dateTo, setDateTo] = useState(`${currentYear}-12-31`);
-
-  // Stats unificades del backend (quan l'usuari pot veure algun panell de dashboard)
-  const canSeeDashboard = user?.role === 'ADMIN' || user?.role === 'EDITOR'
-    || canSeeDashboardPanel(user, 'receivedPending')
-    || canSeeDashboardPanel(user, 'issuedPending');
-
-  const { data: stats, loading: statsLoading, refetch: refetchStats } = useApiGet(
-    canSeeDashboard ? '/dashboard/stats' : null,
-    { from: dateFrom, to: dateTo }
-  );
-
-  // Estat: rang de dates per Top Clients/Proveïdors (independent)
-  const [topPeriod, setTopPeriod] = useState('year'); // 'year', '3m', '6m', '12m', 'all'
-  const topRange = useMemo(() => {
-    const now = new Date();
-    const to = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    if (topPeriod === 'year') return { from: `${currentYear}-01-01`, to: `${currentYear}-12-31` };
-    if (topPeriod === '3m') { const f = new Date(now.getFullYear(), now.getMonth() - 2, 1); return { from: f.toISOString().split('T')[0], to: to.toISOString().split('T')[0] }; }
-    if (topPeriod === '6m') { const f = new Date(now.getFullYear(), now.getMonth() - 5, 1); return { from: f.toISOString().split('T')[0], to: to.toISOString().split('T')[0] }; }
-    if (topPeriod === '12m') { const f = new Date(now.getFullYear(), now.getMonth() - 11, 1); return { from: f.toISOString().split('T')[0], to: to.toISOString().split('T')[0] }; }
-    if (topPeriod === 'all') return { from: '2020-01-01', to: `${currentYear}-12-31` };
-    return { from: `${currentYear}-01-01`, to: `${currentYear}-12-31` };
-  }, [topPeriod, currentYear]);
-
-  const { data: topData, loading: topLoading } = useApiGet(
-    canSeeDashboard ? '/dashboard/top' : null,
-    topRange
-  );
-
-  // Dades addicionals dels panells existents
-  const { data: receivedData } = useApiGet(
-    canSeeDashboardPanel(user, 'recentReceived')
-      ? '/invoices/received' : null,
-    { status: 'PENDING', limit: 5 }
-  );
-  const { data: bankData } = useApiGet(
-    canSeeDashboardPanel(user, 'unconciliatedList')
-      ? '/bank' : null,
-    { conciliated: 'false', limit: 5 }
-  );
-  const { data: remindersData } = useApiGet(
-    canSeeDashboardPanel(user, 'reminders')
-      ? '/reminders/pending' : null
-  );
-
-  // Dades per gràfics (evitem recalculs)
-  const monthlyChartData = useMemo(() => {
-    if (!stats?.monthlyBilling) return [];
-    return stats.monthlyBilling.map((m) => ({
-      month: formatMonth(m.month),
-      Emeses: m.issued,
-      Rebudes: m.received,
-      'Emeses any ant.': m.prevIssued || 0,
-      'Rebudes any ant.': m.prevReceived || 0,
-    }));
-  }, [stats?.monthlyBilling]);
-
-  const topClientsData = useMemo(() => {
-    if (!topData?.topClients) return [];
-    return topData.topClients.slice(0, 8).map((c) => ({
-      name: c.name.length > 20 ? c.name.slice(0, 18) + '…' : c.name,
-      total: c.total,
-      count: c.count,
-    }));
-  }, [topData?.topClients]);
-
-  const topSuppliersData = useMemo(() => {
-    if (!topData?.topSuppliers) return [];
-    return topData.topSuppliers.slice(0, 8).map((s) => ({
-      name: s.name.length > 20 ? s.name.slice(0, 18) + '…' : s.name,
-      total: s.total,
-      count: s.count,
-    }));
-  }, [topData?.topSuppliers]);
-
-  const bankBalanceData = useMemo(() => {
-    if (!stats?.bankBalance) return [];
-    return stats.bankBalance.map((d) => ({
-      ...d,
-      dateLabel: new Date(d.date).toLocaleDateString('ca-ES', { day: '2-digit', month: 'short' }),
-    }));
-  }, [stats?.bankBalance]);
-
-  const statusDistributionReceived = useMemo(() => {
-    if (!stats?.invoiceStatusDistribution?.received) return [];
-    return stats.invoiceStatusDistribution.received.map((s) => ({
-      name: STATUS_LABELS[s.status] || s.status,
-      value: s.count,
-      total: s.total,
-      status: s.status,
-    }));
-  }, [stats?.invoiceStatusDistribution]);
-
-  const statusDistributionIssued = useMemo(() => {
-    if (!stats?.invoiceStatusDistribution?.issued) return [];
-    return stats.invoiceStatusDistribution.issued.map((s) => ({
-      name: STATUS_LABELS[s.status] || s.status,
-      value: s.count,
-      total: s.total,
-      status: s.status,
-    }));
-  }, [stats?.invoiceStatusDistribution]);
-
-  // Ordenar factures pendents de pagament
-  const sortedPayments = useMemo(() => {
-    if (!stats?.pendingPayments?.invoices) return [];
-    const list = [...stats.pendingPayments.invoices];
-    const { field, dir } = paymentSort;
-    list.sort((a, b) => {
-      let va, vb;
-      if (field === 'dueDate' || field === 'issueDate') {
-        va = a[field] ? new Date(a[field]).getTime() : (dir === 'asc' ? Infinity : -Infinity);
-        vb = b[field] ? new Date(b[field]).getTime() : (dir === 'asc' ? Infinity : -Infinity);
-      } else if (field === 'totalAmount') {
-        va = parseFloat(a.totalAmount) || 0;
-        vb = parseFloat(b.totalAmount) || 0;
-      } else if (field === 'supplierName') {
-        va = (a.supplierName || '').toLowerCase();
-        vb = (b.supplierName || '').toLowerCase();
-        return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
-      } else {
-        va = a[field]; vb = b[field];
-      }
-      return dir === 'asc' ? va - vb : vb - va;
-    });
-    return list;
-  }, [stats?.pendingPayments?.invoices, paymentSort]);
-
-  // Ordenar factures pendents de cobrament
-  const sortedCollections = useMemo(() => {
-    if (!stats?.overdueIssuedInvoices?.invoices) return [];
-    const list = [...stats.overdueIssuedInvoices.invoices];
-    const { field, dir } = collectionSort;
-    list.sort((a, b) => {
-      let va, vb;
-      if (field === 'dueDate' || field === 'issueDate') {
-        va = a[field] ? new Date(a[field]).getTime() : (dir === 'asc' ? Infinity : -Infinity);
-        vb = b[field] ? new Date(b[field]).getTime() : (dir === 'asc' ? Infinity : -Infinity);
-      } else if (field === 'totalAmount') {
-        va = parseFloat(a.totalAmount) || 0;
-        vb = parseFloat(b.totalAmount) || 0;
-      } else if (field === 'daysPending') {
-        va = a.daysPending || 0;
-        vb = b.daysPending || 0;
-      } else if (field === 'clientName') {
-        va = (a.clientName || '').toLowerCase();
-        vb = (b.clientName || '').toLowerCase();
-        return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
-      } else {
-        va = a[field]; vb = b[field];
-      }
-      return dir === 'asc' ? va - vb : vb - va;
-    });
-    return list;
-  }, [stats?.overdueIssuedInvoices?.invoices, collectionSort]);
-
-  // Helper per capçaleres ordenables
-  const SortHeader = ({ label, field, sort, setSort, align = 'left' }) => {
-    const active = sort.field === field;
-    return (
-      <th
-        className={`p-3 font-medium cursor-pointer hover:bg-muted/80 select-none text-${align}`}
-        onClick={() => setSort({ field, dir: active && sort.dir === 'asc' ? 'desc' : 'asc' })}
-      >
-        <span className="inline-flex items-center gap-1">
-          {label}
-          {active ? (sort.dir === 'asc' ? '↑' : '↓') : <span className="text-muted-foreground/40">⇅</span>}
-        </span>
-      </th>
-    );
-  };
-
-  // KPIs (preferim les dades de /dashboard/stats si hi són, per respectar el rang)
-  const allStats = [
-    {
-      key: 'receivedPending',
-      label: 'Factures rebudes',
-      value: stats?.summary?.totalReceivedCount ?? 0,
-      sub: stats?.summary?.totalReceived ? formatCurrency(stats.summary.totalReceived) : '0 €',
-      icon: FileInput,
-      color: 'text-blue-500',
-    },
-    {
-      key: 'issuedPending',
-      label: 'Factures emeses',
-      value: stats?.summary?.totalIssuedCount ?? 0,
-      sub: stats?.summary?.totalIssued ? formatCurrency(stats.summary.totalIssued) : '0 €',
-      icon: FileOutput,
-      color: 'text-green-500',
-    },
-    {
-      key: 'unconciliated',
-      label: 'Sense conciliar',
-      value: stats?.summary?.unconciliatedCount ?? (bankData?.pagination?.total || 0),
-      sub: 'moviments bancaris',
-      icon: Landmark,
-      color: 'text-orange-500',
-    },
-    {
-      key: 'reminders',
-      label: 'Recordatoris',
-      value: remindersData?.count || 0,
-      sub: 'mencions pendents',
-      icon: Bell,
-      color: 'text-red-500',
-    },
-  ];
-
-  const visibleStats = allStats.filter((s) => canSeeDashboardPanel(user, s.key));
-  const gridCols = visibleStats.length >= 4
-    ? 'lg:grid-cols-4'
-    : visibleStats.length === 3
-      ? 'lg:grid-cols-3'
-      : visibleStats.length === 2
-        ? 'lg:grid-cols-2'
-        : 'lg:grid-cols-1';
-
-  // Carregar recordatori de pagament
-  const handlePaymentReminder = async (invoiceId) => {
-    setReminderLoading(true);
-    try {
-      const res = await api.get(`/invoices/issued/${invoiceId}/payment-reminder`);
-      setReminderModal({ ...res.data, invoiceId });
-    } catch (err) {
-      alert('Error generant el recordatori: ' + (err.response?.data?.error || err.message));
-    } finally {
-      setReminderLoading(false);
-    }
-  };
-
-  // Enviar recordatori directament via Zoho Mail
-  const [reminderSending, setReminderSending] = useState(false);
-  const handleSendReminder = async () => {
-    if (!reminderModal) return;
-    setReminderSending(true);
-    try {
-      const { data: result } = await api.post(`/invoices/issued/${reminderModal.invoiceId}/send-reminder`, {
-        to: reminderModal.to,
-        subject: reminderModal.subject,
-        body: reminderModal.body,
-      });
-      if (result.fallback === 'mailto' && result.mailtoUrl) {
-        window.open(result.mailtoUrl, '_blank');
-        alert(`S'ha obert el client de correu per enviar a ${reminderModal.to}.\n(Zoho Mail API no disponible, s'ha registrat igualment)`);
-      } else {
-        alert(`Recordatori enviat correctament a ${reminderModal.to}`);
-      }
-      setReminderModal(null);
-      refetchStats();
-    } catch (err) {
-      alert('Error enviant el recordatori: ' + (err.response?.data?.error || err.message));
-    } finally {
-      setReminderSending(false);
-    }
-  };
-
-  // Aplicar preset de rang
-  const applyPreset = (months) => {
-    const r = getRangePreset(months);
-    setDateFrom(r.from);
-    setDateTo(r.to);
-  };
-
+function StatCard({ label, value, sub, color, icon: Icon }) {
   return (
-    <div>
-      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between mb-6 gap-4">
-        <div>
-          <h2 className="text-2xl font-bold mb-1">Hola, {user?.name?.split(' ')[0] || 'Sergi'}!</h2>
-          <p className="text-muted-foreground">Resum del teu panell d'administració</p>
+    <div className="bg-white rounded-xl border p-4">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-[10px] text-gray-400 uppercase tracking-wide">{label}</span>
+        <div
+          className="w-8 h-8 rounded-lg flex items-center justify-center"
+          style={{ background: `${color}10` }}
+        >
+          <Icon size={15} style={{ color }} />
         </div>
-
-        {/* Selector de rang de dates */}
-        {canSeeDashboard && (
-          <div className="bg-card border rounded-lg p-3 flex flex-col sm:flex-row gap-2 items-start sm:items-center">
-            <Calendar size={16} className="text-muted-foreground shrink-0" />
-            <div className="flex flex-wrap gap-2 items-center">
-              <input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
-                className="px-2 py-1 border rounded text-sm bg-background"
-                aria-label="Data inici"
-              />
-              <span className="text-sm text-muted-foreground">→</span>
-              <input
-                type="date"
-                value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
-                className="px-2 py-1 border rounded text-sm bg-background"
-                aria-label="Data fi"
-              />
-            </div>
-            <div className="flex flex-wrap gap-1 ml-0 sm:ml-2">
-              <button onClick={() => { setDateFrom(`${currentYear}-01-01`); setDateTo(`${currentYear}-12-31`); }}
-                className="text-xs px-2 py-1 rounded border hover:bg-accent transition-colors font-medium">
-                Any
-              </button>
-              <button onClick={() => applyPreset(3)}
-                className="text-xs px-2 py-1 rounded border hover:bg-accent transition-colors">
-                3M
-              </button>
-              <button onClick={() => applyPreset(6)}
-                className="text-xs px-2 py-1 rounded border hover:bg-accent transition-colors">
-                6M
-              </button>
-              <button onClick={() => applyPreset(12)}
-                className="text-xs px-2 py-1 rounded border hover:bg-accent transition-colors">
-                12M
-              </button>
-              <button onClick={() => applyPreset(24)}
-                className="text-xs px-2 py-1 rounded border hover:bg-accent transition-colors">
-                24M
-              </button>
-            </div>
-          </div>
-        )}
       </div>
-
-      {/* KPIs */}
-      {visibleStats.length > 0 && (
-        <div className={`grid grid-cols-1 md:grid-cols-2 ${gridCols} gap-4 mb-8`}>
-          {visibleStats.map(({ label, value, sub, icon: Icon, color }) => (
-            <div key={label} className="bg-card border rounded-lg p-5">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-muted-foreground">{label}</span>
-                <Icon size={20} className={color} />
-              </div>
-              <p className="text-3xl font-bold">{value}</p>
-              <p className="text-xs text-muted-foreground mt-1">{sub}</p>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* ===========================================
-          GRÀFICS
-      =========================================== */}
-      {canSeeDashboard && (
-        <div className="space-y-6 mb-8">
-          {/* Evolució mensual */}
-          {(canSeeDashboardPanel(user, 'receivedPending') || canSeeDashboardPanel(user, 'issuedPending')) && (
-            <div className="bg-card border rounded-lg p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <TrendingUp size={18} className="text-teal-600" />
-                <h3 className="font-semibold">Evolució de facturació mensual</h3>
-              </div>
-              {statsLoading ? (
-                <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">Carregant…</div>
-              ) : monthlyChartData.length === 0 ? (
-                <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">
-                  No hi ha dades pel rang seleccionat
-                </div>
-              ) : (
-                <ResponsiveContainer width="100%" height={320}>
-                  <BarChart data={monthlyChartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                    <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                    <YAxis tick={{ fontSize: 12 }} tickFormatter={formatYAxis} />
-                    <Tooltip content={<CurrencyTooltip />} />
-                    <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Bar dataKey="Emeses" fill="#0d9488" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="Rebudes" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="Emeses any ant." fill="#d1d5db" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="Rebudes any ant." fill="#e5e7eb" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          )}
-
-          {/* Saldo bancari històric */}
-          {canSeeDashboardPanel(user, 'unconciliated') && stats?.bankAccountNames?.length > 0 && (
-            <div className="bg-card border rounded-lg p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <Landmark size={18} className="text-orange-500" />
-                <h3 className="font-semibold">Saldo bancari històric</h3>
-              </div>
-              {statsLoading ? (
-                <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">Carregant…</div>
-              ) : bankBalanceData.length === 0 ? (
-                <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">
-                  No hi ha saldos registrats en aquest rang
-                </div>
-              ) : (
-                <ResponsiveContainer width="100%" height={280}>
-                  <LineChart data={bankBalanceData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                    <XAxis dataKey="dateLabel" tick={{ fontSize: 11 }} />
-                    <YAxis tick={{ fontSize: 12 }} tickFormatter={formatYAxis} />
-                    <Tooltip content={<CurrencyTooltip />} />
-                    <Legend wrapperStyle={{ fontSize: 13 }} />
-                    {stats.bankAccountNames.map((acc, idx) => (
-                      <Line
-                        key={acc}
-                        type="monotone"
-                        dataKey={acc}
-                        stroke={CHART_COLORS[idx % CHART_COLORS.length]}
-                        strokeWidth={2}
-                        dot={false}
-                        connectNulls
-                      />
-                    ))}
-                  </LineChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          )}
-
-          {/* Top clients + Top proveïdors */}
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm text-muted-foreground">Període de rànquings:</span>
-            <div className="flex gap-1">
-              {[
-                { key: 'year', label: `${currentYear}` },
-                { key: '3m', label: '3M' },
-                { key: '6m', label: '6M' },
-                { key: '12m', label: '12M' },
-                { key: 'all', label: 'Tot' },
-              ].map((p) => (
-                <button
-                  key={p.key}
-                  onClick={() => setTopPeriod(p.key)}
-                  className={`text-xs px-2 py-1 rounded border transition-colors font-medium ${
-                    topPeriod === p.key ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'
-                  }`}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {canSeeDashboardPanel(user, 'issuedPending') && (
-              <div className="bg-card border rounded-lg p-5">
-                <div className="flex items-center gap-2 mb-4">
-                  <Users size={18} className="text-teal-600" />
-                  <h3 className="font-semibold">Top clients per facturació</h3>
-                </div>
-                {topLoading ? (
-                  <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">Carregant…</div>
-                ) : topClientsData.length === 0 ? (
-                  <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">
-                    No hi ha dades
-                  </div>
-                ) : (
-                  <ResponsiveContainer width="100%" height={Math.max(240, topClientsData.length * 32)}>
-                    <BarChart data={topClientsData} layout="vertical" margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                      <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={formatYAxis} />
-                      <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={110} />
-                      <Tooltip content={<CurrencyTooltip />} />
-                      <Bar dataKey="total" fill="#0d9488" name="Total" radius={[0, 4, 4, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                )}
-              </div>
-            )}
-
-            {canSeeDashboardPanel(user, 'receivedPending') && (
-              <div className="bg-card border rounded-lg p-5">
-                <div className="flex items-center gap-2 mb-4">
-                  <Building2 size={18} className="text-blue-600" />
-                  <h3 className="font-semibold">Top proveïdors per despesa</h3>
-                </div>
-                {topLoading ? (
-                  <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">Carregant…</div>
-                ) : topSuppliersData.length === 0 ? (
-                  <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">
-                    No hi ha dades
-                  </div>
-                ) : (
-                  <ResponsiveContainer width="100%" height={Math.max(240, topSuppliersData.length * 32)}>
-                    <BarChart data={topSuppliersData} layout="vertical" margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                      <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={formatYAxis} />
-                      <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={110} />
-                      <Tooltip content={<CurrencyTooltip />} />
-                      <Bar dataKey="total" fill="#3b82f6" name="Total" radius={[0, 4, 4, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Distribució per estat — 2 pies (rebudes + emeses) */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {canSeeDashboardPanel(user, 'receivedPending') && (
-              <div className="bg-card border rounded-lg p-5">
-                <div className="flex items-center gap-2 mb-4">
-                  <PieIcon size={18} className="text-blue-600" />
-                  <h3 className="font-semibold">Estats factures rebudes</h3>
-                </div>
-                {statsLoading ? (
-                  <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">Carregant…</div>
-                ) : statusDistributionReceived.length === 0 ? (
-                  <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">
-                    No hi ha dades
-                  </div>
-                ) : (
-                  <ResponsiveContainer width="100%" height={280}>
-                    <PieChart>
-                      <Pie
-                        data={statusDistributionReceived}
-                        dataKey="value"
-                        nameKey="name"
-                        cx="50%"
-                        cy="50%"
-                        outerRadius={90}
-                        label={({ name, value }) => `${name}: ${value}`}
-                        labelLine={false}
-                      >
-                        {statusDistributionReceived.map((entry) => (
-                          <Cell key={entry.status} fill={STATUS_COLORS[entry.status] || '#64748b'} />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(value, name, props) => [
-                        `${value} factures (${formatCurrency(props.payload.total)})`,
-                        name,
-                      ]} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                )}
-              </div>
-            )}
-
-            {canSeeDashboardPanel(user, 'issuedPending') && (
-              <div className="bg-card border rounded-lg p-5">
-                <div className="flex items-center gap-2 mb-4">
-                  <PieIcon size={18} className="text-teal-600" />
-                  <h3 className="font-semibold">Estats factures emeses</h3>
-                </div>
-                {statsLoading ? (
-                  <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">Carregant…</div>
-                ) : statusDistributionIssued.length === 0 ? (
-                  <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">
-                    No hi ha dades
-                  </div>
-                ) : (
-                  <ResponsiveContainer width="100%" height={280}>
-                    <PieChart>
-                      <Pie
-                        data={statusDistributionIssued}
-                        dataKey="value"
-                        nameKey="name"
-                        cx="50%"
-                        cy="50%"
-                        outerRadius={90}
-                        label={({ name, value }) => `${name}: ${value}`}
-                        labelLine={false}
-                      >
-                        {statusDistributionIssued.map((entry) => (
-                          <Cell key={entry.status} fill={STATUS_COLORS[entry.status] || '#64748b'} />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(value, name, props) => [
-                        `${value} factures (${formatCurrency(props.payload.total)})`,
-                        name,
-                      ]} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Factures pendents de pagament */}
-      {canSeeDashboardPanel(user, 'receivedPending') && stats?.pendingPayments?.count > 0 && (
-        <div className="bg-card border rounded-lg mb-6">
-          <div className="p-4 border-b flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <CreditCard size={18} className="text-amber-500" />
-              <h3 className="font-semibold">Factures pendents de pagament</h3>
-              <span className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">
-                {stats.pendingPayments.count}
-              </span>
-            </div>
-            <div className="flex items-center gap-4 text-sm">
-              <span className="text-muted-foreground">
-                Total: <span className="font-semibold text-foreground">{formatCurrency(stats.pendingPayments.total)}</span>
-              </span>
-              {stats.pendingPayments.overdueCount > 0 && (
-                <span className="flex items-center gap-1 text-red-600">
-                  <AlertTriangle size={14} />
-                  {stats.pendingPayments.overdueCount} vençudes ({formatCurrency(stats.pendingPayments.overdueTotal)})
-                </span>
-              )}
-            </div>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b bg-muted/50">
-                  <SortHeader label="Proveïdor" field="supplierName" sort={paymentSort} setSort={setPaymentSort} />
-                  <th className="text-left p-3 font-medium">Nº Factura</th>
-                  <SortHeader label="Data emissió" field="issueDate" sort={paymentSort} setSort={setPaymentSort} />
-                  <SortHeader label="Venciment" field="dueDate" sort={paymentSort} setSort={setPaymentSort} />
-                  <SortHeader label="Import" field="totalAmount" sort={paymentSort} setSort={setPaymentSort} align="right" />
-                  <th className="text-center p-3 font-medium">Estat</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {sortedPayments.map((inv) => {
-                  const isOverdue = inv.isOverdue;
-                  const daysUntilDue = inv.dueDate
-                    ? Math.ceil((new Date(inv.dueDate) - new Date()) / (1000 * 60 * 60 * 24))
-                    : null;
-                  return (
-                    <tr key={inv.id} className={`hover:bg-muted/30 ${isOverdue ? 'bg-red-50/50' : ''}`}>
-                      <td className="p-3 font-medium">{inv.supplierName}</td>
-                      <td className="p-3 text-muted-foreground">{inv.invoiceNumber || '—'}</td>
-                      <td className="p-3 text-muted-foreground">
-                        {inv.issueDate ? new Date(inv.issueDate).toLocaleDateString('ca-ES') : '—'}
-                      </td>
-                      <td className="p-3">
-                        {inv.dueDate ? (
-                          <span className={`flex items-center gap-1 ${isOverdue ? 'text-red-600 font-medium' : daysUntilDue <= 7 ? 'text-amber-600' : 'text-muted-foreground'}`}>
-                            {isOverdue && <AlertTriangle size={13} />}
-                            {!isOverdue && daysUntilDue <= 7 && <Clock size={13} />}
-                            {new Date(inv.dueDate).toLocaleDateString('ca-ES')}
-                            {isOverdue && <span className="text-xs ml-1">({Math.abs(daysUntilDue)}d)</span>}
-                            {!isOverdue && daysUntilDue <= 7 && <span className="text-xs ml-1">({daysUntilDue}d)</span>}
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </td>
-                      <td className="p-3 text-right font-medium">{formatCurrency(inv.totalAmount)}</td>
-                      <td className="p-3 text-center">
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${
-                          inv.status === 'PENDING' ? 'bg-amber-100 text-amber-800' :
-                          inv.status === 'REVIEWED' ? 'bg-blue-100 text-blue-800' :
-                          inv.status === 'APPROVED' ? 'bg-teal-100 text-teal-800' :
-                          inv.status === 'PARTIALLY_PAID' ? 'bg-lime-100 text-lime-800' :
-                          'bg-gray-100 text-gray-800'
-                        }`}>
-                          {STATUS_LABELS[inv.status] || inv.status}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="border-t-2 bg-muted/30 font-semibold">
-                  <td className="p-3" colSpan={4}>Total pendent de pagament</td>
-                  <td className="p-3 text-right">{formatCurrency(stats.pendingPayments.total)}</td>
-                  <td className="p-3"></td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Factures emeses pendents de cobrament (des de 2025) */}
-      {canSeeDashboardPanel(user, 'issuedPending') && stats?.overdueIssuedInvoices?.count > 0 && (
-        <div className="bg-card border rounded-lg mb-6">
-          <div className="p-4 border-b flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <AlertTriangle size={18} className="text-red-500" />
-              <h3 className="font-semibold">Factures emeses pendents de cobrament</h3>
-              <span className="text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded-full">
-                {stats.overdueIssuedInvoices.count}
-              </span>
-            </div>
-            <span className="text-sm text-muted-foreground">
-              Total: <span className="font-semibold text-foreground">{formatCurrency(stats.overdueIssuedInvoices.total)}</span>
-            </span>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b bg-muted/50">
-                  <SortHeader label="Client" field="clientName" sort={collectionSort} setSort={setCollectionSort} />
-                  <th className="text-left p-3 font-medium">Nº Factura</th>
-                  <SortHeader label="Data emissió" field="issueDate" sort={collectionSort} setSort={setCollectionSort} />
-                  <SortHeader label="Venciment" field="dueDate" sort={collectionSort} setSort={setCollectionSort} />
-                  <SortHeader label="Import" field="totalAmount" sort={collectionSort} setSort={setCollectionSort} align="right" />
-                  <SortHeader label="Dies" field="daysPending" sort={collectionSort} setSort={setCollectionSort} align="center" />
-                  <th className="text-center p-3 font-medium">Últim recordatori</th>
-                  <th className="text-center p-3 font-medium">Acció</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {sortedCollections.map((inv) => (
-                  <tr key={inv.id} className="hover:bg-muted/30 bg-red-50/30">
-                    <td className="p-3 font-medium">{inv.clientName}</td>
-                    <td className="p-3 text-muted-foreground">{inv.invoiceNumber || '—'}</td>
-                    <td className="p-3 text-muted-foreground">
-                      {inv.issueDate ? new Date(inv.issueDate).toLocaleDateString('ca-ES') : '—'}
-                    </td>
-                    <td className="p-3 text-muted-foreground">
-                      {inv.dueDate ? new Date(inv.dueDate).toLocaleDateString('ca-ES') : '—'}
-                    </td>
-                    <td className="p-3 text-right font-medium">{formatCurrency(inv.totalAmount)}</td>
-                    <td className="p-3 text-center">
-                      <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">
-                        {inv.daysPending}d
-                      </span>
-                    </td>
-                    <td className="p-3 text-center">
-                      {inv.lastReminder ? (
-                        <div className="text-xs" title={`Enviat a ${inv.lastReminder.sentTo} per ${inv.lastReminder.user?.name || '?'}`}>
-                          <span className="text-muted-foreground">
-                            {new Date(inv.lastReminder.createdAt).toLocaleDateString('ca-ES')}
-                          </span>
-                          {inv.reminderCount > 1 && (
-                            <span className="ml-1 text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">
-                              ×{inv.reminderCount}
-                            </span>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </td>
-                    <td className="p-3 text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        {inv.daysPending >= 90 && (
-                          <button
-                            onClick={() => handlePaymentReminder(inv.id)}
-                            disabled={reminderLoading}
-                            className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors"
-                            title="Enviar recordatori de pagament"
-                          >
-                            <Mail size={13} />
-                            Recordar
-                          </button>
-                        )}
-                        <button
-                          onClick={async () => {
-                            if (!confirm(`Marcar la factura ${inv.invoiceNumber} com a cobrada?`)) return;
-                            try {
-                              await api.patch(`/invoices/issued/${inv.id}/status`, { status: 'PAID' });
-                              refetchStats();
-                            } catch { alert('Error actualitzant l\'estat'); }
-                          }}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-green-50 text-green-700 hover:bg-green-100 transition-colors"
-                          title="Marcar com a cobrada"
-                        >
-                          <CheckCircle2 size={13} />
-                          Cobrada
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr className="border-t-2 bg-muted/30 font-semibold">
-                  <td className="p-3" colSpan={4}>Total pendent de cobrament</td>
-                  <td className="p-3 text-right">{formatCurrency(stats.overdueIssuedInvoices.total)}</td>
-                  <td className="p-3" colSpan={3}></td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Panells existents */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {canSeeDashboardPanel(user, 'recentReceived') && (
-          <div className="bg-card border rounded-lg">
-            <div className="p-4 border-b">
-              <h3 className="font-semibold">Últimes factures rebudes pendents</h3>
-            </div>
-            <div className="divide-y">
-              {receivedData?.data?.length === 0 ? (
-                <p className="p-4 text-sm text-muted-foreground">Cap factura pendent</p>
-              ) : (
-                receivedData?.data?.map((inv) => (
-                  <div key={inv.id} className="p-3 flex items-center justify-between">
-                    <div>
-                      <span className="font-medium text-sm">{inv.invoiceNumber}</span>
-                      <span className="text-muted-foreground text-sm ml-2">{inv.supplier?.name}</span>
-                    </div>
-                    <span className="font-medium text-sm">{formatCurrency(inv.totalAmount)}</span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        )}
-
-        {canSeeDashboardPanel(user, 'unconciliatedList') && (
-          <div className="bg-card border rounded-lg">
-            <div className="p-4 border-b">
-              <h3 className="font-semibold">Moviments sense conciliar</h3>
-            </div>
-            <div className="divide-y">
-              {bankData?.data?.length === 0 ? (
-                <p className="p-4 text-sm text-muted-foreground">Tots els moviments conciliats!</p>
-              ) : (
-                bankData?.data?.map((m) => (
-                  <div key={m.id} className="p-3 flex items-center justify-between">
-                    <span className="text-sm">{m.description}</span>
-                    <span className={`font-medium text-sm ${parseFloat(m.amount) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {formatCurrency(Math.abs(parseFloat(m.amount)))}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {visibleStats.length === 0 && !canSeeDashboard && (
-        <div className="bg-card border rounded-lg p-8 text-center text-muted-foreground">
-          <p>No tens panells assignats al teu rol.</p>
-          <p className="text-sm mt-1">Contacta amb l'administrador si necessites accés a més seccions.</p>
-        </div>
-      )}
-
-      {/* Modal: Recordatori de pagament */}
-      {reminderModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-card rounded-lg border shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between p-4 border-b">
-              <div className="flex items-center gap-2">
-                <Mail size={18} className="text-amber-500" />
-                <h3 className="font-semibold">Recordatori de pagament</h3>
-              </div>
-              <button onClick={() => setReminderModal(null)} className="p-1 rounded hover:bg-muted">
-                <X size={18} />
-              </button>
-            </div>
-            <div className="p-4 space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1">Destinatari</label>
-                <input
-                  type="email"
-                  value={reminderModal.to}
-                  onChange={(e) => setReminderModal({ ...reminderModal, to: e.target.value })}
-                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1">Assumpte</label>
-                <input
-                  type="text"
-                  value={reminderModal.subject}
-                  onChange={(e) => setReminderModal({ ...reminderModal, subject: e.target.value })}
-                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1">Cos del missatge</label>
-                <textarea
-                  value={reminderModal.body}
-                  onChange={(e) => setReminderModal({ ...reminderModal, body: e.target.value })}
-                  className="w-full rounded-md border bg-background px-3 py-2 text-sm font-mono"
-                  rows={12}
-                />
-              </div>
-              <div className="bg-muted/50 rounded-md p-3 text-xs text-muted-foreground space-y-1">
-                <p><strong>Client:</strong> {reminderModal.clientName}</p>
-                <p><strong>Factura:</strong> {reminderModal.invoiceNumber} — {formatCurrency(reminderModal.totalAmount)}</p>
-                <p><strong>Dies pendents:</strong> {reminderModal.daysPending}</p>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 p-4 border-t">
-              <button
-                onClick={() => setReminderModal(null)}
-                className="px-4 py-2 rounded-md border text-sm"
-              >
-                Cancel·lar
-              </button>
-              <button
-                onClick={handleSendReminder}
-                disabled={reminderSending}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-amber-500 text-white text-sm font-medium hover:bg-amber-600 transition-colors disabled:opacity-50"
-              >
-                <Mail size={14} />
-                {reminderSending ? 'Enviant…' : 'Enviar des de rental@seitocamera.com'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <div className="text-2xl font-medium" style={{ color }}>{value}</div>
+      <div className="text-[10px] text-gray-400 mt-1">{sub}</div>
     </div>
   );
 }

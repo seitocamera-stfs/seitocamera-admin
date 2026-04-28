@@ -376,7 +376,7 @@ export default function Equipment() {
   };
 
   return (
-    <div>
+    <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-2xl font-bold">Inventari d'equips</h2>

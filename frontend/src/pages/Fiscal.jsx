@@ -62,7 +62,7 @@ export default function Fiscal() {
   for (let y = currentYear; y >= currentYear - 3; y--) years.push(y);
 
   return (
-    <div>
+    <div className="p-6">
       {/* Capçalera */}
       <div className="flex items-center justify-between mb-6">
         <div>
