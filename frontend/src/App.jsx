@@ -16,6 +16,7 @@ import Reminders from './pages/Reminders';
 import Users from './pages/Users';
 import AccountingAgent from './pages/AccountingAgent';
 import AgentRules from './pages/AgentRules';
+import AgentSupervisor from './pages/AgentSupervisor';
 import Equipment from './pages/Equipment';
 import AiCosts from './pages/AiCosts';
 import SharedInvoices from './pages/SharedInvoices';
@@ -62,6 +63,7 @@ function App() {
         <Route path="fiscal" element={<RoleGuard section="fiscal"><Fiscal /></RoleGuard>} />
         <Route path="agent" element={<AccountingAgent />} />
         <Route path="agent/rules" element={<AgentRules />} />
+        <Route path="agent/supervisor" element={<AgentSupervisor />} />
         <Route path="equipment" element={<Equipment />} />
         <Route path="ai-costs" element={<AiCosts />} />
         <Route path="settings/connections" element={<RoleGuard section="users"><Connections /></RoleGuard>} />

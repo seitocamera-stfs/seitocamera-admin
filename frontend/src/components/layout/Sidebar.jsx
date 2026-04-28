@@ -27,6 +27,7 @@ import {
   FolderCog,
   Settings,
   Calendar,
+  Activity,
 } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
 import useCompanyStore from '../../stores/companyStore';
@@ -64,6 +65,7 @@ const sections = [
       { to: '/reminders', icon: Bell, label: 'Recordatoris', section: 'reminders' },
       { to: '/agent', icon: Bot, label: 'Agent comptable', section: 'agent' },
       { to: '/agent/rules', icon: Brain, label: 'Regles agent', section: 'agent' },
+      { to: '/agent/supervisor', icon: Activity, label: 'Supervisor agent', section: 'agent' },
     ],
   },
   {
