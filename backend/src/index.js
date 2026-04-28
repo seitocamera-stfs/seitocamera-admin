@@ -141,6 +141,7 @@ app.use('/api/fiscal', require('./routes/fiscal'));
 app.use('/api/shared-invoices', require('./routes/sharedInvoices'));
 app.use('/api/ai-costs', require('./routes/aiCosts'));
 app.use('/api/connections', require('./routes/connections'));
+app.use('/api/operations', require('./routes/operations'));
 
 // ===========================================
 // Gestió d'errors

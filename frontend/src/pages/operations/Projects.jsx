@@ -1,0 +1,855 @@
+import { useState, useCallback } from 'react';
+import {
+  Package, Plus, Search, Filter, Clock, User, Users, AlertTriangle,
+  CheckCircle2, XCircle, ChevronDown, X, Loader2, ArrowRight,
+  CalendarDays, Truck, Wrench, Eye, Edit2, MessageSquare,
+} from 'lucide-react';
+import { useApiGet } from '../../hooks/useApi';
+import api from '../../lib/api';
+import Modal from '../../components/shared/Modal';
+
+// ===========================================
+// Constants
+// ===========================================
+
+const STATUS_CONFIG = {
+  PENDING_PREP:        { label: 'Pendent preparar',    color: 'bg-gray-100 text-gray-700',    kanban: true },
+  IN_PREPARATION:      { label: 'En preparació',       color: 'bg-blue-100 text-blue-700',    kanban: true },
+  PENDING_TECH_REVIEW: { label: 'Revisió tècnica',     color: 'bg-amber-100 text-amber-700',  kanban: true },
+  PENDING_FINAL_CHECK: { label: 'Validació final',     color: 'bg-orange-100 text-orange-700', kanban: true },
+  READY:               { label: 'Preparat',            color: 'bg-green-100 text-green-700',  kanban: true },
+  PENDING_LOAD:        { label: 'Pendent càrrega',     color: 'bg-teal-100 text-teal-700',    kanban: false },
+  OUT:                 { label: 'Sortit',              color: 'bg-indigo-100 text-indigo-700', kanban: true },
+  RETURNED:            { label: 'Retornat',            color: 'bg-purple-100 text-purple-700', kanban: false },
+  RETURN_REVIEW:       { label: 'Revisió devolució',   color: 'bg-yellow-100 text-yellow-700', kanban: true },
+  WITH_INCIDENT:       { label: 'Amb incidència',      color: 'bg-red-100 text-red-700',      kanban: false },
+  EQUIPMENT_BLOCKED:   { label: 'Material bloquejat',  color: 'bg-red-200 text-red-800',      kanban: false },
+  CLOSED:              { label: 'Tancat',              color: 'bg-gray-200 text-gray-600',    kanban: false },
+};
+
+const ALL_STATUSES = Object.keys(STATUS_CONFIG);
+const KANBAN_STATUSES = ALL_STATUSES.filter(s => STATUS_CONFIG[s].kanban);
+
+const PRIORITY_LABELS = { 0: 'Normal', 1: 'Alta', 2: 'Urgent' };
+
+// ===========================================
+// Component principal
+// ===========================================
+
+export default function Projects() {
+  const [viewMode, setViewMode] = useState('list'); // 'list' | 'kanban'
+  const [statusFilter, setStatusFilter] = useState('');
+  const [search, setSearch] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
+  const [selectedProject, setSelectedProject] = useState(null);
+
+  const activeStatuses = statusFilter || ALL_STATUSES.filter(s => s !== 'CLOSED').join(',');
+
+  const { data, loading, error, refetch } = useApiGet('/operations/projects', {
+    status: activeStatuses,
+    search: search || undefined,
+    limit: 200,
+  });
+
+  const projects = data?.projects || [];
+
+  return (
+    <div className="p-6 space-y-4 max-w-7xl mx-auto">
+      {/* Capçalera */}
+      <div className="flex items-center justify-between flex-wrap gap-4">
+        <div className="flex items-center gap-3">
+          <Package size={28} className="text-primary" />
+          <h1 className="text-2xl font-bold">Projectes</h1>
+          {data?.total > 0 && (
+            <span className="text-sm text-muted-foreground">({data.total})</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex border rounded-md">
+            <button
+              onClick={() => setViewMode('list')}
+              className={`px-3 py-1.5 text-sm ${viewMode === 'list' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}`}
+            >
+              Llista
+            </button>
+            <button
+              onClick={() => setViewMode('kanban')}
+              className={`px-3 py-1.5 text-sm ${viewMode === 'kanban' ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}`}
+            >
+              Kanban
+            </button>
+          </div>
+          <button
+            onClick={() => setShowCreate(true)}
+            className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm hover:bg-primary/90"
+          >
+            <Plus size={16} /> Nou projecte
+          </button>
+        </div>
+      </div>
+
+      {/* Filtres */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative flex-1 min-w-[200px] max-w-md">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <input
+            type="text"
+            placeholder="Cercar projectes..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full pl-9 pr-3 py-2 border rounded-md text-sm bg-background"
+          />
+        </div>
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="border rounded-md px-3 py-2 text-sm bg-background"
+        >
+          <option value="">Tots els estats (actius)</option>
+          {ALL_STATUSES.map(s => (
+            <option key={s} value={s}>{STATUS_CONFIG[s].label}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Loading */}
+      {loading && (
+        <div className="flex justify-center py-12">
+          <Loader2 className="animate-spin text-primary" size={32} />
+        </div>
+      )}
+
+      {error && <div className="bg-red-50 text-red-600 p-4 rounded-lg">{error}</div>}
+
+      {/* Vista Llista */}
+      {!loading && viewMode === 'list' && (
+        <div className="bg-card border rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/50 border-b">
+              <tr>
+                <th className="text-left p-3 font-medium">Projecte</th>
+                <th className="text-left p-3 font-medium">Sortida</th>
+                <th className="text-left p-3 font-medium">Devolució</th>
+                <th className="text-left p-3 font-medium">Responsable</th>
+                <th className="text-left p-3 font-medium">Estat</th>
+                <th className="text-center p-3 font-medium">Info</th>
+                <th className="text-center p-3 font-medium"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {projects.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                    Cap projecte trobat
+                  </td>
+                </tr>
+              ) : (
+                projects.map(p => (
+                  <tr key={p.id} className="hover:bg-accent/50 cursor-pointer" onClick={() => setSelectedProject(p.id)}>
+                    <td className="p-3">
+                      <div className="font-medium">{p.name}</div>
+                      {p.clientName && <div className="text-xs text-muted-foreground">{p.clientName}</div>}
+                      {p.client && <div className="text-xs text-muted-foreground">{p.client.name}</div>}
+                    </td>
+                    <td className="p-3 whitespace-nowrap">
+                      <div>{new Date(p.departureDate).toLocaleDateString('ca-ES')}</div>
+                      {p.departureTime && <div className="text-xs text-muted-foreground">{p.departureTime}</div>}
+                    </td>
+                    <td className="p-3 whitespace-nowrap">
+                      <div>{new Date(p.returnDate).toLocaleDateString('ca-ES')}</div>
+                    </td>
+                    <td className="p-3">
+                      {p.leadUser ? (
+                        <span className="flex items-center gap-1 text-sm">
+                          <User size={14} /> {p.leadUser.name}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground italic">Sense assignar</span>
+                      )}
+                    </td>
+                    <td className="p-3">
+                      <span className={`text-xs px-2 py-1 rounded-full whitespace-nowrap ${STATUS_CONFIG[p.status]?.color}`}>
+                        {STATUS_CONFIG[p.status]?.label}
+                      </span>
+                    </td>
+                    <td className="p-3 text-center">
+                      <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                        {p._count?.incidents > 0 && (
+                          <span className="flex items-center gap-0.5 text-amber-600" title="Incidències">
+                            <AlertTriangle size={12} /> {p._count.incidents}
+                          </span>
+                        )}
+                        {p._count?.tasks > 0 && (
+                          <span className="flex items-center gap-0.5" title="Tasques">
+                            <CheckCircle2 size={12} /> {p._count.tasks}
+                          </span>
+                        )}
+                        {p.assignments?.length > 0 && (
+                          <span className="flex items-center gap-0.5" title="Personal">
+                            <Users size={12} /> {p.assignments.length}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="p-3 text-center">
+                      <button className="text-primary hover:underline text-xs" onClick={(e) => { e.stopPropagation(); setSelectedProject(p.id); }}>
+                        Veure
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Vista Kanban */}
+      {!loading && viewMode === 'kanban' && (
+        <div className="flex gap-4 overflow-x-auto pb-4">
+          {KANBAN_STATUSES.map(status => {
+            const statusProjects = projects.filter(p => p.status === status);
+            return (
+              <div key={status} className="flex-shrink-0 w-72 bg-muted/30 rounded-lg">
+                <div className="p-3 border-b">
+                  <div className="flex items-center justify-between">
+                    <span className={`text-xs font-semibold px-2 py-1 rounded-full ${STATUS_CONFIG[status].color}`}>
+                      {STATUS_CONFIG[status].label}
+                    </span>
+                    <span className="text-xs text-muted-foreground">{statusProjects.length}</span>
+                  </div>
+                </div>
+                <div className="p-2 space-y-2 max-h-[60vh] overflow-y-auto">
+                  {statusProjects.map(p => (
+                    <div
+                      key={p.id}
+                      onClick={() => setSelectedProject(p.id)}
+                      className="bg-card border rounded-md p-3 cursor-pointer hover:shadow-md transition-shadow"
+                    >
+                      {p.priority > 0 && (
+                        <div className={`text-xs font-bold mb-1 ${p.priority === 2 ? 'text-red-600' : 'text-orange-600'}`}>
+                          {PRIORITY_LABELS[p.priority]}
+                        </div>
+                      )}
+                      <div className="font-medium text-sm truncate">{p.name}</div>
+                      <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
+                        <Clock size={11} />
+                        {new Date(p.departureDate).toLocaleDateString('ca-ES', { day: 'numeric', month: 'short' })}
+                        {p.departureTime && ` ${p.departureTime}`}
+                      </div>
+                      {p.leadUser && (
+                        <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                          <User size={11} /> {p.leadUser.name}
+                        </div>
+                      )}
+                      <div className="flex items-center gap-2 mt-2">
+                        {p._count?.incidents > 0 && (
+                          <span className="text-xs text-amber-600 flex items-center gap-0.5">
+                            <AlertTriangle size={11} /> {p._count.incidents}
+                          </span>
+                        )}
+                        {p._count?.communications > 0 && (
+                          <span className="text-xs text-blue-600 flex items-center gap-0.5">
+                            <MessageSquare size={11} /> {p._count.communications}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  {statusProjects.length === 0 && (
+                    <p className="text-xs text-muted-foreground text-center py-4">Buit</p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Modal: Crear projecte */}
+      {showCreate && (
+        <CreateProjectModal
+          onClose={() => setShowCreate(false)}
+          onCreated={() => { setShowCreate(false); refetch(); }}
+        />
+      )}
+
+      {/* Modal: Detall projecte */}
+      {selectedProject && (
+        <ProjectDetailModal
+          projectId={selectedProject}
+          onClose={() => setSelectedProject(null)}
+          onUpdate={refetch}
+        />
+      )}
+    </div>
+  );
+}
+
+// ===========================================
+// Modal Crear Projecte
+// ===========================================
+
+function CreateProjectModal({ onClose, onCreated }) {
+  const [form, setForm] = useState({
+    name: '', clientName: '',
+    departureDate: '', departureTime: '',
+    returnDate: '', returnTime: '',
+    priority: 0, transportType: '',
+    transportNotes: '', internalNotes: '',
+    techValidationRequired: false,
+  });
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!form.name || !form.departureDate || !form.returnDate) return;
+    setSaving(true);
+    try {
+      await api.post('/operations/projects', form);
+      onCreated();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error creant projecte');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const set = (key, val) => setForm(f => ({ ...f, [key]: val }));
+
+  return (
+    <Modal isOpen={true} title="Nou projecte" onClose={onClose} size="lg">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div className="col-span-2">
+            <label className="text-sm font-medium">Nom del projecte *</label>
+            <input
+              value={form.name} onChange={e => set('name', e.target.value)}
+              className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background" required
+              placeholder="Ex: Rodatge Estrella Damm"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Client</label>
+            <input
+              value={form.clientName} onChange={e => set('clientName', e.target.value)}
+              className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background"
+              placeholder="Nom del client"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Prioritat</label>
+            <select value={form.priority} onChange={e => set('priority', parseInt(e.target.value))}
+              className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background">
+              <option value={0}>Normal</option>
+              <option value={1}>Alta</option>
+              <option value={2}>Urgent</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-sm font-medium">Data sortida *</label>
+            <input type="date" value={form.departureDate} onChange={e => set('departureDate', e.target.value)}
+              className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background" required />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Hora sortida</label>
+            <input type="time" value={form.departureTime} onChange={e => set('departureTime', e.target.value)}
+              className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background" />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Data devolució *</label>
+            <input type="date" value={form.returnDate} onChange={e => set('returnDate', e.target.value)}
+              className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background" required />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Hora devolució</label>
+            <input type="time" value={form.returnTime} onChange={e => set('returnTime', e.target.value)}
+              className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background" />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Transport</label>
+            <select value={form.transportType} onChange={e => set('transportType', e.target.value)}
+              className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background">
+              <option value="">— Seleccionar —</option>
+              <option value="INTERN">Intern</option>
+              <option value="EXTERN">Extern</option>
+              <option value="CLIENT_PICKUP">Recollida client</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-sm font-medium flex items-center gap-2">
+              <input type="checkbox" checked={form.techValidationRequired}
+                onChange={e => set('techValidationRequired', e.target.checked)} />
+              Requereix validació tècnica
+            </label>
+          </div>
+          <div className="col-span-2">
+            <label className="text-sm font-medium">Notes internes</label>
+            <textarea value={form.internalNotes} onChange={e => set('internalNotes', e.target.value)}
+              className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background min-h-[60px]"
+              placeholder="Notes sobre el projecte..." />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 pt-4 border-t">
+          <button type="button" onClick={onClose}
+            className="px-4 py-2 text-sm border rounded-md hover:bg-accent">
+            Cancel·lar
+          </button>
+          <button type="submit" disabled={saving}
+            className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50">
+            {saving ? 'Creant...' : 'Crear projecte'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ===========================================
+// Modal Detall Projecte
+// ===========================================
+
+function ProjectDetailModal({ projectId, onClose, onUpdate }) {
+  const { data: project, loading, refetch } = useApiGet(`/operations/projects/${projectId}`);
+  const [activeTab, setActiveTab] = useState('general');
+  const [changingStatus, setChangingStatus] = useState(false);
+
+  const handleStatusChange = async (newStatus) => {
+    setChangingStatus(true);
+    try {
+      await api.put(`/operations/projects/${projectId}/status`, { status: newStatus });
+      refetch();
+      onUpdate();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error canviant estat');
+    } finally {
+      setChangingStatus(false);
+    }
+  };
+
+  const handleValidateWarehouse = async () => {
+    try {
+      await api.put(`/operations/projects/${projectId}/validate-warehouse`);
+      refetch();
+    } catch (err) {
+      alert('Error validant');
+    }
+  };
+
+  const handleValidateTech = async () => {
+    try {
+      await api.put(`/operations/projects/${projectId}/validate-tech`);
+      refetch();
+    } catch (err) {
+      alert('Error validant');
+    }
+  };
+
+  if (loading || !project) {
+    return (
+      <Modal isOpen={true} title="Projecte" onClose={onClose} size="xl">
+        <div className="flex justify-center py-12">
+          <Loader2 className="animate-spin text-primary" size={32} />
+        </div>
+      </Modal>
+    );
+  }
+
+  const tabs = [
+    { id: 'general', label: 'General', icon: Package },
+    { id: 'equipment', label: `Material (${project.equipmentItems?.length || 0})`, icon: Package },
+    { id: 'tasks', label: `Tasques (${project.tasks?.length || 0})`, icon: CheckCircle2 },
+    { id: 'incidents', label: `Incidències (${project.incidents?.length || 0})`, icon: AlertTriangle },
+    { id: 'comms', label: `Comunicacions (${project.communications?.length || 0})`, icon: MessageSquare },
+    { id: 'history', label: 'Historial', icon: Clock },
+  ];
+
+  return (
+    <Modal isOpen={true} title={project.name} onClose={onClose} size="xl">
+      <div className="space-y-4">
+        {/* Capçalera estat */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className={`text-sm px-3 py-1 rounded-full font-medium ${STATUS_CONFIG[project.status]?.color}`}>
+            {STATUS_CONFIG[project.status]?.label}
+          </span>
+          {project.priority > 0 && (
+            <span className={`text-sm font-bold ${project.priority === 2 ? 'text-red-600' : 'text-orange-600'}`}>
+              Prioritat {PRIORITY_LABELS[project.priority]}
+            </span>
+          )}
+          <div className="ml-auto flex items-center gap-2">
+            <select
+              value={project.status}
+              onChange={(e) => handleStatusChange(e.target.value)}
+              disabled={changingStatus}
+              className="text-sm border rounded-md px-2 py-1 bg-background"
+            >
+              {ALL_STATUSES.map(s => (
+                <option key={s} value={s}>{STATUS_CONFIG[s].label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex border-b overflow-x-auto">
+          {tabs.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-1.5 px-4 py-2 text-sm whitespace-nowrap border-b-2 transition-colors ${
+                activeTab === tab.id
+                  ? 'border-primary text-primary font-medium'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <tab.icon size={14} />
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Tab Content */}
+        <div className="min-h-[300px]">
+          {activeTab === 'general' && (
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <span className="text-muted-foreground">Client:</span>
+                <span className="ml-2 font-medium">{project.clientName || project.client?.name || '—'}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Responsable:</span>
+                <span className="ml-2 font-medium">{project.leadUser?.name || 'Sense assignar'}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Sortida:</span>
+                <span className="ml-2">{new Date(project.departureDate).toLocaleDateString('ca-ES')} {project.departureTime || ''}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Devolució:</span>
+                <span className="ml-2">{new Date(project.returnDate).toLocaleDateString('ca-ES')} {project.returnTime || ''}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Transport:</span>
+                <span className="ml-2">{project.transportType || '—'}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Pressupost:</span>
+                <span className="ml-2">{project.budgetReference || '—'}</span>
+              </div>
+
+              {/* Validacions */}
+              <div className="col-span-2 mt-4 space-y-2 border-t pt-4">
+                <h4 className="font-semibold">Validacions</h4>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    {project.warehouseValidated ? (
+                      <CheckCircle2 size={18} className="text-green-600" />
+                    ) : (
+                      <XCircle size={18} className="text-gray-400" />
+                    )}
+                    <span>Magatzem</span>
+                    {!project.warehouseValidated && (
+                      <button onClick={handleValidateWarehouse}
+                        className="text-xs text-primary hover:underline ml-2">Validar</button>
+                    )}
+                  </div>
+                  {project.techValidationRequired && (
+                    <div className="flex items-center gap-2">
+                      {project.techValidated ? (
+                        <CheckCircle2 size={18} className="text-green-600" />
+                      ) : (
+                        <XCircle size={18} className="text-gray-400" />
+                      )}
+                      <span>Tècnica</span>
+                      {!project.techValidated && (
+                        <button onClick={handleValidateTech}
+                          className="text-xs text-primary hover:underline ml-2">Validar</button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Personal assignat */}
+              {project.assignments?.length > 0 && (
+                <div className="col-span-2 mt-2 space-y-2 border-t pt-4">
+                  <h4 className="font-semibold">Personal assignat</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {project.assignments.map(a => (
+                      <span key={a.id} className="text-sm bg-muted px-3 py-1 rounded-full flex items-center gap-1.5">
+                        <User size={12} />
+                        {a.user.name}
+                        <span className="text-xs text-muted-foreground">({a.roleCode?.replace('_', ' ')})</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {project.internalNotes && (
+                <div className="col-span-2 mt-2 border-t pt-4">
+                  <h4 className="font-semibold mb-1">Notes internes</h4>
+                  <p className="text-sm text-muted-foreground whitespace-pre-wrap">{project.internalNotes}</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'equipment' && (
+            <EquipmentTab project={project} refetch={refetch} />
+          )}
+
+          {activeTab === 'tasks' && (
+            <TasksTab project={project} refetch={refetch} />
+          )}
+
+          {activeTab === 'incidents' && (
+            <div className="space-y-2">
+              {project.incidents?.length === 0 && (
+                <p className="text-sm text-muted-foreground py-4">Cap incidència registrada</p>
+              )}
+              {project.incidents?.map(inc => (
+                <div key={inc.id} className="border rounded-md p-3">
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${
+                      inc.severity === 'CRITICAL' ? 'bg-red-100 text-red-700' :
+                      inc.severity === 'HIGH' ? 'bg-orange-100 text-orange-700' :
+                      inc.severity === 'MEDIUM' ? 'bg-yellow-100 text-yellow-700' :
+                      'bg-gray-100 text-gray-600'
+                    }`}>
+                      {inc.severity}
+                    </span>
+                    <span className="font-medium text-sm">{inc.title}</span>
+                    <span className="ml-auto text-xs text-muted-foreground">{inc.status}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">{inc.description}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {activeTab === 'comms' && (
+            <CommunicationsTab project={project} projectId={projectId} refetch={refetch} />
+          )}
+
+          {activeTab === 'history' && (
+            <div className="space-y-2">
+              {project.statusHistory?.map(h => (
+                <div key={h.id} className="flex items-center gap-3 text-sm border-l-2 border-primary/30 pl-4 py-1">
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">
+                    {new Date(h.createdAt).toLocaleString('ca-ES')}
+                  </span>
+                  {h.fromStatus && (
+                    <>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_CONFIG[h.fromStatus]?.color}`}>
+                        {STATUS_CONFIG[h.fromStatus]?.label}
+                      </span>
+                      <ArrowRight size={14} className="text-muted-foreground" />
+                    </>
+                  )}
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_CONFIG[h.toStatus]?.color}`}>
+                    {STATUS_CONFIG[h.toStatus]?.label}
+                  </span>
+                  {h.reason && <span className="text-xs text-muted-foreground">— {h.reason}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ===========================================
+// Tabs auxiliars
+// ===========================================
+
+function EquipmentTab({ project, refetch }) {
+  const [adding, setAdding] = useState(false);
+  const [newItem, setNewItem] = useState('');
+
+  const handleAdd = async () => {
+    if (!newItem.trim()) return;
+    try {
+      await api.post(`/operations/projects/${project.id}/equipment`, { itemName: newItem });
+      setNewItem('');
+      setAdding(false);
+      refetch();
+    } catch (err) {
+      alert('Error afegint equip');
+    }
+  };
+
+  const handleToggle = async (item, field) => {
+    try {
+      await api.put(`/operations/project-equipment/${item.id}`, { [field]: !item[field] });
+      refetch();
+    } catch (err) {
+      alert('Error actualitzant');
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h4 className="font-semibold text-sm">Material del projecte</h4>
+        <button onClick={() => setAdding(!adding)} className="text-sm text-primary hover:underline">
+          + Afegir
+        </button>
+      </div>
+      {adding && (
+        <div className="flex gap-2">
+          <input value={newItem} onChange={e => setNewItem(e.target.value)}
+            placeholder="Nom de l'equip..." className="flex-1 border rounded-md px-3 py-1.5 text-sm bg-background" />
+          <button onClick={handleAdd} className="bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-sm">Afegir</button>
+        </div>
+      )}
+      {project.equipmentItems?.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Cap equip assignat</p>
+      ) : (
+        <div className="space-y-1">
+          {project.equipmentItems?.map(item => (
+            <div key={item.id} className="flex items-center gap-3 p-2 border rounded-md text-sm">
+              <input type="checkbox" checked={item.isCheckedOut}
+                onChange={() => handleToggle(item, 'isCheckedOut')} title="Sortit" />
+              <span className={`flex-1 ${item.isCheckedOut ? '' : 'text-muted-foreground'}`}>
+                {item.itemName} {item.quantity > 1 && `(×${item.quantity})`}
+              </span>
+              {item.equipment?.serialNumber && (
+                <span className="text-xs text-muted-foreground">SN: {item.equipment.serialNumber}</span>
+              )}
+              {item.isReturned && <CheckCircle2 size={14} className="text-green-600" />}
+              {item.returnCondition && item.returnCondition !== 'OK' && (
+                <span className="text-xs text-red-600">{item.returnCondition}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TasksTab({ project, refetch }) {
+  const [adding, setAdding] = useState(false);
+  const [newTask, setNewTask] = useState('');
+
+  const handleAdd = async () => {
+    if (!newTask.trim()) return;
+    try {
+      await api.post(`/operations/projects/${project.id}/tasks`, { title: newTask });
+      setNewTask('');
+      setAdding(false);
+      refetch();
+    } catch (err) {
+      alert('Error creant tasca');
+    }
+  };
+
+  const handleToggle = async (task) => {
+    const newStatus = task.status === 'OP_DONE' ? 'OP_PENDING' : 'OP_DONE';
+    try {
+      await api.put(`/operations/tasks/${task.id}`, { status: newStatus });
+      refetch();
+    } catch (err) {
+      alert('Error actualitzant');
+    }
+  };
+
+  const done = project.tasks?.filter(t => t.status === 'OP_DONE').length || 0;
+  const total = project.tasks?.length || 0;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h4 className="font-semibold text-sm">
+          Tasques {total > 0 && <span className="text-muted-foreground font-normal">({done}/{total})</span>}
+        </h4>
+        <button onClick={() => setAdding(!adding)} className="text-sm text-primary hover:underline">
+          + Nova tasca
+        </button>
+      </div>
+      {total > 0 && (
+        <div className="w-full bg-gray-200 rounded-full h-2">
+          <div className="bg-green-500 h-2 rounded-full transition-all" style={{ width: `${(done / total) * 100}%` }} />
+        </div>
+      )}
+      {adding && (
+        <div className="flex gap-2">
+          <input value={newTask} onChange={e => setNewTask(e.target.value)}
+            placeholder="Títol de la tasca..." className="flex-1 border rounded-md px-3 py-1.5 text-sm bg-background" />
+          <button onClick={handleAdd} className="bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-sm">Afegir</button>
+        </div>
+      )}
+      {project.tasks?.map(task => (
+        <div key={task.id} className="flex items-center gap-3 p-2 border rounded-md text-sm">
+          <input type="checkbox" checked={task.status === 'OP_DONE'}
+            onChange={() => handleToggle(task)} />
+          <span className={task.status === 'OP_DONE' ? 'line-through text-muted-foreground' : ''}>
+            {task.title}
+          </span>
+          {task.requiresSupervision && (
+            <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">supervisió</span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CommunicationsTab({ project, projectId, refetch }) {
+  const [message, setMessage] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const handleSend = async () => {
+    if (!message.trim()) return;
+    setSending(true);
+    try {
+      await api.post(`/operations/projects/${projectId}/communications`, { message });
+      setMessage('');
+      refetch();
+    } catch (err) {
+      alert('Error enviant');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="space-y-2 max-h-60 overflow-y-auto">
+        {project.communications?.length === 0 && (
+          <p className="text-sm text-muted-foreground py-4">Cap comunicació encara</p>
+        )}
+        {project.communications?.map(c => (
+          <div key={c.id} className={`p-3 rounded-md text-sm ${c.isUrgent ? 'bg-red-50 border-red-200 border' : 'bg-muted/50'}`}>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-xs text-muted-foreground">
+                {new Date(c.createdAt).toLocaleString('ca-ES')}
+              </span>
+              {c.isUrgent && <span className="text-xs text-red-600 font-bold">URGENT</span>}
+              {c.targetRoleCode && (
+                <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
+                  @{c.targetRoleCode.replace('_', ' ')}
+                </span>
+              )}
+            </div>
+            <p className="whitespace-pre-wrap">{c.message}</p>
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-2 pt-2 border-t">
+        <input value={message} onChange={e => setMessage(e.target.value)}
+          placeholder="Escriu un missatge..."
+          className="flex-1 border rounded-md px-3 py-2 text-sm bg-background"
+          onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()} />
+        <button onClick={handleSend} disabled={sending || !message.trim()}
+          className="bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm disabled:opacity-50">
+          Enviar
+        </button>
+      </div>
+    </div>
+  );
+}

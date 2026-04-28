@@ -16,6 +16,12 @@ import {
   BrainCircuit,
   Calculator,
   Plug,
+  ClipboardList,
+  CalendarDays,
+  Package,
+  AlertTriangle,
+  BookOpen,
+  ShieldCheck,
 } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
 import useCompanyStore from '../../stores/companyStore';
@@ -37,6 +43,14 @@ const navItems = [
   { to: '/agent', icon: Bot, label: 'Agent comptable', section: 'agent' },
   { to: '/ai-costs', icon: BrainCircuit, label: 'Costos IA', section: null, adminOnly: true },
   { to: '/settings/connections', icon: Plug, label: 'Connexions', section: null, adminOnly: true },
+];
+
+const operationsItems = [
+  { to: '/operations/daily', icon: CalendarDays, label: 'Pla del Dia' },
+  { to: '/operations/projects', icon: Package, label: 'Projectes' },
+  { to: '/operations/incidents', icon: AlertTriangle, label: 'Incidències' },
+  { to: '/operations/roles', icon: ShieldCheck, label: 'Rols i Personal' },
+  { to: '/operations/protocols', icon: BookOpen, label: 'Protocols' },
 ];
 
 export default function Sidebar() {
@@ -66,7 +80,7 @@ export default function Sidebar() {
       </div>
 
       {/* Navegació */}
-      <nav className="flex-1 p-4 space-y-1">
+      <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
         {visibleItems.map(({ to, icon: Icon, label }) => (
           <NavLink
             key={to}
@@ -83,6 +97,30 @@ export default function Sidebar() {
             {label}
           </NavLink>
         ))}
+
+        {/* Secció Operacions */}
+        <div className="pt-4 mt-4 border-t">
+          <p className="px-3 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+            <ClipboardList size={14} />
+            Operacions
+          </p>
+          {operationsItems.map(({ to, icon: Icon, label }) => (
+            <NavLink
+              key={to}
+              to={to}
+              className={({ isActive }) =>
+                `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+                  isActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                }`
+              }
+            >
+              <Icon size={18} />
+              {label}
+            </NavLink>
+          ))}
+        </div>
       </nav>
 
       {/* Footer */}

@@ -19,6 +19,11 @@ import AiCosts from './pages/AiCosts';
 import SharedInvoices from './pages/SharedInvoices';
 import Fiscal from './pages/Fiscal';
 import Connections from './pages/Connections';
+import OperationsDaily from './pages/operations/DailyPlan';
+import OperationsProjects from './pages/operations/Projects';
+import OperationsIncidents from './pages/operations/Incidents';
+import OperationsRoles from './pages/operations/Roles';
+import OperationsProtocols from './pages/operations/Protocols';
 import useAuthStore from './stores/authStore';
 
 function App() {
@@ -54,6 +59,12 @@ function App() {
         <Route path="equipment" element={<Equipment />} />
         <Route path="ai-costs" element={<AiCosts />} />
         <Route path="settings/connections" element={<RoleGuard section="users"><Connections /></RoleGuard>} />
+        {/* Mòdul Operacions */}
+        <Route path="operations/daily" element={<OperationsDaily />} />
+        <Route path="operations/projects" element={<OperationsProjects />} />
+        <Route path="operations/incidents" element={<OperationsIncidents />} />
+        <Route path="operations/roles" element={<OperationsRoles />} />
+        <Route path="operations/protocols" element={<OperationsProtocols />} />
       </Route>
     </Routes>
   );

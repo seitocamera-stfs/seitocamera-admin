@@ -48,6 +48,11 @@ model User {
   compensatedPeriods    SharedPeriodLock[] @relation("compensatedPeriods")
   paymentReminders      PaymentReminderLog[]
 
+  // Mòdul Operacions
+  roleAssignments       RoleAssignment[]
+  projectAssignments    ProjectAssignment[]
+  ledProjects           RentalProject[]   @relation("ProjectLead")
+
   @@map("users")
 }
 
@@ -146,6 +151,7 @@ model Client {
   // Relacions
   issuedInvoices    IssuedInvoice[]
   counterpartyMaps  CounterpartyMap[]
+  rentalProjects    RentalProject[]
 
   @@map("clients")
 }
@@ -707,6 +713,10 @@ model Equipment {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
+  // Mòdul Operacions
+  projectEquipment    ProjectEquipment[]
+  incidents           Incident[]
+
   @@index([parentId])
   @@index([receivedInvoiceId])
   @@index([supplierId])
@@ -768,4 +778,379 @@ model SharedPeriodLock {
 
   @@unique([year, period, periodType])
   @@map("shared_period_locks")
+}
+
+// ===========================================
+// Mòdul Protocol d'Empresa — Enums
+// ===========================================
+
+enum OperationalRole {
+  ADMIN_COORDINATION     // Administració i coordinació externa
+  WAREHOUSE_LEAD         // Responsable principal de magatzem
+  WAREHOUSE_SUPPORT      // Responsable de magatzem / suport operatiu
+  TECH_LEAD              // Responsable tècnic
+  INTERN_SUPPORT         // Becaris / personal de suport
+  GENERAL_MANAGER        // Direcció / encarregat general
+}
+
+enum ProjectStatus {
+  PENDING_PREP           // Pendent de preparar
+  IN_PREPARATION         // En preparació
+  PENDING_TECH_REVIEW    // Pendent de revisió tècnica
+  PENDING_FINAL_CHECK    // Pendent de validació final
+  READY                  // Preparat
+  PENDING_LOAD           // Pendent de càrrega
+  OUT                    // Sortit
+  RETURNED               // Retornat
+  RETURN_REVIEW          // En revisió de devolució
+  WITH_INCIDENT          // Amb incidència
+  EQUIPMENT_BLOCKED      // Material bloquejat
+  CLOSED                 // Tancat
+}
+
+enum IncidentStatus {
+  INC_OPEN               // Oberta
+  INC_IN_PROGRESS        // En investigació / reparació
+  INC_WAITING_PARTS      // Esperant peces / recanvis
+  INC_WAITING_CLIENT     // Esperant resposta client
+  INC_RESOLVED           // Resolta
+  INC_CLOSED             // Tancada
+}
+
+enum IncidentSeverity {
+  LOW                    // No afecta sortides
+  MEDIUM                 // Pot afectar sortides futures
+  HIGH                   // Afecta una sortida propera
+  CRITICAL               // Bloqueja una sortida imminent
+}
+
+enum OpTaskStatus {
+  OP_PENDING
+  OP_IN_PROGRESS
+  OP_DONE
+  OP_CANCELLED
+}
+
+enum PermissionLevel {
+  NONE                   // Sense accés
+  VIEW_ONLY              // Només veure
+  OPERATE                // Veure + executar tasques
+  MANAGE                 // Operar + assignar + validar
+  FULL_ADMIN             // Tot, inclòs editar protocols i rols
+}
+
+// ===========================================
+// Mòdul Protocol d'Empresa — Models
+// ===========================================
+
+model RoleDefinition {
+  id              String          @id @default(cuid())
+  code            OperationalRole @unique
+  name            String                    // "Responsable principal de magatzem"
+  shortName       String                    // "Mag. Principal"
+  description     String?
+  responsibilities Json                     // String[] de responsabilitats
+  limitations     Json?                     // String[] de limitacions (becaris)
+  sortOrder       Int             @default(0)
+  isActive        Boolean         @default(true)
+  color           String          @default("#2390A0")
+  icon            String?                   // "warehouse", "wrench", "phone"
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  // Relacions
+  assignments     RoleAssignment[]
+  permissions     RolePermission[]
+
+  @@map("role_definitions")
+}
+
+model RoleAssignment {
+  id              String          @id @default(cuid())
+  roleId          String
+  userId          String
+  isPrimary       Boolean         @default(true)
+  startDate       DateTime        @default(now())
+  endDate         DateTime?
+  notes           String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  // Relacions
+  role            RoleDefinition  @relation(fields: [roleId], references: [id])
+  user            User            @relation(fields: [userId], references: [id])
+
+  @@unique([roleId, userId, startDate])
+  @@index([userId])
+  @@index([roleId])
+  @@map("role_assignments")
+}
+
+model RolePermission {
+  id              String          @id @default(cuid())
+  roleId          String
+  section         String                    // "projects", "incidents", "protocols", "daily_plan", "roles", "equipment_blocking"
+  level           PermissionLevel @default(VIEW_ONLY)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  // Relacions
+  role            RoleDefinition  @relation(fields: [roleId], references: [id])
+
+  @@unique([roleId, section])
+  @@map("role_permissions")
+}
+
+model RentalProject {
+  id                  String         @id @default(cuid())
+  name                String
+  clientName          String?
+  clientId            String?
+
+  // Dates i horaris
+  departureDate       DateTime
+  departureTime       String?
+  returnDate          DateTime
+  returnTime          String?
+  actualReturnDate    DateTime?
+
+  // Estat
+  status              ProjectStatus  @default(PENDING_PREP)
+  priority            Int            @default(0) // 0=normal, 1=alta, 2=urgent
+
+  // Responsables
+  leadUserId          String?
+  leadRoleCode        OperationalRole?
+
+  // Transport
+  transportType       String?        // "INTERN", "EXTERN", "CLIENT_PICKUP"
+  transportNotes      String?
+  pickupTime          String?
+
+  // Validacions
+  warehouseValidated  Boolean        @default(false)
+  warehouseValidatedBy String?
+  warehouseValidatedAt DateTime?
+  techValidated       Boolean        @default(false)
+  techValidatedBy     String?
+  techValidatedAt     DateTime?
+  techValidationRequired Boolean     @default(false)
+
+  // Referències externes
+  rentmanProjectId    String?
+  budgetReference     String?
+
+  // Observacions
+  internalNotes       String?
+  clientNotes         String?
+
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  // Relacions
+  client              Client?        @relation(fields: [clientId], references: [id])
+  leadUser            User?          @relation("ProjectLead", fields: [leadUserId], references: [id])
+  assignments         ProjectAssignment[]
+  statusHistory       ProjectStatusChange[]
+  incidents           Incident[]
+  tasks               ProjectTask[]
+  equipmentItems      ProjectEquipment[]
+  communications      ProjectCommunication[]
+
+  @@index([departureDate])
+  @@index([returnDate])
+  @@index([status])
+  @@index([leadUserId])
+  @@index([priority])
+  @@map("rental_projects")
+}
+
+model ProjectAssignment {
+  id              String          @id @default(cuid())
+  projectId       String
+  userId          String
+  roleCode        OperationalRole
+  isLead          Boolean         @default(false)
+  notes           String?
+  createdAt       DateTime        @default(now())
+
+  // Relacions
+  project         RentalProject   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user            User            @relation(fields: [userId], references: [id])
+
+  @@unique([projectId, userId])
+  @@index([userId])
+  @@map("project_assignments")
+}
+
+model ProjectStatusChange {
+  id              String         @id @default(cuid())
+  projectId       String
+  fromStatus      ProjectStatus?
+  toStatus        ProjectStatus
+  changedBy       String?
+  reason          String?
+  createdAt       DateTime       @default(now())
+
+  // Relacions
+  project         RentalProject  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([createdAt])
+  @@map("project_status_changes")
+}
+
+model ProjectEquipment {
+  id              String         @id @default(cuid())
+  projectId       String
+  equipmentId     String?
+  itemName        String
+  quantity        Int            @default(1)
+  isCheckedOut    Boolean        @default(false)
+  isReturned      Boolean        @default(false)
+  returnCondition String?        // "OK", "DAMAGED", "MISSING", "CONSUMABLE_USED"
+  notes           String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // Relacions
+  project         RentalProject  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  equipment       Equipment?     @relation(fields: [equipmentId], references: [id])
+
+  @@index([projectId])
+  @@index([equipmentId])
+  @@map("project_equipment")
+}
+
+model ProjectTask {
+  id              String         @id @default(cuid())
+  projectId       String
+  title           String
+  description     String?
+  assignedToId    String?
+  status          OpTaskStatus   @default(OP_PENDING)
+  dueAt           DateTime?
+  completedAt     DateTime?
+  completedById   String?
+  requiresSupervision Boolean   @default(false)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // Relacions
+  project         RentalProject  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([assignedToId])
+  @@index([status])
+  @@map("project_tasks")
+}
+
+model Incident {
+  id              String           @id @default(cuid())
+  projectId       String?
+  equipmentId     String?
+
+  title           String
+  description     String
+  severity        IncidentSeverity @default(MEDIUM)
+  status          IncidentStatus   @default(INC_OPEN)
+
+  reportedById    String
+  assignedToId    String?
+  assignedRoleCode OperationalRole?
+
+  affectsFutureDeparture Boolean  @default(false)
+  affectedProjectId      String?
+  requiresClientNotification Boolean @default(false)
+  clientNotified  Boolean        @default(false)
+  equipmentBlocked Boolean       @default(false)
+
+  actionTaken     String?
+  resolvedAt      DateTime?
+  resolvedById    String?
+  resolutionNotes String?
+
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  // Relacions
+  project         RentalProject?   @relation(fields: [projectId], references: [id])
+  equipment       Equipment?       @relation(fields: [equipmentId], references: [id])
+
+  @@index([projectId])
+  @@index([equipmentId])
+  @@index([status])
+  @@index([severity])
+  @@index([reportedById])
+  @@map("incidents")
+}
+
+model DailyPlan {
+  id              String         @id @default(cuid())
+  date            DateTime       @unique
+  summary         String?
+  availableStaff  Json?
+  urgentNotes     String?
+  createdById     String?
+  reviewedById    String?
+  reviewedAt      DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([date])
+  @@map("daily_plans")
+}
+
+model ProjectCommunication {
+  id              String         @id @default(cuid())
+  projectId       String
+  authorId        String
+  targetRoleCode  OperationalRole?
+  message         String
+  isUrgent        Boolean        @default(false)
+  isRead          Boolean        @default(false)
+  readAt          DateTime?
+  createdAt       DateTime       @default(now())
+
+  // Relacions
+  project         RentalProject  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([targetRoleCode])
+  @@index([isRead])
+  @@map("project_communications")
+}
+
+model Protocol {
+  id              String         @id @default(cuid())
+  title           String
+  slug            String         @unique
+  category        String         // "daily", "departure", "return", "incident", "maintenance"
+  content         String
+  sortOrder       Int            @default(0)
+  isActive        Boolean        @default(true)
+  lastEditedById  String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([category])
+  @@map("protocols")
+}
+
+model OpNotification {
+  id              String         @id @default(cuid())
+  userId          String
+  type            String         // "project_created", "incident_critical", etc.
+  title           String
+  message         String
+  entityType      String?        // "rental_project", "incident"
+  entityId        String?
+  priority        String         @default("normal") // "low", "normal", "high", "urgent"
+  isRead          Boolean        @default(false)
+  readAt          DateTime?
+  createdAt       DateTime       @default(now())
+
+  @@index([userId, isRead])
+  @@index([createdAt])
+  @@map("op_notifications")
 }
