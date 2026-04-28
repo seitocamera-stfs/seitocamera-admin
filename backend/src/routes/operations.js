@@ -574,6 +574,55 @@ router.delete('/project-equipment/:id', async (req, res, next) => {
 // TASQUES DEL PROJECTE
 // ===========================================
 
+// POST /api/operations/projects/:id/default-tasks — Crear tasques predeterminades
+router.post('/projects/:id/default-tasks', async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    // Comprovar que el projecte existeix
+    const project = await prisma.rentalProject.findUnique({ where: { id } });
+    if (!project) return res.status(404).json({ error: 'Projecte no trobat' });
+
+    // Comprovar si ja té alguna de les tasques predeterminades
+    const existing = await prisma.projectTask.findMany({
+      where: {
+        projectId: id,
+        title: { in: DEFAULT_PROJECT_TASKS.map((t) => t.title) },
+      },
+    });
+    const existingTitles = new Set(existing.map((t) => t.title));
+    const toCreate = DEFAULT_PROJECT_TASKS.filter((t) => !existingTitles.has(t.title));
+
+    if (toCreate.length === 0) {
+      return res.json({ message: 'Totes les tasques predeterminades ja existeixen', created: 0, tasks: [] });
+    }
+
+    await prisma.projectTask.createMany({
+      data: toCreate.map((t) => ({
+        projectId: id,
+        title: t.title,
+        category: t.category,
+        status: 'OP_PENDING',
+        createdById: req.user.id,
+      })),
+    });
+
+    // Retornar totes les tasques del projecte
+    const tasks = await prisma.projectTask.findMany({
+      where: { projectId: id },
+      include: {
+        assignedTo: { select: { id: true, name: true } },
+        createdBy: { select: { id: true, name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json({ message: `${toCreate.length} tasques creades`, created: toCreate.length, tasks });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/operations/projects/:id/tasks — Crear tasca
 router.post('/projects/:id/tasks', async (req, res, next) => {
   try {

@@ -253,8 +253,13 @@ export default function Projects() {
                   </td>
                 </tr>
               ) : (
-                projects.map(p => (
-                  <tr key={p.id} className={`hover:bg-accent/50 cursor-pointer ${selectedIds.has(p.id) ? 'bg-primary/5' : ''}`} onClick={() => setSelectedProject(p.id)}>
+                projects.map(p => {
+                  const isConfirmed = p.status !== 'PENDING_PREP';
+                  return (
+                  <tr key={p.id}
+                    className={`hover:bg-accent/50 cursor-pointer ${selectedIds.has(p.id) ? 'bg-primary/5' : ''}`}
+                    style={{ borderLeft: `4px solid ${isConfirmed ? '#22c55e' : '#eab308'}` }}
+                    onClick={() => setSelectedProject(p.id)}>
                     <td className="p-3" onClick={(e) => e.stopPropagation()}>
                       <input type="checkbox"
                         checked={selectedIds.has(p.id)}
@@ -332,7 +337,8 @@ export default function Projects() {
                       </button>
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -1110,8 +1116,25 @@ function GeneralTab({ project, projectId, refetch, onValidateWarehouse, onValida
 
 function TasksTab({ project, refetch }) {
   const [adding, setAdding] = useState(false);
+  const [loadingDefaults, setLoadingDefaults] = useState(false);
   const [taskForm, setTaskForm] = useState({ title: '', description: '', assignedToId: '', dueAt: '', requiresSupervision: false });
   const { data: teamUsers } = useApiGet('/operations/team');
+
+  const handleAddDefaults = async () => {
+    setLoadingDefaults(true);
+    try {
+      const res = await api.post(`/operations/projects/${project.id}/default-tasks`);
+      if (res.data.created > 0) {
+        refetch();
+      } else {
+        alert('Totes les tasques predeterminades ja existeixen');
+      }
+    } catch (err) {
+      alert('Error afegint tasques predeterminades');
+    } finally {
+      setLoadingDefaults(false);
+    }
+  };
 
   const handleAdd = async () => {
     if (!taskForm.title.trim()) return;
@@ -1159,9 +1182,18 @@ function TasksTab({ project, refetch }) {
         <h4 className="font-semibold text-sm">
           Tasques {total > 0 && <span className="text-muted-foreground font-normal">({done}/{total})</span>}
         </h4>
-        <button onClick={() => setAdding(!adding)} className="text-sm text-primary hover:underline">
-          + Nova tasca
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleAddDefaults}
+            disabled={loadingDefaults}
+            className="text-xs border border-primary/30 text-primary px-2.5 py-1 rounded-md hover:bg-primary/5 disabled:opacity-50"
+          >
+            {loadingDefaults ? 'Afegint...' : '⚙ Predeterminades'}
+          </button>
+          <button onClick={() => setAdding(!adding)} className="text-sm text-primary hover:underline">
+            + Nova tasca
+          </button>
+        </div>
       </div>
       {total > 0 && (
         <div className="w-full bg-gray-200 rounded-full h-2">

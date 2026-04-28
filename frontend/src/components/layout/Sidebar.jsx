@@ -23,38 +23,81 @@ import {
   BookOpen,
   ShieldCheck,
   ListTodo,
+  Coins,
+  FolderCog,
+  Settings,
 } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
 import useCompanyStore from '../../stores/companyStore';
 import { canAccessSection } from '../../lib/permissions';
 
-const navItems = [
-  { to: '/', icon: LayoutDashboard, label: 'Dashboard', section: 'dashboard' },
-  { to: '/invoices/received', icon: FileInput, label: 'Factures rebudes', section: 'receivedInvoices' },
-  { to: '/invoices/shared', icon: Split, label: 'Compartides', section: 'sharedInvoices' },
-  { to: '/invoices/issued', icon: FileOutput, label: 'Factures emeses', section: 'issuedInvoices' },
-  { to: '/suppliers', icon: Truck, label: 'Proveïdors', section: 'suppliers' },
-  { to: '/clients', icon: Users, label: 'Clients', section: 'clients' },
-  { to: '/bank', icon: Landmark, label: 'Moviments bancaris', section: 'bank' },
-  { to: '/conciliation', icon: GitCompare, label: 'Conciliació', section: 'conciliation' },
-  { to: '/reminders', icon: Bell, label: 'Recordatoris', section: 'reminders' },
-  { to: '/fiscal', icon: Calculator, label: 'Fiscal', section: 'fiscal' },
-  { to: '/users', icon: UserCog, label: 'Usuaris', section: 'users' },
-  { to: '/equipment', icon: Camera, label: 'Inventari equips', section: 'equipment' },
-  { to: '/agent', icon: Bot, label: 'Agent comptable', section: 'agent' },
-  { to: '/ai-costs', icon: BrainCircuit, label: 'Costos IA', section: null, adminOnly: true },
-  { to: '/settings/connections', icon: Plug, label: 'Connexions', section: null, adminOnly: true },
+// ===========================================
+// Seccions del sidebar
+// ===========================================
+
+const sections = [
+  {
+    key: 'operations',
+    label: 'Operacions',
+    icon: ClipboardList,
+    items: [
+      { to: '/', icon: LayoutDashboard, label: 'Dashboard', section: 'dashboard' },
+      { to: '/operations/daily', icon: CalendarDays, label: 'Pla del Dia' },
+      { to: '/operations/calendar', icon: CalendarDays, label: 'Calendari' },
+      { to: '/operations/projects', icon: Package, label: 'Projectes' },
+      { to: '/operations/tasks', icon: ListTodo, label: 'Tasques' },
+      { to: '/operations/incidents', icon: AlertTriangle, label: 'Incidències' },
+      { to: '/operations/protocols', icon: BookOpen, label: 'Protocols' },
+    ],
+  },
+  {
+    key: 'accounting',
+    label: 'Comptabilitat',
+    icon: Coins,
+    items: [
+      { to: '/invoices/received', icon: FileInput, label: 'Factures rebudes', section: 'receivedInvoices' },
+      { to: '/invoices/issued', icon: FileOutput, label: 'Factures emeses', section: 'issuedInvoices' },
+      { to: '/invoices/shared', icon: Split, label: 'Compartides', section: 'sharedInvoices' },
+      { to: '/bank', icon: Landmark, label: 'Moviments bancaris', section: 'bank' },
+      { to: '/conciliation', icon: GitCompare, label: 'Conciliació', section: 'conciliation' },
+      { to: '/fiscal', icon: Calculator, label: 'Fiscal', section: 'fiscal' },
+      { to: '/reminders', icon: Bell, label: 'Recordatoris', section: 'reminders' },
+      { to: '/agent', icon: Bot, label: 'Agent comptable', section: 'agent' },
+    ],
+  },
+  {
+    key: 'management',
+    label: 'Gestió',
+    icon: FolderCog,
+    items: [
+      { to: '/suppliers', icon: Truck, label: 'Proveïdors', section: 'suppliers' },
+      { to: '/clients', icon: Users, label: 'Clients', section: 'clients' },
+      { to: '/equipment', icon: Camera, label: 'Inventari equips', section: 'equipment' },
+      { to: '/operations/roles', icon: ShieldCheck, label: 'Rols i Personal' },
+    ],
+  },
+  {
+    key: 'admin',
+    label: 'Administració',
+    icon: Settings,
+    items: [
+      { to: '/users', icon: UserCog, label: 'Usuaris', section: 'users' },
+      { to: '/settings/connections', icon: Plug, label: 'Connexions', section: null, adminOnly: true },
+      { to: '/ai-costs', icon: BrainCircuit, label: 'Costos IA', section: null, adminOnly: true },
+    ],
+  },
 ];
 
-const operationsItems = [
-  { to: '/operations/daily', icon: CalendarDays, label: 'Pla del Dia' },
-  { to: '/operations/calendar', icon: CalendarDays, label: 'Calendari' },
-  { to: '/operations/projects', icon: Package, label: 'Projectes' },
-  { to: '/operations/tasks', icon: ListTodo, label: 'Tasques' },
-  { to: '/operations/incidents', icon: AlertTriangle, label: 'Incidències' },
-  { to: '/operations/roles', icon: ShieldCheck, label: 'Rols i Personal' },
-  { to: '/operations/protocols', icon: BookOpen, label: 'Protocols' },
-];
+// ===========================================
+// Component
+// ===========================================
+
+const linkClass = ({ isActive }) =>
+  `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+    isActive
+      ? 'bg-primary text-primary-foreground'
+      : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+  }`;
 
 export default function Sidebar() {
   const user = useAuthStore((s) => s.user);
@@ -67,10 +110,11 @@ export default function Sidebar() {
     navigate('/login');
   };
 
-  const visibleItems = navItems.filter((item) => {
+  const isVisible = (item) => {
     if (item.adminOnly && user?.role !== 'ADMIN') return false;
-    return !item.section || canAccessSection(user, item.section);
-  });
+    if (item.section && !canAccessSection(user, item.section)) return false;
+    return true;
+  };
 
   return (
     <aside className="w-64 border-r bg-card flex flex-col">
@@ -83,49 +127,28 @@ export default function Sidebar() {
       </div>
 
       {/* Navegació */}
-      <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-        {visibleItems.map(({ to, icon: Icon, label }) => (
-          <NavLink
-            key={to}
-            to={to}
-            className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
-                isActive
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-              }`
-            }
-          >
-            <Icon size={18} />
-            {label}
-          </NavLink>
-        ))}
+      <nav className="flex-1 p-4 overflow-y-auto">
+        {sections.map((section, idx) => {
+          const visibleItems = section.items.filter(isVisible);
+          if (visibleItems.length === 0) return null;
 
-        {/* Secció Operacions */}
-        {canAccessSection(user, 'operations') && (
-        <div className="pt-4 mt-4 border-t">
-          <p className="px-3 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
-            <ClipboardList size={14} />
-            Operacions
-          </p>
-          {operationsItems.map(({ to, icon: Icon, label }) => (
-            <NavLink
-              key={to}
-              to={to}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
-                  isActive
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-                }`
-              }
-            >
-              <Icon size={18} />
-              {label}
-            </NavLink>
-          ))}
-        </div>
-        )}
+          return (
+            <div key={section.key} className={idx > 0 ? 'pt-4 mt-4 border-t' : ''}>
+              <p className="px-3 py-1 mb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+                <section.icon size={14} />
+                {section.label}
+              </p>
+              <div className="space-y-0.5">
+                {visibleItems.map(({ to, icon: Icon, label }) => (
+                  <NavLink key={to} to={to} end={to === '/'} className={linkClass}>
+                    <Icon size={18} />
+                    {label}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </nav>
 
       {/* Footer */}
