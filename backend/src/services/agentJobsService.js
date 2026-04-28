@@ -387,7 +387,7 @@ async function runConciliation() {
   try {
     // Moviments bancaris no conciliats (despeses)
     const movements = await prisma.bankMovement.findMany({
-      where: { isConciliated: false, type: 'DEBIT' },
+      where: { isConciliated: false, type: 'EXPENSE' },
       orderBy: { date: 'desc' },
       take: 50,
     });
