@@ -53,7 +53,7 @@ const sections = [
     key: 'accounting',
     label: 'Comptabilitat',
     items: [
-      { to: '/accounting', icon: Coins, label: 'Resum comptable' },
+      { to: '/accounting', icon: Coins, label: 'Resum comptable', section: 'fiscal' },
       { to: '/invoices/received', icon: FileInput, label: 'Factures rebudes', section: 'receivedInvoices' },
       { to: '/invoices/issued', icon: FileOutput, label: 'Factures emeses', section: 'issuedInvoices' },
       { to: '/invoices/shared', icon: Split, label: 'Compartides', section: 'sharedInvoices' },
