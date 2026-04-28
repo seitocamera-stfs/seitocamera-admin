@@ -85,10 +85,10 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen" style={{ background: '#f8f9fa' }}>
       {/* Top bar */}
-      <div className="bg-white border-b px-6 py-4 flex items-center justify-between">
+      <div className="bg-white border-b px-3 md:px-6 py-3 md:py-4 flex items-center justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-lg font-medium text-gray-900">Dashboard</h1>
-          <p className="text-xs text-gray-400 mt-0.5">{dateStr}</p>
+          <h1 className="text-base md:text-lg font-medium text-gray-900">Dashboard</h1>
+          <p className="text-[11px] md:text-xs text-gray-400 mt-0.5">{dateStr}</p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -114,9 +114,9 @@ export default function Dashboard() {
           <Loader2 className="animate-spin text-gray-300" size={32} />
         </div>
       ) : (
-        <div className="px-6 py-5 max-w-7xl mx-auto space-y-5">
+        <div className="px-3 md:px-6 py-4 md:py-5 max-w-7xl mx-auto space-y-4 md:space-y-5">
           {/* Mètriques */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2 md:gap-3">
             <StatCard label="Projectes actius" value={stats.activeProjects || 0} sub={`${stats.readyProjects || 0} preparats`} color="#00617F" icon={Package} />
             <StatCard label="Preparats" value={stats.readyProjects || 0} sub="Llestos per sortir" color="#059669" icon={CheckCircle2} />
             <StatCard label="Tasques pendents" value={stats.pendingTasks || 0} sub={`${stats.todayTasks || 0} per avui`} color="#d97706" icon={ListTodo} />
@@ -141,11 +141,11 @@ export default function Dashboard() {
                   </h3>
                   <div className="flex items-center gap-2">
                     {uniqueAbsent.length > 0 && (
-                      <span className="text-[9px] font-medium px-2 py-0.5 rounded-full bg-red-50 text-red-600">
+                      <span className="text-[10px] md:text-[11px] font-medium px-2 py-0.5 rounded-full bg-red-50 text-red-600">
                         {uniqueAbsent.length} absent{uniqueAbsent.length > 1 ? 's' : ''}
                       </span>
                     )}
-                    <span className="text-[9px] font-medium px-2 py-0.5 rounded-full" style={{ background: '#e6f3f7', color: '#00617F' }}>
+                    <span className="text-[10px] md:text-[11px] font-medium px-2 py-0.5 rounded-full" style={{ background: '#e6f3f7', color: '#00617F' }}>
                       {uniqueAvailable.length} disponible{uniqueAvailable.length !== 1 ? 's' : ''}
                     </span>
                   </div>
@@ -346,10 +346,10 @@ export default function Dashboard() {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0">
                   {tasks.map((t) => (
-                    <div key={t.id} className="flex items-center gap-2.5 px-4 py-2.5 border-b last:border-b-0">
+                    <div key={t.id} className="flex items-center gap-2.5 px-3 md:px-4 py-3 md:py-2.5 border-b last:border-b-0">
                       <button
                         onClick={() => handleToggleTask(t)}
-                        className={`w-4 h-4 rounded flex-shrink-0 border-[1.5px] flex items-center justify-center transition-colors ${
+                        className={`w-5 h-5 md:w-4 md:h-4 rounded flex-shrink-0 border-[1.5px] flex items-center justify-center transition-colors ${
                           t.status === 'OP_DONE'
                             ? 'bg-emerald-500 border-emerald-500'
                             : 'border-gray-300 hover:border-gray-400'
@@ -366,13 +366,13 @@ export default function Dashboard() {
                         </span>
                       </div>
                       {t.assignedTo && (
-                        <span className="flex items-center gap-1 text-[9px] text-gray-400">
+                        <span className="flex items-center gap-1 text-[10px] text-gray-400">
                           {t.assignedTo.color && <span className="w-1.5 h-1.5 rounded-full" style={{ background: t.assignedTo.color }} />}
                           {t.assignedTo.name?.split(' ')[0]}
                         </span>
                       )}
                       {t.category && t.category !== 'GENERAL' && (
-                        <span className={`text-[8px] px-1.5 py-0.5 rounded font-medium ${CATEGORY_COLORS[t.category] || 'bg-gray-50 text-gray-500'}`}>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${CATEGORY_COLORS[t.category] || 'bg-gray-50 text-gray-500'}`}>
                           {CATEGORY_LABELS[t.category] || t.category}
                         </span>
                       )}
@@ -399,15 +399,15 @@ export default function Dashboard() {
 
 function StatCard({ label, value, sub, color, icon: Icon }) {
   return (
-    <div className="bg-white rounded-xl border p-4">
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-[10px] text-gray-400 uppercase tracking-wide">{label}</span>
-        <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${color}10` }}>
+    <div className="bg-white rounded-xl border p-3 md:p-4">
+      <div className="flex items-center justify-between mb-2 md:mb-3">
+        <span className="text-[11px] md:text-[10px] text-gray-400 uppercase tracking-wide">{label}</span>
+        <div className="w-7 h-7 md:w-8 md:h-8 rounded-lg flex items-center justify-center" style={{ background: `${color}10` }}>
           <Icon size={15} style={{ color }} />
         </div>
       </div>
-      <div className="text-2xl font-medium" style={{ color }}>{value}</div>
-      <div className="text-[10px] text-gray-400 mt-1">{sub}</div>
+      <div className="text-xl md:text-2xl font-medium" style={{ color }}>{value}</div>
+      <div className="text-[11px] md:text-[10px] text-gray-400 mt-1">{sub}</div>
     </div>
   );
 }

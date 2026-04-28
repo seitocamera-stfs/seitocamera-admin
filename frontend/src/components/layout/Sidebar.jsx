@@ -28,6 +28,7 @@ import {
   Calendar,
   Activity,
   CalendarOff,
+  X,
 } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
 import useCompanyStore from '../../stores/companyStore';
@@ -93,7 +94,7 @@ const sections = [
 // Component
 // ===========================================
 
-export default function Sidebar() {
+export default function Sidebar({ onClose }) {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const companyName = useCompanyStore((s) => s.name);
@@ -116,7 +117,7 @@ export default function Sidebar() {
 
   return (
     <aside
-      className="w-60 flex flex-col flex-shrink-0"
+      className="w-60 h-full flex flex-col flex-shrink-0"
       style={{ background: 'var(--seito-sidebar)' }}
     >
       {/* Logo */}
@@ -126,10 +127,19 @@ export default function Sidebar() {
           <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-white/15 text-white font-semibold text-sm tracking-wider">
             SC
           </div>
-          <div>
+          <div className="flex-1">
             <div className="text-white font-medium text-sm tracking-widest">SEITO</div>
             <div className="text-[9px] tracking-[3px]" style={{ color: 'rgba(255,255,255,0.5)' }}>CAMERA</div>
           </div>
+          {/* Botó tancar (mòbil) */}
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="lg:hidden p-2 -mr-2 rounded-lg hover:bg-white/10 active:bg-white/20"
+            >
+              <X size={18} className="text-white/60" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -154,10 +164,10 @@ export default function Sidebar() {
                     to={to}
                     end={to === '/'}
                     className={({ isActive }) =>
-                      `flex items-center gap-2.5 px-3 py-[7px] rounded-md text-[12px] transition-all ${
+                      `flex items-center gap-2.5 px-3 py-2.5 lg:py-[7px] rounded-md text-[13px] lg:text-[12px] transition-all ${
                         isActive
                           ? 'font-medium'
-                          : 'hover:bg-white/[0.08]'
+                          : 'hover:bg-white/[0.08] active:bg-white/[0.12]'
                       }`
                     }
                     style={({ isActive }) => ({
@@ -165,7 +175,7 @@ export default function Sidebar() {
                       background: isActive ? 'rgba(255,255,255,0.18)' : undefined,
                     })}
                   >
-                    <Icon size={15} style={{ opacity: 0.85 }} />
+                    <Icon size={16} style={{ opacity: 0.85 }} />
                     {label}
                   </NavLink>
                 ))}
@@ -190,7 +200,7 @@ export default function Sidebar() {
           </div>
           <button
             onClick={handleLogout}
-            className="p-1.5 rounded-md hover:bg-white/10 transition-colors"
+            className="p-2 rounded-md hover:bg-white/10 active:bg-white/20 transition-colors"
             title="Tancar sessió"
           >
             <LogOut size={14} style={{ color: 'rgba(255,255,255,0.5)' }} />
