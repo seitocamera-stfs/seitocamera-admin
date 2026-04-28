@@ -28,6 +28,7 @@ model User {
   passwordHash  String
   name          String
   role          Role     @default(VIEWER)
+  color         String?  // Color diferenciat per l'usuari (hex, ex: #3B82F6)
   // Permisos personalitzats per usuari (només s'usa quan role = CUSTOM)
   // Format: { "sectionKey": "read" | "write" | "admin" }
   // Seccions: dashboard, receivedInvoices, issuedInvoices, suppliers,

@@ -13,6 +13,22 @@ const roleConfig = {
   CUSTOM: { label: 'Personalitzat', icon: SlidersHorizontal, className: 'bg-indigo-100 text-indigo-800', description: 'Selecciona manualment quins menús i amb quin nivell (lectura / edició / total).' },
 };
 
+// Paleta de colors per al personal
+const USER_COLORS = [
+  '#3B82F6', // blau
+  '#EF4444', // vermell
+  '#10B981', // verd
+  '#F59E0B', // groc/ambar
+  '#8B5CF6', // violeta
+  '#EC4899', // rosa
+  '#06B6D4', // cian
+  '#F97316', // taronja
+  '#6366F1', // indi
+  '#14B8A6', // teal
+  '#D946EF', // fúcsia
+  '#84CC16', // lima
+];
+
 const LEVEL_OPTIONS = [
   { value: 'none', label: 'Sense accés' },
   { value: 'read', label: 'Lectura' },
@@ -25,7 +41,7 @@ export default function Users() {
   const [showModal, setShowModal] = useState(false);
   const [showResetModal, setShowResetModal] = useState(null);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'VIEWER', customPermissions: {} });
+  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'VIEWER', color: '', customPermissions: {} });
   const [newPassword, setNewPassword] = useState('');
 
   // Quan canvia el nivell d'una secció al formulari
@@ -50,6 +66,7 @@ export default function Users() {
         ? {
             name: form.name,
             role: form.role,
+            color: form.color || null,
             isActive: form.isActive,
             ...(form.role === 'CUSTOM' ? { customPermissions: form.customPermissions || {} } : { customPermissions: null }),
           }
@@ -58,6 +75,7 @@ export default function Users() {
             email: form.email,
             password: form.password,
             role: form.role,
+            color: form.color || null,
             ...(form.role === 'CUSTOM' ? { customPermissions: form.customPermissions || {} } : {}),
           };
       if (editing) {
@@ -79,6 +97,7 @@ export default function Users() {
       name: user.name,
       email: user.email,
       role: user.role,
+      color: user.color || '',
       isActive: user.isActive,
       customPermissions: user.customPermissions || {},
     });
@@ -107,7 +126,7 @@ export default function Users() {
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold">Gestió d'usuaris</h2>
-        <button onClick={() => { setEditing(null); setForm({ name: '', email: '', password: '', role: 'VIEWER', customPermissions: {} }); setShowModal(true); }} className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90">
+        <button onClick={() => { setEditing(null); setForm({ name: '', email: '', password: '', role: 'VIEWER', color: '', customPermissions: {} }); setShowModal(true); }} className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90">
           <Plus size={16} /> Nou usuari
         </button>
       </div>
@@ -146,7 +165,15 @@ export default function Users() {
                 const role = roleConfig[u.role] || {};
                 return (
                   <tr key={u.id} className="border-t hover:bg-muted/30">
-                    <td className="p-3 font-medium">{u.name} {u.id === currentUser?.id && <span className="text-xs text-muted-foreground">(tu)</span>}</td>
+                    <td className="p-3 font-medium">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="w-3 h-3 rounded-full flex-shrink-0 border border-white shadow-sm"
+                          style={{ background: u.color || '#d1d5db' }}
+                        />
+                        {u.name} {u.id === currentUser?.id && <span className="text-xs text-muted-foreground">(tu)</span>}
+                      </div>
+                    </td>
                     <td className="p-3 text-muted-foreground">{u.email}</td>
                     <td className="p-3 text-center">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${role.className}`}>
@@ -200,6 +227,39 @@ export default function Users() {
               </div>
             </>
           )}
+          <div>
+            <label className="block text-sm font-medium mb-1">Color identificatiu</label>
+            <div className="flex items-center gap-2 flex-wrap">
+              {USER_COLORS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setForm({ ...form, color: c })}
+                  className="w-7 h-7 rounded-full transition-all flex items-center justify-center"
+                  style={{
+                    background: c,
+                    outline: form.color === c ? '2px solid #00617F' : '2px solid transparent',
+                    outlineOffset: '2px',
+                  }}
+                >
+                  {form.color === c && (
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                      <path d="M2 6l3 3 5-5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
+                </button>
+              ))}
+              {form.color && (
+                <button
+                  type="button"
+                  onClick={() => setForm({ ...form, color: '' })}
+                  className="text-[10px] text-gray-400 hover:text-gray-600 ml-1"
+                >
+                  treure
+                </button>
+              )}
+            </div>
+          </div>
           <div>
             <label className="block text-sm font-medium mb-1">Rol *</label>
             <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className="w-full rounded-md border bg-background px-3 py-2 text-sm">

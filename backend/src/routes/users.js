@@ -38,12 +38,14 @@ const createUserSchema = z.object({
   password: z.string().min(8, 'Mínim 8 caràcters'),
   name: z.string().min(2, 'Mínim 2 caràcters'),
   role: z.enum(['ADMIN', 'EDITOR', 'VIEWER', 'CUSTOM']),
+  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Color hex invàlid').optional().nullable(),
   customPermissions: customPermissionsSchema,
 });
 
 const updateUserSchema = z.object({
   name: z.string().min(2).optional(),
   role: z.enum(['ADMIN', 'EDITOR', 'VIEWER', 'CUSTOM']).optional(),
+  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Color hex invàlid').optional().nullable(),
   customPermissions: customPermissionsSchema,
   isActive: z.boolean().optional(),
 });
@@ -59,6 +61,7 @@ router.get('/', async (req, res, next) => {
         email: true,
         name: true,
         role: true,
+        color: true,
         customPermissions: true,
         isActive: true,
         lastLoginAt: true,
@@ -91,12 +94,13 @@ router.post('/', validate(createUserSchema), async (req, res, next) => {
     const permsToStore = role === 'CUSTOM' ? (customPermissions || {}) : null;
 
     const user = await prisma.user.create({
-      data: { email, passwordHash, name, role, customPermissions: permsToStore },
+      data: { email, passwordHash, name, role, color: req.body.color || null, customPermissions: permsToStore },
       select: {
         id: true,
         email: true,
         name: true,
         role: true,
+        color: true,
         customPermissions: true,
         isActive: true,
         createdAt: true,
@@ -135,6 +139,7 @@ router.put('/:id', validate(updateUserSchema), async (req, res, next) => {
         email: true,
         name: true,
         role: true,
+        color: true,
         customPermissions: true,
         isActive: true,
       },

@@ -31,6 +31,7 @@ async function authenticate(req, res, next) {
         email: true,
         name: true,
         role: true,
+        color: true,
         customPermissions: true,
         isActive: true,
       },
