@@ -391,4 +391,208 @@ router.post('/analyze', authorize('ADMIN', 'EDITOR'), async (req, res, next) => 
   }
 });
 
+// ===========================================
+// REGLES — Gestió de regles de l'agent
+// ===========================================
+
+const VALID_CATEGORIES = ['INVOICES', 'CLASSIFICATION', 'CONCILIATION', 'SUPPLIERS', 'ANOMALIES', 'FISCAL', 'GENERAL'];
+const VALID_SOURCES = ['MANUAL', 'LEARNED', 'SYSTEM'];
+
+/**
+ * GET /api/agent/rules — Llistar regles
+ */
+router.get('/rules', async (req, res, next) => {
+  try {
+    const { category, isActive, source, search } = req.query;
+    const where = {};
+    if (category) where.category = category;
+    if (isActive !== undefined) where.isActive = isActive === 'true';
+    if (source) where.source = source;
+    if (search) {
+      where.OR = [
+        { title: { contains: search, mode: 'insensitive' } },
+        { condition: { contains: search, mode: 'insensitive' } },
+        { action: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    const rules = await prisma.agentRule.findMany({
+      where,
+      include: { createdBy: { select: { id: true, name: true } } },
+      orderBy: [{ priority: 'desc' }, { createdAt: 'desc' }],
+    });
+
+    res.json(rules);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/agent/rules — Crear regla
+ */
+router.post('/rules', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const { title, condition, action, category, priority, examples } = req.body;
+    if (!title?.trim() || !condition?.trim() || !action?.trim()) {
+      return res.status(400).json({ error: 'Títol, condició i acció són obligatoris' });
+    }
+    if (category && !VALID_CATEGORIES.includes(category)) {
+      return res.status(400).json({ error: `Categoria invàlida. Opcions: ${VALID_CATEGORIES.join(', ')}` });
+    }
+
+    const rule = await prisma.agentRule.create({
+      data: {
+        title: title.trim(),
+        condition: condition.trim(),
+        action: action.trim(),
+        category: category || 'GENERAL',
+        source: 'MANUAL',
+        priority: priority || 0,
+        examples: examples?.trim() || null,
+        createdById: req.user.id,
+      },
+      include: { createdBy: { select: { id: true, name: true } } },
+    });
+
+    res.status(201).json(rule);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * PUT /api/agent/rules/:id — Actualitzar regla
+ */
+router.put('/rules/:id', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const existing = await prisma.agentRule.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: 'Regla no trobada' });
+
+    const { title, condition, action, category, priority, examples, isActive } = req.body;
+    const data = {};
+    if (title !== undefined) data.title = title.trim();
+    if (condition !== undefined) data.condition = condition.trim();
+    if (action !== undefined) data.action = action.trim();
+    if (category !== undefined) {
+      if (!VALID_CATEGORIES.includes(category)) {
+        return res.status(400).json({ error: `Categoria invàlida` });
+      }
+      data.category = category;
+    }
+    if (priority !== undefined) data.priority = priority;
+    if (examples !== undefined) data.examples = examples?.trim() || null;
+    if (isActive !== undefined) data.isActive = isActive;
+
+    const rule = await prisma.agentRule.update({
+      where: { id: req.params.id },
+      data,
+      include: { createdBy: { select: { id: true, name: true } } },
+    });
+
+    res.json(rule);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * PATCH /api/agent/rules/:id/toggle — Activar/desactivar regla
+ */
+router.patch('/rules/:id/toggle', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const existing = await prisma.agentRule.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: 'Regla no trobada' });
+
+    const rule = await prisma.agentRule.update({
+      where: { id: req.params.id },
+      data: { isActive: !existing.isActive },
+    });
+
+    res.json(rule);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * DELETE /api/agent/rules/:id — Eliminar regla
+ */
+router.delete('/rules/:id', authorize('ADMIN'), async (req, res, next) => {
+  try {
+    const existing = await prisma.agentRule.findUnique({ where: { id: req.params.id } });
+    if (!existing) return res.status(404).json({ error: 'Regla no trobada' });
+
+    await prisma.agentRule.delete({ where: { id: req.params.id } });
+    res.json({ message: 'Regla eliminada' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/agent/rules/learn — L'agent aprèn una regla d'una correcció
+ * Body: { correction, context }
+ * Exemple: { correction: "La factura correcta és sempre l'última rebuda", context: "Factures duplicades del mateix proveïdor" }
+ */
+router.post('/rules/learn', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const { correction, context } = req.body;
+    if (!correction?.trim()) {
+      return res.status(400).json({ error: 'La correcció és obligatòria' });
+    }
+
+    // Usar Claude per convertir la correcció en una regla estructurada
+    const prompt = `L'usuari ha fet una correcció al sistema comptable. Converteix-la en una regla clara i estructurada.
+
+CORRECCIÓ DE L'USUARI: "${correction}"
+${context ? `CONTEXT: "${context}"` : ''}
+
+Respon en JSON:
+{
+  "title": "Títol curt (màx 60 caràcters)",
+  "condition": "Quan passa... (descripció de la situació)",
+  "action": "L'acció a fer... (què ha de fer l'agent)",
+  "category": "INVOICES|CLASSIFICATION|CONCILIATION|SUPPLIERS|ANOMALIES|FISCAL|GENERAL",
+  "priority": 0
+}`;
+
+    const response = await agent.chat(prompt, [], {});
+
+    // Intentar parsejar la resposta com JSON
+    let ruleData;
+    try {
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      ruleData = JSON.parse(jsonMatch[0]);
+    } catch {
+      // Si no pot parsejar, crear regla bàsica
+      ruleData = {
+        title: correction.substring(0, 60),
+        condition: context || correction,
+        action: correction,
+        category: 'GENERAL',
+        priority: 0,
+      };
+    }
+
+    const rule = await prisma.agentRule.create({
+      data: {
+        title: ruleData.title,
+        condition: ruleData.condition,
+        action: ruleData.action,
+        category: VALID_CATEGORIES.includes(ruleData.category) ? ruleData.category : 'GENERAL',
+        source: 'LEARNED',
+        priority: ruleData.priority || 0,
+        examples: correction,
+        createdById: req.user.id,
+      },
+      include: { createdBy: { select: { id: true, name: true } } },
+    });
+
+    res.status(201).json(rule);
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;

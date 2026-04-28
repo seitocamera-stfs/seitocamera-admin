@@ -14,6 +14,7 @@ import {
   Bot,
   Camera,
   BrainCircuit,
+  Brain,
   Calculator,
   Plug,
   CalendarDays,
@@ -62,6 +63,7 @@ const sections = [
       { to: '/fiscal', icon: Calculator, label: 'Fiscal', section: 'fiscal' },
       { to: '/reminders', icon: Bell, label: 'Recordatoris', section: 'reminders' },
       { to: '/agent', icon: Bot, label: 'Agent comptable', section: 'agent' },
+      { to: '/agent/rules', icon: Brain, label: 'Regles agent', section: 'agent' },
     ],
   },
   {

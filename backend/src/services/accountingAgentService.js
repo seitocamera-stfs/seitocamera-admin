@@ -385,7 +385,20 @@ HISTORIAL PROVEÏDOR:
 - Import mitjà: ${supplierHistory.importMig}€
 - Rang: ${supplierHistory.importMin}€ - ${supplierHistory.importMax}€` : ''}`;
 
-  const response = await callLLM(SYSTEM_PROMPT_CLASSIFIER, [
+  // Carregar regles de classificació
+  const classRules = await prisma.agentRule.findMany({
+    where: { isActive: true, category: { in: ['CLASSIFICATION', 'INVOICES', 'GENERAL'] } },
+    orderBy: { priority: 'desc' },
+  });
+  let classifierPrompt = SYSTEM_PROMPT_CLASSIFIER;
+  if (classRules.length > 0) {
+    classifierPrompt += '\n\nREGLES ADDICIONALS DEFINIDES PER L\'USUARI (SEGUIR SEMPRE):';
+    classRules.forEach((r) => {
+      classifierPrompt += `\n- ${r.title}: Quan: ${r.condition} → ${r.action}`;
+    });
+  }
+
+  const response = await callLLM(classifierPrompt, [
     { role: 'user', content: invoiceText },
   ]);
 
@@ -443,7 +456,20 @@ async function analyzeAnomalies(invoiceIds) {
   ${stats ? `Historial proveïdor: ${stats._count} factures, mitjana ${stats._avg?.totalAmount || '?'}€` : ''}`;
   }).join('\n');
 
-  const response = await callLLM(SYSTEM_PROMPT_ANOMALY, [
+  // Carregar regles d'anomalies
+  const anomalyRules = await prisma.agentRule.findMany({
+    where: { isActive: true, category: { in: ['ANOMALIES', 'INVOICES', 'GENERAL'] } },
+    orderBy: { priority: 'desc' },
+  });
+  let anomalyPrompt = SYSTEM_PROMPT_ANOMALY;
+  if (anomalyRules.length > 0) {
+    anomalyPrompt += '\n\nREGLES ADDICIONALS DEFINIDES PER L\'USUARI (SEGUIR SEMPRE):';
+    anomalyRules.forEach((r) => {
+      anomalyPrompt += `\n- ${r.title}: Quan: ${r.condition} → ${r.action}`;
+    });
+  }
+
+  const response = await callLLM(anomalyPrompt, [
     { role: 'user', content: `Analitza aquestes ${invoices.length} factures:\n${invoicesText}` },
   ]);
 
@@ -1026,6 +1052,39 @@ ${pendingReminders.map((r) => `- ${r.dueAt?.toISOString().split('T')[0]} | [${r.
 
 FACTURES AMB VENCIMENT PRÒXIMS 30 DIES (${soonDue.length}):
 ${soonDue.map((inv) => `- ${inv.invoiceNumber} | ${inv.supplier?.name || '?'} | ${inv.totalAmount}€ | Venciment: ${inv.dueDate?.toISOString().split('T')[0]}`).join('\n')}`);
+  }
+
+  // ============================================
+  // REGLES DE L'AGENT (sempre)
+  // ============================================
+
+  const activeRules = await prisma.agentRule.findMany({
+    where: { isActive: true },
+    orderBy: [{ priority: 'desc' }, { category: 'asc' }],
+  });
+
+  if (activeRules.length > 0) {
+    const rulesByCategory = {};
+    activeRules.forEach((r) => {
+      if (!rulesByCategory[r.category]) rulesByCategory[r.category] = [];
+      rulesByCategory[r.category].push(r);
+    });
+
+    let rulesText = '\n\nREGLES CONFIGURADES PER L\'USUARI (SEGUIR SEMPRE):';
+    for (const [cat, rules] of Object.entries(rulesByCategory)) {
+      rulesText += `\n\n[${cat}]`;
+      rules.forEach((r) => {
+        rulesText += `\n- ${r.title}: Quan: ${r.condition} → Acció: ${r.action}${r.priority >= 2 ? ' ⚠️ PRIORITAT ALTA' : ''}`;
+      });
+    }
+    contextParts.push(rulesText);
+
+    // Actualitzar comptador d'ús (async, no esperem)
+    const ruleIds = activeRules.map((r) => r.id);
+    prisma.agentRule.updateMany({
+      where: { id: { in: ruleIds } },
+      data: { timesApplied: { increment: 1 }, lastAppliedAt: new Date() },
+    }).catch(() => {});
   }
 
   // ============================================

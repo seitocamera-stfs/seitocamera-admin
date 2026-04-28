@@ -56,6 +56,7 @@ model User {
   createdTasks          ProjectTask[]     @relation("TaskCreator")
   assignedTasks         ProjectTask[]     @relation("TaskAssignee")
   completedTasks        ProjectTask[]     @relation("TaskCompleter")
+  agentRules            AgentRule[]       @relation("agentRulesCreated")
 
   @@map("users")
 }
@@ -1199,6 +1200,48 @@ model Protocol {
 
   @@index([category])
   @@map("protocols")
+}
+
+// ===========================================
+// Regles de l'agent comptable
+// ===========================================
+
+enum AgentRuleCategory {
+  INVOICES        // Factures (duplicats, validació, etc.)
+  CLASSIFICATION  // Classificació comptable (PGC)
+  CONCILIATION    // Conciliació bancària
+  SUPPLIERS       // Proveïdors
+  ANOMALIES       // Detecció d'anomalies
+  FISCAL          // IVA, impostos, fiscal
+  GENERAL         // Regles generals
+}
+
+enum AgentRuleSource {
+  MANUAL          // Creada manualment per l'usuari
+  LEARNED         // Apresa d'una correcció de l'usuari
+  SYSTEM          // Regla del sistema predefinida
+}
+
+model AgentRule {
+  id              String            @id @default(cuid())
+  title           String            // Títol curt descriptiu
+  condition       String            // Condició: "Quan passa X..."
+  action          String            // Acció: "Fer Y..."
+  category        AgentRuleCategory @default(GENERAL)
+  source          AgentRuleSource   @default(MANUAL)
+  priority        Int               @default(0) // 0=normal, 1=alta, 2=crítica
+  isActive        Boolean           @default(true)
+  examples        String?           // Exemples concrets (text lliure)
+  createdById     String?
+  createdBy       User?             @relation("agentRulesCreated", fields: [createdById], references: [id])
+  timesApplied    Int               @default(0) // Quantes vegades s'ha usat
+  lastAppliedAt   DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([category])
+  @@index([isActive])
+  @@map("agent_rules")
 }
 
 model OpNotification {
