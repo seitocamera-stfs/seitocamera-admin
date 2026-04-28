@@ -22,7 +22,7 @@ const levelEnum = z.enum(['read', 'write', 'admin']);
 const SECTION_KEYS = [
   'dashboard', 'receivedInvoices', 'issuedInvoices', 'sharedInvoices',
   'suppliers', 'clients', 'bank', 'conciliation', 'reminders',
-  'equipment', 'agent', 'fiscal',
+  'equipment', 'agent', 'fiscal', 'operations',
 ];
 
 const customPermissionsSchema = z.record(z.string(), levelEnum)

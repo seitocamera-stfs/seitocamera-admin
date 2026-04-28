@@ -8,6 +8,24 @@ const router = express.Router();
 router.use(authenticate);
 
 // ===========================================
+// EQUIP — Llista d'usuaris actius (per selectors)
+// ===========================================
+
+// GET /api/operations/team — Usuaris actius (id, name) per usar als selectors
+router.get('/team', async (req, res, next) => {
+  try {
+    const users = await prisma.user.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true, email: true },
+      orderBy: { name: 'asc' },
+    });
+    res.json(users);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ===========================================
 // ROLS — Definicions i Assignacions
 // ===========================================
 
@@ -197,6 +215,11 @@ router.get('/projects/:id', async (req, res, next) => {
           orderBy: { createdAt: 'desc' },
         },
         tasks: {
+          include: {
+            createdBy: { select: { id: true, name: true } },
+            assignedTo: { select: { id: true, name: true } },
+            completedBy: { select: { id: true, name: true } },
+          },
           orderBy: [{ status: 'asc' }, { createdAt: 'asc' }],
         },
         equipmentItems: {
@@ -517,22 +540,32 @@ router.post('/projects/:id/tasks', async (req, res, next) => {
         projectId: req.params.id,
         title,
         description,
+        createdById: req.user.id,
         assignedToId,
         dueAt: dueAt ? new Date(dueAt) : null,
         requiresSupervision,
       },
+      include: {
+        createdBy: { select: { id: true, name: true } },
+        assignedTo: { select: { id: true, name: true } },
+      },
     });
 
-    // Notificar si s'assigna a algú
-    if (assignedToId) {
+    // Notificar si s'assigna a algú (delegació)
+    if (assignedToId && assignedToId !== req.user.id) {
+      const project = await prisma.rentalProject.findUnique({
+        where: { id: req.params.id },
+        select: { name: true },
+      });
       await prisma.opNotification.create({
         data: {
           userId: assignedToId,
           type: 'task_assigned',
-          title: 'Nova tasca assignada',
-          message: title,
+          title: `Tasca delegada per ${req.user.name || 'un company'}`,
+          message: `${title}${project ? ` — Projecte: ${project.name}` : ''}`,
           entityType: 'rental_project',
           entityId: req.params.id,
+          priority: requiresSupervision ? 'high' : 'normal',
         },
       });
     }
@@ -560,10 +593,40 @@ router.put('/tasks/:id', async (req, res, next) => {
         data.completedById = req.user.id;
       }
     }
+
+    // Obtenir tasca actual per saber si l'assignació canvia
+    const currentTask = await prisma.projectTask.findUnique({
+      where: { id: req.params.id },
+      select: { assignedToId: true, title: true, projectId: true },
+    });
+
     const task = await prisma.projectTask.update({
       where: { id: req.params.id },
       data,
+      include: {
+        createdBy: { select: { id: true, name: true } },
+        assignedTo: { select: { id: true, name: true } },
+      },
     });
+
+    // Notificar si s'ha reassignat a algú diferent
+    if (assignedToId && assignedToId !== currentTask?.assignedToId && assignedToId !== req.user.id) {
+      const project = await prisma.rentalProject.findUnique({
+        where: { id: currentTask.projectId },
+        select: { name: true },
+      });
+      await prisma.opNotification.create({
+        data: {
+          userId: assignedToId,
+          type: 'task_assigned',
+          title: `Tasca reassignada per ${req.user.name || 'un company'}`,
+          message: `${currentTask.title}${project ? ` — Projecte: ${project.name}` : ''}`,
+          entityType: 'rental_project',
+          entityId: currentTask.projectId,
+        },
+      });
+    }
+
     res.json(task);
   } catch (err) {
     next(err);
@@ -899,6 +962,34 @@ router.get('/daily/:date', async (req, res, next) => {
       orderBy: { role: { sortOrder: 'asc' } },
     });
 
+    // Tasques del dia: amb dueAt avui O pendents assignades (sense completar)
+    const tasksToday = await prisma.projectTask.findMany({
+      where: {
+        OR: [
+          // Tasques amb data límit avui
+          { dueAt: { gte: date, lt: nextDay } },
+          // Tasques pendents assignades a algú (per mostrar per usuari)
+          {
+            assignedToId: { not: null },
+            status: { in: ['OP_PENDING', 'OP_IN_PROGRESS'] },
+            dueAt: { lte: nextDay }, // data límit avui o passat (pendents)
+          },
+          // Tasques pendents sense data límit però assignades
+          {
+            assignedToId: { not: null },
+            status: { in: ['OP_PENDING', 'OP_IN_PROGRESS'] },
+            dueAt: null,
+          },
+        ],
+      },
+      include: {
+        project: { select: { id: true, name: true } },
+        assignedTo: { select: { id: true, name: true } },
+        createdBy: { select: { id: true, name: true } },
+      },
+      orderBy: [{ dueAt: 'asc' }, { createdAt: 'asc' }],
+    });
+
     res.json({
       plan,
       departuresToday,
@@ -906,6 +997,7 @@ router.get('/daily/:date', async (req, res, next) => {
       returnsToday,
       openIncidents,
       staff,
+      tasksToday,
     });
   } catch (err) {
     next(err);
@@ -937,6 +1029,62 @@ router.put('/daily/:date', async (req, res, next) => {
       },
     });
     res.json(plan);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ===========================================
+// CALENDARI MENSUAL
+// ===========================================
+
+// GET /api/operations/calendar/:year/:month — Dades del calendari mensual
+router.get('/calendar/:year/:month', async (req, res, next) => {
+  try {
+    const year = parseInt(req.params.year);
+    const month = parseInt(req.params.month) - 1; // JS months are 0-based
+    const startDate = new Date(year, month, 1);
+    const endDate = new Date(year, month + 1, 1);
+
+    // Projectes que se solapen amb el mes (sortida o retorn dins del mes)
+    const projects = await prisma.rentalProject.findMany({
+      where: {
+        OR: [
+          { departureDate: { gte: startDate, lt: endDate } },
+          { returnDate: { gte: startDate, lt: endDate } },
+          // Projectes que cobreixen tot el mes
+          { departureDate: { lt: startDate }, returnDate: { gte: endDate } },
+        ],
+        status: { not: 'CLOSED' },
+      },
+      select: {
+        id: true,
+        name: true,
+        departureDate: true,
+        returnDate: true,
+        status: true,
+        priority: true,
+        clientName: true,
+        rentmanProjectId: true,
+        leadUser: { select: { id: true, name: true } },
+      },
+      orderBy: [{ priority: 'desc' }, { departureDate: 'asc' }],
+    });
+
+    // Tasques amb dueAt dins del mes
+    const tasks = await prisma.projectTask.findMany({
+      where: {
+        dueAt: { gte: startDate, lt: endDate },
+      },
+      include: {
+        project: { select: { id: true, name: true } },
+        assignedTo: { select: { id: true, name: true } },
+        createdBy: { select: { id: true, name: true } },
+      },
+      orderBy: { dueAt: 'asc' },
+    });
+
+    res.json({ projects, tasks, year, month: month + 1 });
   } catch (err) {
     next(err);
   }

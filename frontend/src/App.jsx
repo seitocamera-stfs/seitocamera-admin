@@ -24,6 +24,7 @@ import OperationsProjects from './pages/operations/Projects';
 import OperationsIncidents from './pages/operations/Incidents';
 import OperationsRoles from './pages/operations/Roles';
 import OperationsProtocols from './pages/operations/Protocols';
+import OperationsCalendar from './pages/operations/Calendar';
 import useAuthStore from './stores/authStore';
 
 function App() {
@@ -65,6 +66,7 @@ function App() {
         <Route path="operations/incidents" element={<OperationsIncidents />} />
         <Route path="operations/roles" element={<OperationsRoles />} />
         <Route path="operations/protocols" element={<OperationsProtocols />} />
+        <Route path="operations/calendar" element={<OperationsCalendar />} />
       </Route>
     </Routes>
   );

@@ -52,6 +52,9 @@ model User {
   roleAssignments       RoleAssignment[]
   projectAssignments    ProjectAssignment[]
   ledProjects           RentalProject[]   @relation("ProjectLead")
+  createdTasks          ProjectTask[]     @relation("TaskCreator")
+  assignedTasks         ProjectTask[]     @relation("TaskAssignee")
+  completedTasks        ProjectTask[]     @relation("TaskCompleter")
 
   @@map("users")
 }
@@ -962,6 +965,7 @@ model RentalProject {
   @@index([status])
   @@index([leadUserId])
   @@index([priority])
+  @@index([rentmanProjectId])
   @@map("rental_projects")
 }
 
@@ -1027,6 +1031,7 @@ model ProjectTask {
   projectId       String
   title           String
   description     String?
+  createdById     String?
   assignedToId    String?
   status          OpTaskStatus   @default(OP_PENDING)
   dueAt           DateTime?
@@ -1038,10 +1043,15 @@ model ProjectTask {
 
   // Relacions
   project         RentalProject  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy       User?          @relation("TaskCreator", fields: [createdById], references: [id])
+  assignedTo      User?          @relation("TaskAssignee", fields: [assignedToId], references: [id])
+  completedBy     User?          @relation("TaskCompleter", fields: [completedById], references: [id])
 
   @@index([projectId])
   @@index([assignedToId])
+  @@index([createdById])
   @@index([status])
+  @@index([dueAt])
   @@map("project_tasks")
 }
 

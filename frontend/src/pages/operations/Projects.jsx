@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import {
   Package, Plus, Search, Filter, Clock, User, Users, AlertTriangle,
   CheckCircle2, XCircle, ChevronDown, X, Loader2, ArrowRight,
-  CalendarDays, Truck, Wrench, Eye, Edit2, MessageSquare,
+  CalendarDays, Truck, Wrench, Eye, Edit2, MessageSquare, RefreshCw,
 } from 'lucide-react';
 import { useApiGet } from '../../hooks/useApi';
 import api from '../../lib/api';
@@ -42,6 +42,8 @@ export default function Projects() {
   const [search, setSearch] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
 
   const activeStatuses = statusFilter || ALL_STATUSES.filter(s => s !== 'CLOSED').join(',');
 
@@ -52,6 +54,20 @@ export default function Projects() {
   });
 
   const projects = data?.projects || [];
+
+  const handleSyncRentman = async () => {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const res = await api.post('/rentman/sync/projects');
+      setSyncResult(res.data);
+      refetch();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error sincronitzant amb Rentman');
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   return (
     <div className="p-6 space-y-4 max-w-7xl mx-auto">
@@ -80,6 +96,15 @@ export default function Projects() {
             </button>
           </div>
           <button
+            onClick={handleSyncRentman}
+            disabled={syncing}
+            className="flex items-center gap-2 border border-primary text-primary px-4 py-2 rounded-md text-sm hover:bg-primary/10 disabled:opacity-50"
+            title="Importar projectes actuals de Rentman"
+          >
+            <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
+            {syncing ? 'Sincronitzant...' : 'Sync Rentman'}
+          </button>
+          <button
             onClick={() => setShowCreate(true)}
             className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm hover:bg-primary/90"
           >
@@ -87,6 +112,22 @@ export default function Projects() {
           </button>
         </div>
       </div>
+
+      {/* Resultat sync */}
+      {syncResult && (
+        <div className="flex items-center gap-3 bg-green-50 border border-green-200 text-green-800 rounded-lg px-4 py-2 text-sm">
+          <CheckCircle2 size={16} />
+          <span>
+            Sync completat: {syncResult.created} nous, {syncResult.updated} actualitzats
+            {syncResult.skipped > 0 && `, ${syncResult.skipped} saltats`}
+            {syncResult.errors > 0 && `, ${syncResult.errors} errors`}
+            <span className="text-green-600 ml-1">({syncResult.totalFiltered}/{syncResult.totalRentman} projectes Rentman filtrats)</span>
+          </span>
+          <button onClick={() => setSyncResult(null)} className="ml-auto text-green-600 hover:text-green-800">
+            <X size={14} />
+          </button>
+        </div>
+      )}
 
       {/* Filtres */}
       <div className="flex items-center gap-3 flex-wrap">
@@ -147,7 +188,12 @@ export default function Projects() {
                 projects.map(p => (
                   <tr key={p.id} className="hover:bg-accent/50 cursor-pointer" onClick={() => setSelectedProject(p.id)}>
                     <td className="p-3">
-                      <div className="font-medium">{p.name}</div>
+                      <div className="font-medium flex items-center gap-1.5">
+                        {p.name}
+                        {p.rentmanProjectId && (
+                          <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-normal" title="Importat de Rentman">RM</span>
+                        )}
+                      </div>
                       {p.clientName && <div className="text-xs text-muted-foreground">{p.clientName}</div>}
                       {p.client && <div className="text-xs text-muted-foreground">{p.client.name}</div>}
                     </td>
@@ -734,13 +780,20 @@ function EquipmentTab({ project, refetch }) {
 
 function TasksTab({ project, refetch }) {
   const [adding, setAdding] = useState(false);
-  const [newTask, setNewTask] = useState('');
+  const [taskForm, setTaskForm] = useState({ title: '', description: '', assignedToId: '', dueAt: '', requiresSupervision: false });
+  const { data: teamUsers } = useApiGet('/operations/team');
 
   const handleAdd = async () => {
-    if (!newTask.trim()) return;
+    if (!taskForm.title.trim()) return;
     try {
-      await api.post(`/operations/projects/${project.id}/tasks`, { title: newTask });
-      setNewTask('');
+      await api.post(`/operations/projects/${project.id}/tasks`, {
+        title: taskForm.title,
+        description: taskForm.description || undefined,
+        assignedToId: taskForm.assignedToId || undefined,
+        dueAt: taskForm.dueAt || undefined,
+        requiresSupervision: taskForm.requiresSupervision,
+      });
+      setTaskForm({ title: '', description: '', assignedToId: '', dueAt: '', requiresSupervision: false });
       setAdding(false);
       refetch();
     } catch (err) {
@@ -755,6 +808,15 @@ function TasksTab({ project, refetch }) {
       refetch();
     } catch (err) {
       alert('Error actualitzant');
+    }
+  };
+
+  const handleReassign = async (taskId, assignedToId) => {
+    try {
+      await api.put(`/operations/tasks/${taskId}`, { assignedToId: assignedToId || null });
+      refetch();
+    } catch (err) {
+      alert('Error reassignant');
     }
   };
 
@@ -777,22 +839,82 @@ function TasksTab({ project, refetch }) {
         </div>
       )}
       {adding && (
-        <div className="flex gap-2">
-          <input value={newTask} onChange={e => setNewTask(e.target.value)}
-            placeholder="Títol de la tasca..." className="flex-1 border rounded-md px-3 py-1.5 text-sm bg-background" />
-          <button onClick={handleAdd} className="bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-sm">Afegir</button>
+        <div className="border rounded-lg p-3 space-y-2 bg-muted/30">
+          <input value={taskForm.title} onChange={e => setTaskForm({ ...taskForm, title: e.target.value })}
+            placeholder="Títol de la tasca *" className="w-full border rounded-md px-3 py-1.5 text-sm bg-background" />
+          <textarea value={taskForm.description} onChange={e => setTaskForm({ ...taskForm, description: e.target.value })}
+            placeholder="Descripció (opcional)" className="w-full border rounded-md px-3 py-1.5 text-sm bg-background min-h-[50px]" />
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs text-muted-foreground">Assignar a</label>
+              <select value={taskForm.assignedToId} onChange={e => setTaskForm({ ...taskForm, assignedToId: e.target.value })}
+                className="w-full border rounded-md px-2 py-1.5 text-sm bg-background mt-0.5">
+                <option value="">Sense assignar</option>
+                {teamUsers?.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Data límit</label>
+              <input type="date" value={taskForm.dueAt} onChange={e => setTaskForm({ ...taskForm, dueAt: e.target.value })}
+                className="w-full border rounded-md px-2 py-1.5 text-sm bg-background mt-0.5" />
+            </div>
+          </div>
+          <label className="flex items-center gap-2 text-xs">
+            <input type="checkbox" checked={taskForm.requiresSupervision}
+              onChange={e => setTaskForm({ ...taskForm, requiresSupervision: e.target.checked })} />
+            Requereix supervisió
+          </label>
+          <div className="flex justify-end gap-2 pt-1">
+            <button onClick={() => setAdding(false)} className="px-3 py-1.5 text-sm border rounded-md">Cancel·lar</button>
+            <button onClick={handleAdd} className="bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-sm">Crear tasca</button>
+          </div>
         </div>
       )}
       {project.tasks?.map(task => (
-        <div key={task.id} className="flex items-center gap-3 p-2 border rounded-md text-sm">
+        <div key={task.id} className="flex items-start gap-3 p-2.5 border rounded-md text-sm">
           <input type="checkbox" checked={task.status === 'OP_DONE'}
-            onChange={() => handleToggle(task)} />
-          <span className={task.status === 'OP_DONE' ? 'line-through text-muted-foreground' : ''}>
-            {task.title}
-          </span>
-          {task.requiresSupervision && (
-            <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">supervisió</span>
-          )}
+            onChange={() => handleToggle(task)} className="mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={task.status === 'OP_DONE' ? 'line-through text-muted-foreground' : 'font-medium'}>
+                {task.title}
+              </span>
+              {task.requiresSupervision && (
+                <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">supervisió</span>
+              )}
+              {task.dueAt && (
+                <span className="text-[10px] text-muted-foreground">
+                  {new Date(task.dueAt).toLocaleDateString('ca-ES')}
+                </span>
+              )}
+            </div>
+            {task.description && (
+              <p className="text-xs text-muted-foreground mt-0.5">{task.description}</p>
+            )}
+            <div className="flex items-center gap-3 mt-1 text-[10px] text-muted-foreground">
+              {task.createdBy && <span>Creada per: {task.createdBy.name}</span>}
+              {task.assignedTo ? (
+                <span className="flex items-center gap-1">
+                  <User size={10} /> {task.assignedTo.name}
+                </span>
+              ) : (
+                <select onChange={e => handleReassign(task.id, e.target.value)}
+                  className="text-[10px] border rounded px-1 py-0.5 bg-background"
+                  defaultValue="">
+                  <option value="">Assignar...</option>
+                  {teamUsers?.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                </select>
+              )}
+              {task.assignedTo && (
+                <select onChange={e => handleReassign(task.id, e.target.value)}
+                  className="text-[10px] border rounded px-1 py-0.5 bg-background"
+                  defaultValue={task.assignedToId}>
+                  <option value="">Sense assignar</option>
+                  {teamUsers?.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                </select>
+              )}
+            </div>
+          </div>
         </div>
       ))}
     </div>

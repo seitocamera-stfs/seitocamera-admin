@@ -309,26 +309,19 @@ router.post('/backfill/project-references', authorize('ADMIN'), async (req, res,
 });
 
 /**
- * POST /api/rentman/sync/projects — Registrar projectes de Rentman
- * Guarda un resum dels projectes com a notes per tenir visibilitat
+ * POST /api/rentman/sync/projects — Sincronitzar projectes de Rentman → RentalProject
+ * Només importa projectes en curs o futurs. No toca projectes antics.
  */
 router.post('/sync/projects', authorize('ADMIN'), async (req, res, next) => {
   try {
-    const projects = await rentman.getProjects({ limit: 1500 });
-    const projectList = Array.isArray(projects) ? projects : [];
+    const result = await rentmanSync.syncProjects();
+
+    // Guardar timestamp a Redis
+    await redis.set('rentman:lastProjectSync', Date.now().toString());
 
     res.json({
-      message: 'Projectes obtinguts de Rentman',
-      total: projectList.length,
-      data: projectList.map((p) => ({
-        id: p.id,
-        name: p.name || p.displayname,
-        status: p.status,
-        startDate: p.planperiod_start || p.start,
-        endDate: p.planperiod_end || p.end,
-        location: p.location,
-        contact: p.contact_name || p.contact,
-      })),
+      message: 'Sincronització de projectes completada',
+      ...result,
     });
   } catch (error) {
     next(error);

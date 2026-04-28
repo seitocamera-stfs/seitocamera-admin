@@ -47,6 +47,7 @@ const navItems = [
 
 const operationsItems = [
   { to: '/operations/daily', icon: CalendarDays, label: 'Pla del Dia' },
+  { to: '/operations/calendar', icon: CalendarDays, label: 'Calendari' },
   { to: '/operations/projects', icon: Package, label: 'Projectes' },
   { to: '/operations/incidents', icon: AlertTriangle, label: 'Incidències' },
   { to: '/operations/roles', icon: ShieldCheck, label: 'Rols i Personal' },
@@ -99,6 +100,7 @@ export default function Sidebar() {
         ))}
 
         {/* Secció Operacions */}
+        {canAccessSection(user, 'operations') && (
         <div className="pt-4 mt-4 border-t">
           <p className="px-3 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
             <ClipboardList size={14} />
@@ -121,6 +123,7 @@ export default function Sidebar() {
             </NavLink>
           ))}
         </div>
+        )}
       </nav>
 
       {/* Footer */}

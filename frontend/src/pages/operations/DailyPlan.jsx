@@ -3,6 +3,7 @@ import {
   CalendarDays, Package, ArrowRight, Truck, AlertTriangle,
   Users, Clock, CheckCircle2, XCircle, ChevronLeft, ChevronRight,
   Bell, Shield, Warehouse, Wrench, User, Phone, Loader2,
+  ListTodo, Circle,
 } from 'lucide-react';
 import { useApiGet } from '../../hooks/useApi';
 import api from '../../lib/api';
@@ -106,7 +107,20 @@ export default function DailyPlan() {
     );
   }
 
-  const { departuresToday, departuresTomorrow, returnsToday, openIncidents, staff, plan } = data || {};
+  const { departuresToday, departuresTomorrow, returnsToday, openIncidents, staff, plan, tasksToday } = data || {};
+
+  // Agrupar tasques per usuari
+  const tasksByUser = useMemo(() => {
+    if (!tasksToday) return {};
+    const grouped = {};
+    tasksToday.forEach((task) => {
+      const key = task.assignedTo ? task.assignedTo.id : '_unassigned';
+      const name = task.assignedTo ? task.assignedTo.name : 'Sense assignar';
+      if (!grouped[key]) grouped[key] = { name, tasks: [] };
+      grouped[key].tasks.push(task);
+    });
+    return grouped;
+  }, [tasksToday]);
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
@@ -230,6 +244,61 @@ export default function DailyPlan() {
           </div>
         </div>
       </div>
+
+      {/* Tasques pendents per usuari */}
+      {tasksToday?.length > 0 && (
+        <div className="bg-card border rounded-lg">
+          <div className="p-4 border-b flex items-center gap-2">
+            <ListTodo size={18} className="text-primary" />
+            <h2 className="font-semibold">Tasques pendents</h2>
+            <span className="ml-auto bg-primary/10 text-primary text-xs font-semibold px-2 py-0.5 rounded-full">
+              {tasksToday.length}
+            </span>
+          </div>
+          <div className="divide-y">
+            {Object.entries(tasksByUser).map(([userId, group]) => (
+              <div key={userId} className="p-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <User size={14} className="text-muted-foreground" />
+                  <span className="text-sm font-semibold">{group.name}</span>
+                  <span className="text-xs text-muted-foreground">({group.tasks.length})</span>
+                </div>
+                <div className="space-y-1.5 pl-5">
+                  {group.tasks.map((task) => {
+                    const isDone = task.status === 'OP_DONE';
+                    const isOverdue = task.dueAt && new Date(task.dueAt) < new Date() && !isDone;
+                    return (
+                      <div key={task.id} className="flex items-start gap-2 text-sm">
+                        <div className="mt-0.5">
+                          {isDone ? (
+                            <CheckCircle2 size={14} className="text-green-500" />
+                          ) : (
+                            <Circle size={14} className={isOverdue ? 'text-red-400' : 'text-muted-foreground'} />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <span className={isDone ? 'line-through text-muted-foreground' : isOverdue ? 'text-red-700' : ''}>
+                            {task.title}
+                          </span>
+                          <div className="flex items-center gap-2 text-[10px] text-muted-foreground mt-0.5">
+                            {task.project && <span className="bg-muted px-1.5 py-0.5 rounded">{task.project.name}</span>}
+                            {task.dueAt && (
+                              <span className={isOverdue ? 'text-red-500 font-medium' : ''}>
+                                {new Date(task.dueAt).toLocaleDateString('ca-ES')}
+                              </span>
+                            )}
+                            {task.createdBy && <span>per {task.createdBy.name}</span>}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Notes del dia */}
       <DailyNotes dateStr={dateStr} plan={plan} refetch={refetch} />

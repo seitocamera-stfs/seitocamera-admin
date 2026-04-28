@@ -275,10 +275,214 @@ async function syncAllInvoices({ fetchProjects = true, onlyRecentDays = null } =
   };
 }
 
+// ===========================================
+// Sincronització de PROJECTES Rentman → RentalProject
+// ===========================================
+
+/**
+ * Mapeig d'estat Rentman → ProjectStatus intern.
+ * Estats Rentman típics: "option", "confirmed", "quotation", etc.
+ */
+function mapRentmanStatusToProjectStatus(rentmanStatus) {
+  const s = (rentmanStatus || '').toLowerCase();
+  if (['option', 'quotation', 'draft'].includes(s)) return 'PENDING_PREP';
+  if (['confirmed', 'active'].includes(s)) return 'IN_PREPARATION';
+  if (['out', 'on_location'].includes(s)) return 'OUT';
+  if (['returned'].includes(s)) return 'RETURNED';
+  if (['closed', 'cancelled', 'archived'].includes(s)) return 'CLOSED';
+  return 'PENDING_PREP';
+}
+
+/**
+ * Carrega tots els projectes de Rentman (amb paginació)
+ */
+async function fetchAllRentmanProjects({ pageSize = 500 } = {}) {
+  let projects = [];
+  let offset = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const batch = await rentman.getProjects({ limit: pageSize, offset });
+    const batchArray = Array.isArray(batch) ? batch : [];
+    projects = projects.concat(batchArray);
+    offset += pageSize;
+    hasMore = batchArray.length === pageSize;
+  }
+
+  return projects;
+}
+
+/**
+ * Filtra projectes Rentman per obtenir només els actuals i futurs.
+ * Exclou projectes amb data de retorn anterior a fa 7 dies (marge de seguretat).
+ */
+function filterCurrentAndFutureProjects(projects) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 7); // 7 dies de marge per projectes acabats recentment
+
+  return projects.filter((p) => {
+    // Si no té dates, l'incloem (potser encara s'ha de planificar)
+    const endDate = p.planperiod_end || p.end;
+    if (!endDate) return true;
+
+    const end = new Date(endDate);
+    return end >= cutoff;
+  });
+}
+
+/**
+ * Sincronitza un projecte de Rentman amb el model RentalProject.
+ * Crea si no existeix, actualitza si ja existeix.
+ *
+ * @returns {'created' | 'updated' | 'unchanged' | 'skipped'}
+ */
+async function syncOneProject(rmProject) {
+  const rentmanProjectId = String(rmProject.id);
+  const name = rmProject.displayname || rmProject.name || `Projecte Rentman ${rmProject.id}`;
+
+  // Dates
+  const startDateStr = rmProject.planperiod_start || rmProject.start;
+  const endDateStr = rmProject.planperiod_end || rmProject.end;
+  if (!startDateStr || !endDateStr) {
+    // Sense dates no el podem planificar — saltem
+    return 'skipped';
+  }
+
+  const departureDate = new Date(startDateStr);
+  const returnDate = new Date(endDateStr);
+
+  // Validació de dates
+  if (isNaN(departureDate.getTime()) || isNaN(returnDate.getTime())) {
+    return 'skipped';
+  }
+
+  // Client
+  const contactName = rmProject.contact_name || rmProject.contact_mailing_displayname || null;
+  let clientId = null;
+  if (rmProject.customer) {
+    clientId = await findOrCreateClientFromRentman(rmProject.customer);
+  }
+
+  // Estat
+  const status = mapRentmanStatusToProjectStatus(rmProject.status);
+
+  // Buscar si ja existeix
+  const existing = await prisma.rentalProject.findFirst({
+    where: { rentmanProjectId },
+  });
+
+  if (existing) {
+    // Actualitzar camps que poden canviar a Rentman
+    const updates = {};
+
+    if (existing.name !== name) updates.name = name;
+    if (existing.clientName !== contactName && contactName) updates.clientName = contactName;
+    if (clientId && existing.clientId !== clientId) updates.clientId = clientId;
+    if (existing.departureDate.getTime() !== departureDate.getTime()) updates.departureDate = departureDate;
+    if (existing.returnDate.getTime() !== returnDate.getTime()) updates.returnDate = returnDate;
+
+    // Només actualitzem l'estat si encara no s'ha tocat internament
+    // (si l'estat intern ha avançat més enllà del mapeig Rentman, no el retrocedim)
+    const internalStatusOrder = [
+      'PENDING_PREP', 'IN_PREPARATION', 'PENDING_TECH_REVIEW', 'PENDING_FINAL_CHECK',
+      'READY', 'PENDING_LOAD', 'OUT', 'RETURNED', 'RETURN_REVIEW',
+      'WITH_INCIDENT', 'EQUIPMENT_BLOCKED', 'CLOSED',
+    ];
+    const currentIdx = internalStatusOrder.indexOf(existing.status);
+    const newIdx = internalStatusOrder.indexOf(status);
+    // Només actualitzar si Rentman avança l'estat (OUT, RETURNED, CLOSED)
+    if (newIdx > currentIdx && ['OUT', 'RETURNED', 'CLOSED'].includes(status)) {
+      updates.status = status;
+    }
+
+    if (existing.budgetReference !== (rmProject.reference || null) && rmProject.reference) {
+      updates.budgetReference = rmProject.reference;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return 'unchanged';
+    }
+
+    await prisma.rentalProject.update({
+      where: { id: existing.id },
+      data: updates,
+    });
+    return 'updated';
+  }
+
+  // No existeix → crear
+  await prisma.rentalProject.create({
+    data: {
+      name,
+      clientName: contactName,
+      clientId,
+      departureDate,
+      returnDate,
+      status,
+      rentmanProjectId,
+      budgetReference: rmProject.reference || null,
+      internalNotes: rmProject.location ? `Ubicació: ${rmProject.location}` : null,
+    },
+  });
+  return 'created';
+}
+
+/**
+ * Sincronitza tots els projectes actuals/futurs de Rentman → RentalProject.
+ * No importa projectes antics (data fi < 7 dies enrere).
+ */
+async function syncProjects() {
+  const start = Date.now();
+  logger.info('Rentman project sync: iniciant...');
+
+  const allProjects = await fetchAllRentmanProjects();
+  const projectsToSync = filterCurrentAndFutureProjects(allProjects);
+
+  logger.info(`Rentman project sync: ${projectsToSync.length}/${allProjects.length} projectes actuals/futurs`);
+
+  let created = 0;
+  let updated = 0;
+  let unchanged = 0;
+  let skipped = 0;
+  let errors = 0;
+
+  for (const rmProject of projectsToSync) {
+    try {
+      const result = await syncOneProject(rmProject);
+      if (result === 'created') created++;
+      else if (result === 'updated') updated++;
+      else if (result === 'unchanged') unchanged++;
+      else if (result === 'skipped') skipped++;
+    } catch (err) {
+      errors++;
+      logger.error(`Rentman project sync error (${rmProject.id} - ${rmProject.name}): ${err.message}`);
+    }
+  }
+
+  const durationSec = ((Date.now() - start) / 1000).toFixed(1);
+  logger.info(
+    `Rentman project sync completat en ${durationSec}s: ` +
+    `${created} creats, ${updated} actualitzats, ${unchanged} sense canvis, ${skipped} saltats, ${errors} errors`
+  );
+
+  return {
+    totalRentman: allProjects.length,
+    totalFiltered: projectsToSync.length,
+    created,
+    updated,
+    unchanged,
+    skipped,
+    errors,
+    durationSec,
+  };
+}
+
 module.exports = {
   syncAllInvoices,
   syncOneInvoice,
   findOrCreateClientFromRentman,
   getProjectInfoFromInvoice,
   fetchAllRentmanInvoices,
+  syncProjects,
+  syncOneProject,
 };
