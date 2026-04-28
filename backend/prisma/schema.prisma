@@ -910,10 +910,14 @@ model RentalProject {
   clientName          String?
   clientId            String?
 
-  // Dates i horaris
-  departureDate       DateTime
+  // Dates i horaris (cicle Rentman: check → rodatge → devolució)
+  checkDate           DateTime?        // Planning day pre: tècnics preparen/recullen
+  checkTime           String?
+  departureDate       DateTime         // Shooting start: l'equip surt a rodar
   departureTime       String?
-  returnDate          DateTime
+  shootEndDate        DateTime?        // Shooting end: fi del rodatge
+  shootEndTime        String?
+  returnDate          DateTime         // Planning day post: devolució material
   returnTime          String?
   actualReturnDate    DateTime?
 

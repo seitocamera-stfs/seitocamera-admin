@@ -169,7 +169,8 @@ export default function Projects() {
             <thead className="bg-muted/50 border-b">
               <tr>
                 <th className="text-left p-3 font-medium">Projecte</th>
-                <th className="text-left p-3 font-medium">Sortida</th>
+                <th className="text-left p-3 font-medium">Check</th>
+                <th className="text-left p-3 font-medium">Rodatge</th>
                 <th className="text-left p-3 font-medium">Devolució</th>
                 <th className="text-left p-3 font-medium">Responsable</th>
                 <th className="text-left p-3 font-medium">Estat</th>
@@ -180,7 +181,7 @@ export default function Projects() {
             <tbody className="divide-y">
               {projects.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                  <td colSpan={8} className="p-8 text-center text-muted-foreground">
                     Cap projecte trobat
                   </td>
                 </tr>
@@ -198,11 +199,26 @@ export default function Projects() {
                       {p.client && <div className="text-xs text-muted-foreground">{p.client.name}</div>}
                     </td>
                     <td className="p-3 whitespace-nowrap">
+                      {p.checkDate ? (
+                        <>
+                          <div>{new Date(p.checkDate).toLocaleDateString('ca-ES')}</div>
+                          {p.checkTime && <div className="text-xs text-muted-foreground">{p.checkTime}</div>}
+                        </>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="p-3 whitespace-nowrap">
                       <div>{new Date(p.departureDate).toLocaleDateString('ca-ES')}</div>
-                      {p.departureTime && <div className="text-xs text-muted-foreground">{p.departureTime}</div>}
+                      {p.shootEndDate && (
+                        <div className="text-xs text-muted-foreground">
+                          → {new Date(p.shootEndDate).toLocaleDateString('ca-ES')}
+                        </div>
+                      )}
                     </td>
                     <td className="p-3 whitespace-nowrap">
                       <div>{new Date(p.returnDate).toLocaleDateString('ca-ES')}</div>
+                      {p.returnTime && <div className="text-xs text-muted-foreground">{p.returnTime}</div>}
                     </td>
                     <td className="p-3">
                       {p.leadUser ? (
@@ -337,12 +353,16 @@ export default function Projects() {
 // ===========================================
 
 function CreateProjectModal({ onClose, onCreated }) {
+  const { data: teamUsers } = useApiGet('/operations/team');
   const [form, setForm] = useState({
     name: '', clientName: '',
+    checkDate: '', checkTime: '',
     departureDate: '', departureTime: '',
+    shootEndDate: '', shootEndTime: '',
     returnDate: '', returnTime: '',
-    priority: 0, transportType: '',
-    transportNotes: '', internalNotes: '',
+    priority: 0, leadUserId: '',
+    transportType: '', transportNotes: '', pickupTime: '',
+    internalNotes: '',
     techValidationRequired: false,
   });
   const [saving, setSaving] = useState(false);
@@ -352,7 +372,8 @@ function CreateProjectModal({ onClose, onCreated }) {
     if (!form.name || !form.departureDate || !form.returnDate) return;
     setSaving(true);
     try {
-      await api.post('/operations/projects', form);
+      const body = { ...form, leadUserId: form.leadUserId || undefined };
+      await api.post('/operations/projects', body);
       onCreated();
     } catch (err) {
       alert(err.response?.data?.error || 'Error creant projecte');
@@ -384,6 +405,14 @@ function CreateProjectModal({ onClose, onCreated }) {
             />
           </div>
           <div>
+            <label className="text-sm font-medium">Responsable</label>
+            <select value={form.leadUserId} onChange={e => set('leadUserId', e.target.value)}
+              className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background">
+              <option value="">Sense assignar</option>
+              {teamUsers?.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          </div>
+          <div>
             <label className="text-sm font-medium">Prioritat</label>
             <select value={form.priority} onChange={e => set('priority', parseInt(e.target.value))}
               className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background">
@@ -392,8 +421,22 @@ function CreateProjectModal({ onClose, onCreated }) {
               <option value={2}>Urgent</option>
             </select>
           </div>
+          {/* Dates del cicle: Check → Rodatge → Devolució */}
+          <div className="col-span-2 border-t pt-3 mt-1">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Dates del cicle</p>
+          </div>
           <div>
-            <label className="text-sm font-medium">Data sortida *</label>
+            <label className="text-sm font-medium">Dia de Check (preparació)</label>
+            <input type="date" value={form.checkDate} onChange={e => set('checkDate', e.target.value)}
+              className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background" />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Hora check</label>
+            <input type="time" value={form.checkTime} onChange={e => set('checkTime', e.target.value)}
+              className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background" />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Inici rodatge *</label>
             <input type="date" value={form.departureDate} onChange={e => set('departureDate', e.target.value)}
               className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background" required />
           </div>
@@ -403,7 +446,17 @@ function CreateProjectModal({ onClose, onCreated }) {
               className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background" />
           </div>
           <div>
-            <label className="text-sm font-medium">Data devolució *</label>
+            <label className="text-sm font-medium">Fi rodatge</label>
+            <input type="date" value={form.shootEndDate} onChange={e => set('shootEndDate', e.target.value)}
+              className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background" />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Hora fi rodatge</label>
+            <input type="time" value={form.shootEndTime} onChange={e => set('shootEndTime', e.target.value)}
+              className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background" />
+          </div>
+          <div>
+            <label className="text-sm font-medium">Dia devolució *</label>
             <input type="date" value={form.returnDate} onChange={e => set('returnDate', e.target.value)}
               className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background" required />
           </div>
@@ -417,9 +470,9 @@ function CreateProjectModal({ onClose, onCreated }) {
             <select value={form.transportType} onChange={e => set('transportType', e.target.value)}
               className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background">
               <option value="">— Seleccionar —</option>
-              <option value="INTERN">Intern</option>
-              <option value="EXTERN">Extern</option>
-              <option value="CLIENT_PICKUP">Recollida client</option>
+              <option value="INTERN">Intern (nosaltres portem)</option>
+              <option value="EXTERN">Extern (missatger/transportista)</option>
+              <option value="CLIENT_PICKUP">Recollida pel client</option>
             </select>
           </div>
           <div>
@@ -429,6 +482,21 @@ function CreateProjectModal({ onClose, onCreated }) {
               Requereix validació tècnica
             </label>
           </div>
+          {form.transportType && (
+            <>
+              <div>
+                <label className="text-sm font-medium">Hora recollida/lliurament</label>
+                <input type="time" value={form.pickupTime} onChange={e => set('pickupTime', e.target.value)}
+                  className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background" />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Notes transport</label>
+                <input value={form.transportNotes} onChange={e => set('transportNotes', e.target.value)}
+                  className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background"
+                  placeholder="Adreça, contacte, indicacions..." />
+              </div>
+            </>
+          )}
           <div className="col-span-2">
             <label className="text-sm font-medium">Notes internes</label>
             <textarea value={form.internalNotes} onChange={e => set('internalNotes', e.target.value)}
@@ -558,88 +626,8 @@ function ProjectDetailModal({ projectId, onClose, onUpdate }) {
         {/* Tab Content */}
         <div className="min-h-[300px]">
           {activeTab === 'general' && (
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <span className="text-muted-foreground">Client:</span>
-                <span className="ml-2 font-medium">{project.clientName || project.client?.name || '—'}</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Responsable:</span>
-                <span className="ml-2 font-medium">{project.leadUser?.name || 'Sense assignar'}</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Sortida:</span>
-                <span className="ml-2">{new Date(project.departureDate).toLocaleDateString('ca-ES')} {project.departureTime || ''}</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Devolució:</span>
-                <span className="ml-2">{new Date(project.returnDate).toLocaleDateString('ca-ES')} {project.returnTime || ''}</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Transport:</span>
-                <span className="ml-2">{project.transportType || '—'}</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Pressupost:</span>
-                <span className="ml-2">{project.budgetReference || '—'}</span>
-              </div>
-
-              {/* Validacions */}
-              <div className="col-span-2 mt-4 space-y-2 border-t pt-4">
-                <h4 className="font-semibold">Validacions</h4>
-                <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-2">
-                    {project.warehouseValidated ? (
-                      <CheckCircle2 size={18} className="text-green-600" />
-                    ) : (
-                      <XCircle size={18} className="text-gray-400" />
-                    )}
-                    <span>Magatzem</span>
-                    {!project.warehouseValidated && (
-                      <button onClick={handleValidateWarehouse}
-                        className="text-xs text-primary hover:underline ml-2">Validar</button>
-                    )}
-                  </div>
-                  {project.techValidationRequired && (
-                    <div className="flex items-center gap-2">
-                      {project.techValidated ? (
-                        <CheckCircle2 size={18} className="text-green-600" />
-                      ) : (
-                        <XCircle size={18} className="text-gray-400" />
-                      )}
-                      <span>Tècnica</span>
-                      {!project.techValidated && (
-                        <button onClick={handleValidateTech}
-                          className="text-xs text-primary hover:underline ml-2">Validar</button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Personal assignat */}
-              {project.assignments?.length > 0 && (
-                <div className="col-span-2 mt-2 space-y-2 border-t pt-4">
-                  <h4 className="font-semibold">Personal assignat</h4>
-                  <div className="flex flex-wrap gap-2">
-                    {project.assignments.map(a => (
-                      <span key={a.id} className="text-sm bg-muted px-3 py-1 rounded-full flex items-center gap-1.5">
-                        <User size={12} />
-                        {a.user.name}
-                        <span className="text-xs text-muted-foreground">({a.roleCode?.replace('_', ' ')})</span>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {project.internalNotes && (
-                <div className="col-span-2 mt-2 border-t pt-4">
-                  <h4 className="font-semibold mb-1">Notes internes</h4>
-                  <p className="text-sm text-muted-foreground whitespace-pre-wrap">{project.internalNotes}</p>
-                </div>
-              )}
-            </div>
+            <GeneralTab project={project} projectId={projectId} refetch={() => { refetch(); onUpdate(); }}
+              onValidateWarehouse={handleValidateWarehouse} onValidateTech={handleValidateTech} />
           )}
 
           {activeTab === 'equipment' && (
@@ -777,6 +765,253 @@ function EquipmentTab({ project, refetch }) {
     </div>
   );
 }
+
+// ===========================================
+// Tab General — Editable
+// ===========================================
+
+const TRANSPORT_LABELS = {
+  INTERN: 'Intern (nosaltres portem)',
+  EXTERN: 'Extern (missatger/transportista)',
+  CLIENT_PICKUP: 'Recollida pel client',
+};
+
+function GeneralTab({ project, projectId, refetch, onValidateWarehouse, onValidateTech }) {
+  const { data: teamUsers } = useApiGet('/operations/team');
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({});
+
+  const startEditing = () => {
+    setForm({
+      leadUserId: project.leadUserId || '',
+      transportType: project.transportType || '',
+      transportNotes: project.transportNotes || '',
+      pickupTime: project.pickupTime || '',
+      internalNotes: project.internalNotes || '',
+      clientNotes: project.clientNotes || '',
+    });
+    setEditing(true);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await api.put(`/operations/projects/${projectId}`, {
+        leadUserId: form.leadUserId || null,
+        transportType: form.transportType || null,
+        transportNotes: form.transportNotes || null,
+        pickupTime: form.pickupTime || null,
+        internalNotes: form.internalNotes || null,
+        clientNotes: form.clientNotes || null,
+      });
+      setEditing(false);
+      refetch();
+    } catch (err) {
+      alert('Error guardant');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (editing) {
+    return (
+      <div className="space-y-4 text-sm">
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="text-muted-foreground font-medium">Responsable</label>
+            <select value={form.leadUserId} onChange={e => setForm({ ...form, leadUserId: e.target.value })}
+              className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background">
+              <option value="">Sense assignar</option>
+              {teamUsers?.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-muted-foreground font-medium">Transport</label>
+            <select value={form.transportType} onChange={e => setForm({ ...form, transportType: e.target.value })}
+              className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background">
+              <option value="">— Seleccionar —</option>
+              <option value="INTERN">Intern</option>
+              <option value="EXTERN">Extern</option>
+              <option value="CLIENT_PICKUP">Recollida client</option>
+            </select>
+          </div>
+          {form.transportType && (
+            <>
+              <div>
+                <label className="text-muted-foreground font-medium">Hora recollida/lliurament</label>
+                <input type="time" value={form.pickupTime} onChange={e => setForm({ ...form, pickupTime: e.target.value })}
+                  className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background" />
+              </div>
+              <div>
+                <label className="text-muted-foreground font-medium">Notes transport</label>
+                <input value={form.transportNotes} onChange={e => setForm({ ...form, transportNotes: e.target.value })}
+                  className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background"
+                  placeholder="Adreça, contacte, indicacions..." />
+              </div>
+            </>
+          )}
+          <div className="col-span-2">
+            <label className="text-muted-foreground font-medium">Notes internes</label>
+            <textarea value={form.internalNotes} onChange={e => setForm({ ...form, internalNotes: e.target.value })}
+              className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background min-h-[60px]"
+              placeholder="Notes sobre el projecte..." />
+          </div>
+          <div className="col-span-2">
+            <label className="text-muted-foreground font-medium">Notes pel client</label>
+            <textarea value={form.clientNotes} onChange={e => setForm({ ...form, clientNotes: e.target.value })}
+              className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background min-h-[60px]"
+              placeholder="Observacions que afecten al client..." />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <button onClick={() => setEditing(false)} className="px-3 py-1.5 text-sm border rounded-md">Cancel·lar</button>
+          <button onClick={handleSave} disabled={saving}
+            className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md disabled:opacity-50">
+            {saving ? 'Guardant...' : 'Guardar'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4 text-sm">
+      <div className="flex justify-end">
+        <button onClick={startEditing} className="text-sm text-primary hover:underline flex items-center gap-1">
+          <Edit2 size={14} /> Editar
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <span className="text-muted-foreground">Client:</span>
+          <span className="ml-2 font-medium">{project.clientName || project.client?.name || '—'}</span>
+        </div>
+        <div>
+          <span className="text-muted-foreground">Responsable:</span>
+          <span className="ml-2 font-medium">{project.leadUser?.name || <span className="italic text-muted-foreground">Sense assignar</span>}</span>
+        </div>
+        <div className="col-span-2 border-t pt-3 mt-1">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Cicle del projecte</p>
+          <div className="grid grid-cols-4 gap-3">
+            {project.checkDate && (
+              <div className="bg-blue-50 rounded-md p-2 text-center">
+                <div className="text-[10px] text-blue-600 font-semibold uppercase">Check</div>
+                <div className="font-medium">{new Date(project.checkDate).toLocaleDateString('ca-ES', { day: 'numeric', month: 'short' })}</div>
+                {project.checkTime && <div className="text-xs text-muted-foreground">{project.checkTime}</div>}
+              </div>
+            )}
+            <div className="bg-green-50 rounded-md p-2 text-center">
+              <div className="text-[10px] text-green-600 font-semibold uppercase">Inici rodatge</div>
+              <div className="font-medium">{new Date(project.departureDate).toLocaleDateString('ca-ES', { day: 'numeric', month: 'short' })}</div>
+              {project.departureTime && <div className="text-xs text-muted-foreground">{project.departureTime}</div>}
+            </div>
+            {project.shootEndDate && (
+              <div className="bg-amber-50 rounded-md p-2 text-center">
+                <div className="text-[10px] text-amber-600 font-semibold uppercase">Fi rodatge</div>
+                <div className="font-medium">{new Date(project.shootEndDate).toLocaleDateString('ca-ES', { day: 'numeric', month: 'short' })}</div>
+                {project.shootEndTime && <div className="text-xs text-muted-foreground">{project.shootEndTime}</div>}
+              </div>
+            )}
+            <div className="bg-purple-50 rounded-md p-2 text-center">
+              <div className="text-[10px] text-purple-600 font-semibold uppercase">Devolució</div>
+              <div className="font-medium">{new Date(project.returnDate).toLocaleDateString('ca-ES', { day: 'numeric', month: 'short' })}</div>
+              {project.returnTime && <div className="text-xs text-muted-foreground">{project.returnTime}</div>}
+            </div>
+          </div>
+        </div>
+        <div className="col-span-2 border-t pt-3 mt-1">
+          <h4 className="font-semibold mb-2 flex items-center gap-2"><Truck size={16} /> Transport</h4>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <span className="text-muted-foreground">Tipus:</span>
+              <span className="ml-2">{TRANSPORT_LABELS[project.transportType] || '—'}</span>
+            </div>
+            {project.pickupTime && (
+              <div>
+                <span className="text-muted-foreground">Hora:</span>
+                <span className="ml-2">{project.pickupTime}</span>
+              </div>
+            )}
+            {project.transportNotes && (
+              <div className="col-span-2">
+                <span className="text-muted-foreground">Notes:</span>
+                <span className="ml-2">{project.transportNotes}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Validacions */}
+      <div className="border-t pt-4 space-y-2">
+        <h4 className="font-semibold">Validacions</h4>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            {project.warehouseValidated ? (
+              <CheckCircle2 size={18} className="text-green-600" />
+            ) : (
+              <XCircle size={18} className="text-gray-400" />
+            )}
+            <span>Magatzem</span>
+            {!project.warehouseValidated && (
+              <button onClick={onValidateWarehouse}
+                className="text-xs text-primary hover:underline ml-2">Validar</button>
+            )}
+          </div>
+          {project.techValidationRequired && (
+            <div className="flex items-center gap-2">
+              {project.techValidated ? (
+                <CheckCircle2 size={18} className="text-green-600" />
+              ) : (
+                <XCircle size={18} className="text-gray-400" />
+              )}
+              <span>Tècnica</span>
+              {!project.techValidated && (
+                <button onClick={onValidateTech}
+                  className="text-xs text-primary hover:underline ml-2">Validar</button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Personal assignat */}
+      {project.assignments?.length > 0 && (
+        <div className="border-t pt-4 space-y-2">
+          <h4 className="font-semibold">Personal assignat</h4>
+          <div className="flex flex-wrap gap-2">
+            {project.assignments.map(a => (
+              <span key={a.id} className="text-sm bg-muted px-3 py-1 rounded-full flex items-center gap-1.5">
+                <User size={12} />
+                {a.user.name}
+                {a.roleCode && <span className="text-xs text-muted-foreground">({a.roleCode.replace(/_/g, ' ')})</span>}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {project.internalNotes && (
+        <div className="border-t pt-4">
+          <h4 className="font-semibold mb-1">Notes internes</h4>
+          <p className="text-muted-foreground whitespace-pre-wrap">{project.internalNotes}</p>
+        </div>
+      )}
+      {project.clientNotes && (
+        <div className="border-t pt-4">
+          <h4 className="font-semibold mb-1">Notes pel client</h4>
+          <p className="text-muted-foreground whitespace-pre-wrap">{project.clientNotes}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ===========================================
+// Tab Tasques
+// ===========================================
 
 function TasksTab({ project, refetch }) {
   const [adding, setAdding] = useState(false);

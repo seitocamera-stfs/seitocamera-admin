@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import {
   CalendarDays, Package, ArrowRight, Truck, AlertTriangle,
   Users, Clock, CheckCircle2, XCircle, ChevronLeft, ChevronRight,
@@ -91,20 +91,7 @@ export default function DailyPlan() {
 
   const goToday = () => setSelectedDate(new Date());
 
-  const { departuresToday, departuresTomorrow, returnsToday, openIncidents, staff, plan, tasksToday } = data || {};
-
-  // Agrupar tasques per usuari (hook SEMPRE abans de qualsevol return condicional)
-  const tasksByUser = useMemo(() => {
-    if (!tasksToday) return {};
-    const grouped = {};
-    tasksToday.forEach((task) => {
-      const key = task.assignedTo ? task.assignedTo.id : '_unassigned';
-      const name = task.assignedTo ? task.assignedTo.name : 'Sense assignar';
-      if (!grouped[key]) grouped[key] = { name, tasks: [] };
-      grouped[key].tasks.push(task);
-    });
-    return grouped;
-  }, [tasksToday]);
+  const { checksToday, departuresToday, departuresTomorrow, returnsToday, openIncidents, staff, plan, myTasks } = data || {};
 
   if (loading) {
     return (
@@ -183,12 +170,24 @@ export default function DailyPlan() {
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Sortides d'avui */}
+        {/* Checks d'avui (preparació/recollida material) */}
+        {checksToday?.length > 0 && (
+          <ProjectSection
+            title="Checks d'avui (preparació)"
+            icon={<Wrench size={18} className="text-cyan-600" />}
+            projects={checksToday}
+            emptyText=""
+            isCheck
+            refetch={refetch}
+          />
+        )}
+
+        {/* Sortides d'avui (inici rodatge) */}
         <ProjectSection
-          title="Sortides d'avui"
+          title="Rodatges d'avui"
           icon={<Package size={18} className="text-blue-600" />}
           projects={departuresToday}
-          emptyText="Cap sortida programada per avui"
+          emptyText="Cap rodatge programat per avui"
           refetch={refetch}
         />
 
@@ -245,60 +244,53 @@ export default function DailyPlan() {
         </div>
       </div>
 
-      {/* Tasques pendents per usuari */}
-      {tasksToday?.length > 0 && (
-        <div className="bg-card border rounded-lg">
-          <div className="p-4 border-b flex items-center gap-2">
-            <ListTodo size={18} className="text-primary" />
-            <h2 className="font-semibold">Tasques pendents</h2>
+      {/* Les meves tasques */}
+      <div className="bg-card border rounded-lg">
+        <div className="p-4 border-b flex items-center gap-2">
+          <ListTodo size={18} className="text-primary" />
+          <h2 className="font-semibold">Les meves tasques</h2>
+          {myTasks?.length > 0 && (
             <span className="ml-auto bg-primary/10 text-primary text-xs font-semibold px-2 py-0.5 rounded-full">
-              {tasksToday.length}
+              {myTasks.length}
             </span>
-          </div>
-          <div className="divide-y">
-            {Object.entries(tasksByUser).map(([userId, group]) => (
-              <div key={userId} className="p-3">
-                <div className="flex items-center gap-2 mb-2">
-                  <User size={14} className="text-muted-foreground" />
-                  <span className="text-sm font-semibold">{group.name}</span>
-                  <span className="text-xs text-muted-foreground">({group.tasks.length})</span>
-                </div>
-                <div className="space-y-1.5 pl-5">
-                  {group.tasks.map((task) => {
-                    const isDone = task.status === 'OP_DONE';
-                    const isOverdue = task.dueAt && new Date(task.dueAt) < new Date() && !isDone;
-                    return (
-                      <div key={task.id} className="flex items-start gap-2 text-sm">
-                        <div className="mt-0.5">
-                          {isDone ? (
-                            <CheckCircle2 size={14} className="text-green-500" />
-                          ) : (
-                            <Circle size={14} className={isOverdue ? 'text-red-400' : 'text-muted-foreground'} />
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <span className={isDone ? 'line-through text-muted-foreground' : isOverdue ? 'text-red-700' : ''}>
-                            {task.title}
-                          </span>
-                          <div className="flex items-center gap-2 text-[10px] text-muted-foreground mt-0.5">
-                            {task.project && <span className="bg-muted px-1.5 py-0.5 rounded">{task.project.name}</span>}
-                            {task.dueAt && (
-                              <span className={isOverdue ? 'text-red-500 font-medium' : ''}>
-                                {new Date(task.dueAt).toLocaleDateString('ca-ES')}
-                              </span>
-                            )}
-                            {task.createdBy && <span>per {task.createdBy.name}</span>}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
+          )}
         </div>
-      )}
+        <div className="divide-y max-h-96 overflow-y-auto">
+          {(!myTasks || myTasks.length === 0) ? (
+            <p className="p-4 text-sm text-muted-foreground">No tens tasques pendents assignades</p>
+          ) : (
+            myTasks.map((task) => {
+              const isOverdue = task.dueAt && new Date(task.dueAt) < new Date();
+              return (
+                <div key={task.id} className="p-3 hover:bg-accent/50">
+                  <div className="flex items-start gap-2">
+                    <Circle size={14} className={`mt-0.5 flex-shrink-0 ${isOverdue ? 'text-red-400' : 'text-muted-foreground'}`} />
+                    <div className="flex-1 min-w-0">
+                      <span className={`text-sm font-medium ${isOverdue ? 'text-red-700' : ''}`}>
+                        {task.title}
+                      </span>
+                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground mt-0.5 flex-wrap">
+                        {task.project && (
+                          <span className="bg-muted px-1.5 py-0.5 rounded">{task.project.name}</span>
+                        )}
+                        {task.dueAt && (
+                          <span className={isOverdue ? 'text-red-500 font-medium' : ''}>
+                            <Clock size={10} className="inline mr-0.5" />
+                            {new Date(task.dueAt).toLocaleDateString('ca-ES')}
+                          </span>
+                        )}
+                        {task.createdBy && (
+                          <span>assignada per {task.createdBy.name}</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
 
       {/* Notes del dia */}
       <DailyNotes dateStr={dateStr} plan={plan} refetch={refetch} />
@@ -310,7 +302,7 @@ export default function DailyPlan() {
 // Sub-components
 // ===========================================
 
-function ProjectSection({ title, icon, projects, emptyText, isReturn, refetch }) {
+function ProjectSection({ title, icon, projects, emptyText, isReturn, isCheck, refetch }) {
   return (
     <div className="bg-card border rounded-lg">
       <div className="p-4 border-b flex items-center gap-2">
@@ -340,7 +332,12 @@ function ProjectSection({ title, icon, projects, emptyText, isReturn, refetch })
                 </span>
               </div>
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                {!isReturn && p.departureTime && (
+                {isCheck && p.checkTime && (
+                  <span className="flex items-center gap-1">
+                    <Clock size={12} /> {p.checkTime}
+                  </span>
+                )}
+                {!isReturn && !isCheck && p.departureTime && (
                   <span className="flex items-center gap-1">
                     <Clock size={12} /> {p.departureTime}
                   </span>

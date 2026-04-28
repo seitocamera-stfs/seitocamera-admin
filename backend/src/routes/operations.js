@@ -245,7 +245,10 @@ router.post('/projects', async (req, res, next) => {
   try {
     const {
       name, clientName, clientId,
-      departureDate, departureTime, returnDate, returnTime,
+      checkDate, checkTime,
+      departureDate, departureTime,
+      shootEndDate, shootEndTime,
+      returnDate, returnTime,
       priority = 0, leadUserId, leadRoleCode,
       transportType, transportNotes, pickupTime,
       techValidationRequired = false,
@@ -258,8 +261,12 @@ router.post('/projects', async (req, res, next) => {
         name,
         clientName,
         clientId: clientId || null,
+        checkDate: checkDate ? new Date(checkDate) : null,
+        checkTime: checkTime || null,
         departureDate: new Date(departureDate),
         departureTime,
+        shootEndDate: shootEndDate ? new Date(shootEndDate) : null,
+        shootEndTime: shootEndTime || null,
         returnDate: new Date(returnDate),
         returnTime,
         priority,
@@ -897,7 +904,20 @@ router.get('/daily/:date', async (req, res, next) => {
     // Pla del dia
     let plan = await prisma.dailyPlan.findUnique({ where: { date } });
 
-    // Sortides d'avui
+    // Checks/preparació d'avui
+    const checksToday = await prisma.rentalProject.findMany({
+      where: {
+        checkDate: { gte: date, lt: nextDay },
+      },
+      orderBy: [{ priority: 'desc' }, { checkTime: 'asc' }],
+      include: {
+        leadUser: { select: { id: true, name: true } },
+        assignments: { include: { user: { select: { id: true, name: true } } } },
+        _count: { select: { incidents: true, tasks: true } },
+      },
+    });
+
+    // Sortides d'avui (inici rodatge)
     const departuresToday = await prisma.rentalProject.findMany({
       where: {
         departureDate: { gte: date, lt: nextDay },
@@ -962,29 +982,14 @@ router.get('/daily/:date', async (req, res, next) => {
       orderBy: { role: { sortOrder: 'asc' } },
     });
 
-    // Tasques del dia: amb dueAt avui O pendents assignades (sense completar)
-    const tasksToday = await prisma.projectTask.findMany({
+    // Tasques pendents assignades a l'usuari actual
+    const myTasks = await prisma.projectTask.findMany({
       where: {
-        OR: [
-          // Tasques amb data límit avui
-          { dueAt: { gte: date, lt: nextDay } },
-          // Tasques pendents assignades a algú (per mostrar per usuari)
-          {
-            assignedToId: { not: null },
-            status: { in: ['OP_PENDING', 'OP_IN_PROGRESS'] },
-            dueAt: { lte: nextDay }, // data límit avui o passat (pendents)
-          },
-          // Tasques pendents sense data límit però assignades
-          {
-            assignedToId: { not: null },
-            status: { in: ['OP_PENDING', 'OP_IN_PROGRESS'] },
-            dueAt: null,
-          },
-        ],
+        assignedToId: req.user.id,
+        status: { in: ['OP_PENDING', 'OP_IN_PROGRESS'] },
       },
       include: {
         project: { select: { id: true, name: true } },
-        assignedTo: { select: { id: true, name: true } },
         createdBy: { select: { id: true, name: true } },
       },
       orderBy: [{ dueAt: 'asc' }, { createdAt: 'asc' }],
@@ -992,12 +997,13 @@ router.get('/daily/:date', async (req, res, next) => {
 
     res.json({
       plan,
+      checksToday,
       departuresToday,
       departuresTomorrow,
       returnsToday,
       openIncidents,
       staff,
-      tasksToday,
+      myTasks,
     });
   } catch (err) {
     next(err);
@@ -1046,11 +1052,13 @@ router.get('/calendar/:year/:month', async (req, res, next) => {
     const startDate = new Date(year, month, 1);
     const endDate = new Date(year, month + 1, 1);
 
-    // Projectes que se solapen amb el mes (sortida o retorn dins del mes)
+    // Projectes que se solapen amb el mes (check, rodatge o retorn dins del mes)
     const projects = await prisma.rentalProject.findMany({
       where: {
         OR: [
+          { checkDate: { gte: startDate, lt: endDate } },
           { departureDate: { gte: startDate, lt: endDate } },
+          { shootEndDate: { gte: startDate, lt: endDate } },
           { returnDate: { gte: startDate, lt: endDate } },
           // Projectes que cobreixen tot el mes
           { departureDate: { lt: startDate }, returnDate: { gte: endDate } },
@@ -1060,8 +1068,14 @@ router.get('/calendar/:year/:month', async (req, res, next) => {
       select: {
         id: true,
         name: true,
+        checkDate: true,
+        checkTime: true,
         departureDate: true,
+        departureTime: true,
+        shootEndDate: true,
+        shootEndTime: true,
         returnDate: true,
+        returnTime: true,
         status: true,
         priority: true,
         clientName: true,

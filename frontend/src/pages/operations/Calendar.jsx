@@ -88,9 +88,9 @@ export default function Calendar() {
 
     if (data?.projects) {
       data.projects.forEach((p) => {
-        const start = new Date(p.departureDate);
+        // Rang complet: des de checkDate (o departureDate) fins returnDate
+        const start = new Date(p.checkDate || p.departureDate);
         const end = new Date(p.returnDate);
-        // Marcar cada dia del mes que el projecte ocupa
         for (let d = 1; d <= 31; d++) {
           const dayDate = new Date(year, month - 1, d);
           if (dayDate.getMonth() !== month - 1) break;
@@ -183,19 +183,27 @@ export default function Calendar() {
                     {/* Projectes del dia */}
                     <div className="space-y-0.5">
                       {dayProjects.slice(0, 3).map((p) => {
+                        const checkDt = p.checkDate ? new Date(p.checkDate) : null;
                         const depDate = new Date(p.departureDate);
+                        const shootEnd = p.shootEndDate ? new Date(p.shootEndDate) : null;
                         const retDate = new Date(p.returnDate);
+
+                        const isCheck = checkDt && checkDt.getDate() === day && checkDt.getMonth() === month - 1;
                         const isDep = depDate.getDate() === day && depDate.getMonth() === month - 1;
                         const isRet = retDate.getDate() === day && retDate.getMonth() === month - 1;
+
+                        let marker = '';
+                        if (isCheck) marker = '🔧 ';
+                        else if (isDep) marker = '→ ';
+                        else if (isRet) marker = '← ';
 
                         return (
                           <div
                             key={p.id}
                             className={`text-[9px] leading-tight px-1 py-0.5 rounded truncate ${STATUS_COLORS[p.status] || 'bg-gray-200'}`}
-                            title={`${p.name}${p.clientName ? ` — ${p.clientName}` : ''}`}
+                            title={`${p.name}${p.clientName ? ` — ${p.clientName}` : ''}${isCheck ? ' (Check)' : isDep ? ' (Rodatge)' : isRet ? ' (Devolució)' : ''}`}
                           >
-                            {isDep && '→ '}
-                            {isRet && '← '}
+                            {marker}
                             {p.name}
                           </div>
                         );
@@ -234,8 +242,9 @@ export default function Calendar() {
 
           {/* Llegenda */}
           <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
-            <span className="flex items-center gap-1"><Package size={12} /> → Sortida</span>
-            <span className="flex items-center gap-1"><Package size={12} /> ← Retorn</span>
+            <span className="flex items-center gap-1">🔧 Check</span>
+            <span className="flex items-center gap-1"><Package size={12} /> → Rodatge</span>
+            <span className="flex items-center gap-1"><Package size={12} /> ← Devolució</span>
             <span className="flex items-center gap-1">
               <span className="w-3 h-3 rounded bg-blue-300" /> En preparació
             </span>

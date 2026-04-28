@@ -340,18 +340,41 @@ async function syncOneProject(rmProject) {
   const rentmanProjectId = String(rmProject.id);
   const name = rmProject.displayname || rmProject.name || `Projecte Rentman ${rmProject.id}`;
 
-  // Dates
-  const startDateStr = rmProject.planperiod_start || rmProject.start;
-  const endDateStr = rmProject.planperiod_end || rmProject.end;
-  if (!startDateStr || !endDateStr) {
-    // Sense dates no el podem planificar — saltem
+  // Dates Rentman → camps interns:
+  //   planperiod_start  → checkDate     (dia de check/preparació)
+  //   usageperiod_start → departureDate (inici rodatge)
+  //   usageperiod_end   → shootEndDate  (fi rodatge)
+  //   planperiod_end    → returnDate    (devolució material)
+  const checkDateStr    = rmProject.planperiod_start  || null;
+  const departureDateStr = rmProject.usageperiod_start || rmProject.planperiod_start || rmProject.start;
+  const shootEndDateStr  = rmProject.usageperiod_end   || null;
+  const returnDateStr    = rmProject.planperiod_end    || rmProject.end;
+
+  if (!departureDateStr || !returnDateStr) {
     return 'skipped';
   }
 
-  const departureDate = new Date(startDateStr);
-  const returnDate = new Date(endDateStr);
+  const checkDate     = checkDateStr ? new Date(checkDateStr) : null;
+  const departureDate = new Date(departureDateStr);
+  const shootEndDate  = shootEndDateStr ? new Date(shootEndDateStr) : null;
+  const returnDate    = new Date(returnDateStr);
 
-  // Validació de dates
+  // Extreure hora de les dates Rentman (format "HH:MM")
+  const extractTime = (dateStr) => {
+    if (!dateStr) return null;
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return null;
+    const h = String(d.getHours()).padStart(2, '0');
+    const m = String(d.getMinutes()).padStart(2, '0');
+    return `${h}:${m}`;
+  };
+
+  const checkTime     = extractTime(checkDateStr);
+  const departureTime = extractTime(departureDateStr);
+  const shootEndTime  = extractTime(shootEndDateStr);
+  const returnTime    = extractTime(returnDateStr);
+
+  // Validació de dates obligatòries
   if (isNaN(departureDate.getTime()) || isNaN(returnDate.getTime())) {
     return 'skipped';
   }
@@ -378,8 +401,22 @@ async function syncOneProject(rmProject) {
     if (existing.name !== name) updates.name = name;
     if (existing.clientName !== contactName && contactName) updates.clientName = contactName;
     if (clientId && existing.clientId !== clientId) updates.clientId = clientId;
+
+    // Dates: actualitzar les 4 dates + hores
+    if (checkDate && (!existing.checkDate || existing.checkDate.getTime() !== checkDate.getTime())) {
+      updates.checkDate = checkDate;
+    }
     if (existing.departureDate.getTime() !== departureDate.getTime()) updates.departureDate = departureDate;
+    if (shootEndDate && (!existing.shootEndDate || existing.shootEndDate.getTime() !== shootEndDate.getTime())) {
+      updates.shootEndDate = shootEndDate;
+    }
     if (existing.returnDate.getTime() !== returnDate.getTime()) updates.returnDate = returnDate;
+
+    // Hores
+    if (checkTime && existing.checkTime !== checkTime) updates.checkTime = checkTime;
+    if (departureTime && existing.departureTime !== departureTime) updates.departureTime = departureTime;
+    if (shootEndTime && existing.shootEndTime !== shootEndTime) updates.shootEndTime = shootEndTime;
+    if (returnTime && existing.returnTime !== returnTime) updates.returnTime = returnTime;
 
     // Només actualitzem l'estat si encara no s'ha tocat internament
     // (si l'estat intern ha avançat més enllà del mapeig Rentman, no el retrocedim)
@@ -416,8 +453,14 @@ async function syncOneProject(rmProject) {
       name,
       clientName: contactName,
       clientId,
+      checkDate,
+      checkTime,
       departureDate,
+      departureTime,
+      shootEndDate,
+      shootEndTime,
       returnDate,
+      returnTime,
       status,
       rentmanProjectId,
       budgetReference: rmProject.reference || null,
