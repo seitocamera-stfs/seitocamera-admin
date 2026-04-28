@@ -1554,10 +1554,13 @@ router.get('/dashboard', async (req, res, next) => {
       readyProjects,
       pendingTasks,
       todayTasks,
-      openIncidents,
+      openIncidentsCount,
       criticalIncidents,
       upcomingDepartures,
       tasksToday,
+      returnsToday,
+      openIncidents,
+      staff,
     ] = await Promise.all([
       // Projectes actius (no tancats)
       prisma.rentalProject.count({
@@ -1578,7 +1581,7 @@ router.get('/dashboard', async (req, res, next) => {
           dueAt: { gte: today, lt: tomorrow },
         },
       }),
-      // Incidències obertes
+      // Incidències obertes (count)
       prisma.incident.count({
         where: { status: { in: ['INC_OPEN', 'INC_IN_PROGRESS'] } },
       }),
@@ -1596,7 +1599,7 @@ router.get('/dashboard', async (req, res, next) => {
           id: true, name: true, clientName: true, status: true,
           departureDate: true, departureTime: true,
           checkDate: true, returnDate: true,
-          leadUser: { select: { id: true, name: true } },
+          leadUser: { select: { id: true, name: true, color: true } },
           client: { select: { id: true, name: true } },
         },
         orderBy: { departureDate: 'asc' },
@@ -1614,11 +1617,54 @@ router.get('/dashboard', async (req, res, next) => {
         select: {
           id: true, title: true, status: true, category: true,
           dueAt: true, completedAt: true,
-          assignedTo: { select: { id: true, name: true } },
+          assignedTo: { select: { id: true, name: true, color: true } },
           project: { select: { id: true, name: true } },
         },
         orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
+        take: 15,
+      }),
+      // Devolucions previstes avui/demà
+      prisma.rentalProject.findMany({
+        where: {
+          returnDate: { gte: today, lt: new Date(today.getTime() + 2 * 24 * 3600 * 1000) },
+          status: { in: ['OUT', 'RETURNED', 'RETURN_REVIEW'] },
+        },
+        select: {
+          id: true, name: true, clientName: true, status: true,
+          returnDate: true, returnTime: true,
+          leadUser: { select: { id: true, name: true } },
+          client: { select: { id: true, name: true } },
+        },
+        orderBy: { returnDate: 'asc' },
+        take: 8,
+      }),
+      // Incidències obertes (detall)
+      prisma.incident.findMany({
+        where: {
+          status: { in: ['INC_OPEN', 'INC_IN_PROGRESS', 'INC_WAITING_PARTS'] },
+        },
+        select: {
+          id: true, title: true, severity: true, status: true,
+          project: { select: { id: true, name: true } },
+          equipment: { select: { id: true, name: true } },
+          createdAt: true,
+        },
+        orderBy: [{ severity: 'desc' }, { createdAt: 'desc' }],
         take: 10,
+      }),
+      // Personal amb rols actius (disponibilitat)
+      prisma.roleAssignment.findMany({
+        where: {
+          OR: [
+            { endDate: null },
+            { endDate: { gte: new Date() } },
+          ],
+        },
+        include: {
+          user: { select: { id: true, name: true, color: true, isActive: true } },
+          role: { select: { code: true, name: true, shortName: true, color: true } },
+        },
+        orderBy: { role: { sortOrder: 'asc' } },
       }),
     ]);
 
@@ -1628,11 +1674,15 @@ router.get('/dashboard', async (req, res, next) => {
         readyProjects,
         pendingTasks,
         todayTasks,
-        openIncidents,
+        openIncidents: openIncidentsCount,
         criticalIncidents,
+        returnsToday: returnsToday.length,
       },
       upcomingDepartures,
       tasksToday,
+      returnsToday,
+      openIncidents,
+      staff: staff.filter((s) => s.user.isActive !== false),
     });
   } catch (err) {
     next(err);

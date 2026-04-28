@@ -17,7 +17,6 @@ import {
   Brain,
   Calculator,
   Plug,
-  CalendarDays,
   Package,
   AlertTriangle,
   BookOpen,
@@ -43,7 +42,6 @@ const sections = [
     label: 'Operacions',
     items: [
       { to: '/', icon: LayoutDashboard, label: 'Dashboard', section: 'dashboard' },
-      { to: '/operations/daily', icon: CalendarDays, label: 'Pla del dia' },
       { to: '/operations/calendar', icon: Calendar, label: 'Calendari' },
       { to: '/operations/projects', icon: Package, label: 'Projectes' },
       { to: '/operations/tasks', icon: ListTodo, label: 'Tasques' },
