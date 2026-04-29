@@ -674,6 +674,67 @@ router.post('/:provider/test', async (req, res, next) => {
       return res.json(result);
     }
 
+    // Test Shelly
+    if (provider.toUpperCase() === 'SHELLY') {
+      try {
+        const shellyService = require('../services/shellyService');
+        const result = await shellyService.testConnection();
+        const conn = await prisma.serviceConnection.findUnique({ where: { provider: 'SHELLY' } });
+        if (conn) {
+          await prisma.serviceConnection.update({
+            where: { provider: 'SHELLY' },
+            data: {
+              status: result.connected ? 'ACTIVE' : 'ERROR',
+              lastUsedAt: result.connected ? new Date() : undefined,
+              lastError: result.connected ? null : result.error,
+            },
+          });
+        }
+        return res.json(result);
+      } catch (err) {
+        return res.json({ connected: false, error: err.message });
+      }
+    }
+
+    // Test Rentman
+    if (provider.toUpperCase() === 'RENTMAN') {
+      const conn = await prisma.serviceConnection.findUnique({ where: { provider: 'RENTMAN' } });
+      if (!conn?.apiKey) {
+        return res.json({ connected: false, error: 'Token Rentman no configurat' });
+      }
+      try {
+        const https = require('https');
+        const testResult = await new Promise((resolve, reject) => {
+          const options = {
+            hostname: 'api.rentman.net',
+            path: '/equipment?limit=1',
+            method: 'GET',
+            headers: { Authorization: `Bearer ${conn.apiKey}`, Accept: 'application/json' },
+          };
+          const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', (c) => { data += c; });
+            res.on('end', () => { resolve({ statusCode: res.statusCode }); });
+          });
+          req.on('error', reject);
+          req.setTimeout(10000, () => { req.destroy(); reject(new Error('Timeout')); });
+          req.end();
+        });
+        const ok = testResult.statusCode >= 200 && testResult.statusCode < 400;
+        await prisma.serviceConnection.update({
+          where: { provider: 'RENTMAN' },
+          data: { status: ok ? 'ACTIVE' : 'ERROR', lastUsedAt: ok ? new Date() : undefined, lastError: ok ? null : `HTTP ${testResult.statusCode}` },
+        });
+        return res.json({ connected: ok, ...(ok ? {} : { error: `HTTP ${testResult.statusCode}` }) });
+      } catch (err) {
+        await prisma.serviceConnection.update({
+          where: { provider: 'RENTMAN' },
+          data: { status: 'ERROR', lastError: err.message },
+        });
+        return res.json({ connected: false, error: err.message });
+      }
+    }
+
     res.status(400).json({ error: `Test no implementat per ${provider}` });
   } catch (error) {
     next(error);
