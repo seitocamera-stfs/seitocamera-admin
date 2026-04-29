@@ -473,9 +473,9 @@ model Conciliation {
   updatedAt           DateTime            @updatedAt
 
   // Relacions
-  bankMovement     BankMovement     @relation(fields: [bankMovementId], references: [id])
-  receivedInvoice  ReceivedInvoice? @relation(fields: [receivedInvoiceId], references: [id])
-  issuedInvoice    IssuedInvoice?   @relation(fields: [issuedInvoiceId], references: [id])
+  bankMovement     BankMovement     @relation(fields: [bankMovementId], references: [id], onDelete: Cascade)
+  receivedInvoice  ReceivedInvoice? @relation(fields: [receivedInvoiceId], references: [id], onDelete: Cascade)
+  issuedInvoice    IssuedInvoice?   @relation(fields: [issuedInvoiceId], references: [id], onDelete: Cascade)
 
   @@index([bankMovementId])
   @@index([receivedInvoiceId])
@@ -687,7 +687,7 @@ model AgentSuggestion {
   createdAt           DateTime         @default(now())
 
   // Relacions
-  receivedInvoice  ReceivedInvoice @relation(fields: [receivedInvoiceId], references: [id])
+  receivedInvoice  ReceivedInvoice @relation(fields: [receivedInvoiceId], references: [id], onDelete: Cascade)
 
   @@index([receivedInvoiceId])
   @@index([status])

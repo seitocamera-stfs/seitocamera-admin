@@ -194,19 +194,12 @@ async function start() {
     const server = app.listen(PORT, () => {
       logger.info(`Servidor escoltant al port ${PORT}`);
     });
+    global.__server = server;
 
     server.on('error', (err) => {
       if (err.code === 'EADDRINUSE') {
-        logger.warn(`Port ${PORT} ocupat, matant procés anterior...`);
-        const { execSync } = require('child_process');
-        try {
-          execSync(`lsof -ti :${PORT} | xargs kill -9`, { stdio: 'ignore' });
-        } catch {}
-        setTimeout(() => {
-          server.listen(PORT, () => {
-            logger.info(`Servidor escoltant al port ${PORT} (retry)`);
-          });
-        }, 1000);
+        logger.error(`Port ${PORT} ja està ocupat. Tancant — Docker reiniciarà el contenidor.`);
+        process.exit(1);
       } else {
         throw err;
       }
@@ -218,12 +211,22 @@ async function start() {
 }
 
 // Graceful shutdown
-process.on('SIGTERM', async () => {
-  logger.info('SIGTERM rebut. Tancant...');
-  await prisma.$disconnect();
-  redis.disconnect();
+async function gracefulShutdown(signal) {
+  logger.info(`${signal} rebut. Tancant...`);
+  try {
+    // Tancar servidor HTTP (no acceptar noves connexions)
+    if (global.__server) {
+      global.__server.close();
+    }
+    await prisma.$disconnect();
+    redis.disconnect();
+  } catch (err) {
+    logger.error('Error durant shutdown:', err.message);
+  }
   process.exit(0);
-});
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 start();
 

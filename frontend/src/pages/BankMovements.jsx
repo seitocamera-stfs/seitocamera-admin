@@ -606,8 +606,12 @@ export default function BankMovements() {
 
   const handleDelete = async (id) => {
     if (!confirm('Eliminar aquest moviment?')) return;
-    await mutate('delete', `/bank/${id}`);
-    refetch();
+    try {
+      await mutate('delete', `/bank/${id}`);
+      refetch();
+    } catch (err) {
+      alert(err.message || 'Error eliminant moviment');
+    }
   };
 
   // Mostrar sync si hi ha algun compte amb API

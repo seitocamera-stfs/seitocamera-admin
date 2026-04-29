@@ -12,6 +12,8 @@ const { logger } = require('../config/logger');
 // ===========================================
 
 let isRunning = false;
+let runStartedAt = null;
+const MAX_RUN_MINUTES = 30;
 
 /**
  * Executa sync incremental: factures dels últims 7 dies, amb info de projecte.
@@ -19,8 +21,12 @@ let isRunning = false;
  */
 async function runIncrementalSync() {
   if (isRunning) {
-    logger.info('Rentman sync: ja s\'està executant, s\'omet');
-    return;
+    const elapsed = (Date.now() - runStartedAt) / 60000;
+    if (elapsed < MAX_RUN_MINUTES) {
+      logger.info('Rentman sync: ja s\'està executant, s\'omet');
+      return;
+    }
+    logger.warn(`Rentman sync: lock antic (${elapsed.toFixed(0)} min), forçant reset`);
   }
 
   if (!process.env.RENTMAN_API_TOKEN) {
@@ -28,6 +34,7 @@ async function runIncrementalSync() {
   }
 
   isRunning = true;
+  runStartedAt = Date.now();
   try {
     const result = await rentmanSync.syncAllInvoices({
       fetchProjects: true,
@@ -63,6 +70,7 @@ async function runNightlyFullSync() {
   if (!process.env.RENTMAN_API_TOKEN) return;
 
   isRunning = true;
+  runStartedAt = Date.now();
   try {
     const result = await rentmanSync.syncAllInvoices({
       fetchProjects: false, // més ràpid; el sync incremental ja porta els projectes
@@ -95,6 +103,7 @@ async function runWeeklyProjectSync() {
   if (!process.env.RENTMAN_API_TOKEN) return;
 
   isRunning = true;
+  runStartedAt = Date.now();
   try {
     const result = await rentmanSync.syncAllInvoices({
       fetchProjects: true,

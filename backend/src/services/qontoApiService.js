@@ -57,12 +57,20 @@ async function qontoFetch(path, credentials, params = {}) {
     if (v !== undefined && v !== null) url.searchParams.set(k, v);
   });
 
-  const response = await fetch(url.toString(), {
-    headers: {
-      'Authorization': `${credentials.orgSlug}:${credentials.secretKey}`,
-      'Content-Type': 'application/json',
-    },
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  let response;
+  try {
+    response = await fetch(url.toString(), {
+      headers: {
+        'Authorization': `${credentials.orgSlug}:${credentials.secretKey}`,
+        'Content-Type': 'application/json',
+      },
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!response.ok) {
     const body = await response.text();

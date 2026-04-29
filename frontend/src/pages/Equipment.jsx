@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import {
   Search, Plus, Pencil, Trash2, Package,
   Sparkles, ExternalLink, ChevronRight, ChevronDown,
@@ -549,12 +549,12 @@ export default function Equipment() {
               <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">Cap equip trobat</td></tr>
             ) : (
               items.map((item) => (
-                <>
+                <React.Fragment key={item.id}>
                   {renderRow(item, false)}
                   {item.children?.length > 0 && expandedGroups[item.id] && (
                     item.children.map((child) => renderRow(child, true))
                   )}
-                </>
+                </React.Fragment>
               ))
             )}
           </tbody>

@@ -145,6 +145,93 @@ router.post('/qonto/sync', authorize('ADMIN'), async (req, res, next) => {
   }
 });
 
+// ===========================================
+// RUTES ESTÀTIQUES (han d'anar ABANS de /:id)
+// ===========================================
+
+/**
+ * GET /api/bank/stats/summary — Resum de moviments
+ */
+router.get('/stats/summary', async (req, res, next) => {
+  try {
+    const { dateFrom, dateTo, bankAccountId } = req.query;
+    const where = {};
+
+    if (bankAccountId) where.bankAccountId = bankAccountId;
+    if (dateFrom || dateTo) {
+      where.date = {};
+      if (dateFrom) where.date.gte = new Date(dateFrom);
+      if (dateTo) where.date.lte = new Date(dateTo);
+    }
+
+    const [income, expense, unconciliated] = await Promise.all([
+      prisma.bankMovement.aggregate({
+        where: { ...where, type: 'INCOME' },
+        _sum: { amount: true },
+        _count: true,
+      }),
+      prisma.bankMovement.aggregate({
+        where: { ...where, type: 'EXPENSE' },
+        _sum: { amount: true },
+        _count: true,
+      }),
+      prisma.bankMovement.count({
+        where: { ...where, isConciliated: false },
+      }),
+    ]);
+
+    res.json({
+      income: { total: income._sum.amount || 0, count: income._count },
+      expense: { total: expense._sum.amount || 0, count: expense._count },
+      unconciliated,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/bank/dismissed/list — Llistar moviments descartats
+ */
+router.get('/dismissed/list', async (req, res, next) => {
+  try {
+    const { search, page = 1, limit = 50 } = req.query;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const where = { isDismissed: true };
+
+    if (search) {
+      where.OR = [
+        { description: { contains: search, mode: 'insensitive' } },
+        { counterparty: { contains: search, mode: 'insensitive' } },
+        { dismissReason: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
+    const [movements, total] = await Promise.all([
+      prisma.bankMovement.findMany({
+        where,
+        skip,
+        take: parseInt(limit),
+        orderBy: { date: 'desc' },
+      }),
+      prisma.bankMovement.count({ where }),
+    ]);
+
+    res.json({
+      data: movements,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        totalPages: Math.ceil(total / parseInt(limit)),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 /**
  * GET /api/bank/:id — Detall moviment
  */
@@ -267,92 +354,9 @@ router.delete('/:id', requireLevel('bank', 'admin'), async (req, res, next) => {
   }
 });
 
-/**
- * GET /api/bank/stats/summary — Resum de moviments
- */
-router.get('/stats/summary', async (req, res, next) => {
-  try {
-    const { dateFrom, dateTo, bankAccountId } = req.query;
-    const where = {};
-
-    if (bankAccountId) where.bankAccountId = bankAccountId;
-    if (dateFrom || dateTo) {
-      where.date = {};
-      if (dateFrom) where.date.gte = new Date(dateFrom);
-      if (dateTo) where.date.lte = new Date(dateTo);
-    }
-
-    const [income, expense, unconciliated] = await Promise.all([
-      prisma.bankMovement.aggregate({
-        where: { ...where, type: 'INCOME' },
-        _sum: { amount: true },
-        _count: true,
-      }),
-      prisma.bankMovement.aggregate({
-        where: { ...where, type: 'EXPENSE' },
-        _sum: { amount: true },
-        _count: true,
-      }),
-      prisma.bankMovement.count({
-        where: { ...where, isConciliated: false },
-      }),
-    ]);
-
-    res.json({
-      income: { total: income._sum.amount || 0, count: income._count },
-      expense: { total: expense._sum.amount || 0, count: expense._count },
-      unconciliated,
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
 // ===========================================
 // DESCARTAR / RECUPERAR MOVIMENTS
 // ===========================================
-
-/**
- * GET /api/bank/dismissed — Llistar moviments descartats
- */
-router.get('/dismissed/list', async (req, res, next) => {
-  try {
-    const { search, page = 1, limit = 50 } = req.query;
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    const where = { isDismissed: true };
-
-    if (search) {
-      where.OR = [
-        { description: { contains: search, mode: 'insensitive' } },
-        { counterparty: { contains: search, mode: 'insensitive' } },
-        { dismissReason: { contains: search, mode: 'insensitive' } },
-      ];
-    }
-
-    const [movements, total] = await Promise.all([
-      prisma.bankMovement.findMany({
-        where,
-        skip,
-        take: parseInt(limit),
-        orderBy: { date: 'desc' },
-      }),
-      prisma.bankMovement.count({ where }),
-    ]);
-
-    res.json({
-      data: movements,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total,
-        totalPages: Math.ceil(total / parseInt(limit)),
-      },
-    });
-  } catch (error) {
-    next(error);
-  }
-});
 
 /**
  * PATCH /api/bank/:id/dismiss — Descartar moviment (no cal conciliar)

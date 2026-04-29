@@ -149,10 +149,14 @@ router.post(
  * POST /api/auth/logout
  * Tancar sessió (eliminar cookie + invalidar refresh tokens)
  */
-router.post('/logout', authenticate, async (req, res) => {
-  await authService.logout(req.user.id);
-  res.clearCookie('refreshToken');
-  res.json({ message: 'Sessió tancada' });
+router.post('/logout', authenticate, async (req, res, next) => {
+  try {
+    await authService.logout(req.user.id);
+    res.clearCookie('refreshToken');
+    res.json({ message: 'Sessió tancada' });
+  } catch (error) {
+    next(error);
+  }
 });
 
 module.exports = router;

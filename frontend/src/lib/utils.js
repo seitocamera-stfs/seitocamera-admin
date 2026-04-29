@@ -13,9 +13,12 @@ export function formatCurrency(amount, currency = 'EUR') {
 }
 
 export function formatDate(date) {
+  if (!date) return '—';
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return '—';
   return new Intl.DateTimeFormat('ca-ES', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
-  }).format(new Date(date));
+  }).format(d);
 }

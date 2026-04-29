@@ -118,7 +118,7 @@ async function syncGdriveFiles() {
 
   isRunning = true;
   runStartedAt = Date.now();
-  const results = { processed: 0, duplicates: 0, errors: 0, details: [] };
+  const results = { processed: 0, duplicates: 0, errors: 0, skipped: 0, details: [] };
 
   try {
     const inboxId = await getInboxFolderId();
@@ -217,7 +217,7 @@ async function syncGdriveFiles() {
           } catch (moveErr) {
             logger.warn(`GDrive sync: No s'ha pogut moure ${file.name} a no-factures: ${moveErr.message}`);
           }
-          results.push({ file: file.name, status: 'skipped_not_invoice', documentType: docType.label });
+          results.details.push({ file: file.name, status: 'skipped_not_invoice', documentType: docType.label });
           continue;
         }
 
@@ -555,7 +555,7 @@ async function syncLogistikFiles() {
     return { processed: 0, errors: 0 };
   }
 
-  const results = { processed: 0, duplicates: 0, errors: 0, details: [] };
+  const results = { processed: 0, duplicates: 0, errors: 0, skipped: 0, details: [] };
 
   try {
     const inboxId = await getLogistikInboxFolderId();

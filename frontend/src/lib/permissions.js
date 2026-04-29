@@ -30,7 +30,7 @@ export const SECTIONS = {
   reminders: { label: 'Recordatoris', path: '/reminders' },
   equipment: { label: 'Inventari equips', path: '/equipment' },
   agent: { label: 'Agent comptable', path: '/agent' },
-  operations: { label: 'Operacions', path: '/operations/daily' },
+  operations: { label: 'Operacions', path: '/operations/projects' },
   logistics: { label: 'Logística', path: '/logistics' },
   users: { label: 'Usuaris', path: '/users' },
 };

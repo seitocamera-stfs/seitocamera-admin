@@ -258,22 +258,10 @@ export default function ReceivedInvoices() {
       refetch();
     } catch (err) {
       // Si és un duplicat, mostrar avís
-      if (err.message?.includes('duplicat') || err.message?.includes('DUPLICATE')) {
-        try {
-          const response = await api.post('/invoices/received', {
-            ...form,
-            subtotal: parseFloat(form.subtotal),
-            taxRate: parseFloat(form.taxRate),
-            taxAmount: parseFloat(form.taxAmount),
-            totalAmount: parseFloat(form.totalAmount),
-          });
-        } catch (dupErr) {
-          const data = dupErr.response?.data;
-          if (data?.code === 'DUPLICATE_INVOICE') {
-            setShowDuplicateWarning(data);
-            return;
-          }
-        }
+      const data = err.response?.data;
+      if (data?.code === 'DUPLICATE_INVOICE' || err.message?.includes('duplicat') || err.message?.includes('DUPLICATE')) {
+        setShowDuplicateWarning(data || { message: err.message });
+        return;
       }
       alert(err.message);
     }
@@ -619,14 +607,22 @@ export default function ReceivedInvoices() {
   };
 
   const handleStatusChange = async (id, status) => {
-    await mutate('patch', `/invoices/received/${id}/status`, { status });
-    refetch();
+    try {
+      await mutate('patch', `/invoices/received/${id}/status`, { status });
+      refetch();
+    } catch (err) {
+      alert(err.message || 'Error canviant estat');
+    }
   };
 
   const handleDelete = async (id) => {
     if (!confirm('Moure a la paperera? (Es pot restaurar durant 30 dies)')) return;
-    await mutate('delete', `/invoices/received/${id}`);
-    refetch();
+    try {
+      await mutate('delete', `/invoices/received/${id}`);
+      refetch();
+    } catch (err) {
+      alert(err.message || 'Error eliminant factura');
+    }
   };
 
   // Re-escanejar múltiples factures seleccionades

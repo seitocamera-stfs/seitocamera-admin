@@ -93,8 +93,12 @@ export default function IssuedInvoices() {
   };
 
   const handleStatusChange = async (id, status) => {
-    await mutate('patch', `/invoices/issued/${id}/status`, { status });
-    refetch();
+    try {
+      await mutate('patch', `/invoices/issued/${id}/status`, { status });
+      refetch();
+    } catch (err) {
+      alert(err.message || 'Error canviant estat');
+    }
   };
 
   // Recordatori de pagament

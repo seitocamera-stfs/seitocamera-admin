@@ -402,7 +402,7 @@ router.post('/received/learn-template/:supplierId', authorize('ADMIN'), async (r
 // ===========================================
 // GET /api/invoices/received/audit — Diagnòstic: duplicats, orfes, no-factures
 // ===========================================
-router.get('/received/audit', authorize('admin'), async (req, res, next) => {
+router.get('/received/audit', authorize('ADMIN'), async (req, res, next) => {
   try {
     const results = {
       duplicates: [],
@@ -699,6 +699,10 @@ router.post('/received/bulk-rescan', authorize('ADMIN', 'EDITOR'), async (req, r
           matchedSupplier = await pdfExtract.findSupplierByFileName(invoice.originalFileName);
         }
 
+        // Construir actualitzacions (només si millora)
+        const updateData = {};
+        const changes = [];
+
         // AUTO-CREAR proveïdor si tenim NIF i nom però no existeix
         if (!matchedSupplier && analysis.nifCif?.length > 0 && analysis.supplierName) {
           const nif = analysis.nifCif[0];
@@ -719,10 +723,6 @@ router.post('/received/bulk-rescan', authorize('ADMIN', 'EDITOR'), async (req, r
             }
           }
         }
-
-        // Construir actualitzacions (només si millora)
-        const updateData = {};
-        const changes = [];
 
         // Número de factura: actualitzar si era provisional
         if (analysis.invoiceNumber && /^(PROV-|GDRIVE-|ZOHO-)/.test(invoice.invoiceNumber)) {

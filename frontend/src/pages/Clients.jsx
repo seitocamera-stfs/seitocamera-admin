@@ -84,8 +84,12 @@ export default function Clients() {
 
   const handleDelete = async (id) => {
     if (!confirm('Desactivar aquest client?')) return;
-    await mutate('delete', `/clients/${id}`);
-    refetch();
+    try {
+      await mutate('delete', `/clients/${id}`);
+      refetch();
+    } catch (err) {
+      alert(err.message || 'Error desactivant client');
+    }
   };
 
   return (

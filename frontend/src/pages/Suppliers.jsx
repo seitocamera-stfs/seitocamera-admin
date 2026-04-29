@@ -89,8 +89,12 @@ export default function Suppliers() {
 
   const handleDelete = async (id) => {
     if (!confirm('Desactivar aquest proveïdor?')) return;
-    await mutate('delete', `/suppliers/${id}`);
-    refetch();
+    try {
+      await mutate('delete', `/suppliers/${id}`);
+      refetch();
+    } catch (err) {
+      alert(err.message || 'Error desactivant proveïdor');
+    }
   };
 
   const handleNew = () => {

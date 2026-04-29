@@ -45,6 +45,10 @@ function rentmanGet(endpoint, params = {}) {
     });
 
     req.on('error', reject);
+    req.setTimeout(30000, () => {
+      req.destroy();
+      reject(new Error('Rentman API timeout (30s)'));
+    });
     req.end();
   });
 }
