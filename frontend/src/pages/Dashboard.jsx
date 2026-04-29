@@ -117,11 +117,11 @@ export default function Dashboard() {
         <div className="px-3 md:px-6 py-4 md:py-5 max-w-7xl mx-auto space-y-4 md:space-y-5">
           {/* Mètriques */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-2 md:gap-3">
-            <StatCard label="Projectes actius" value={stats.activeProjects || 0} sub={`${stats.readyProjects || 0} preparats`} color="#00617F" icon={Package} />
-            <StatCard label="Preparats" value={stats.readyProjects || 0} sub="Llestos per sortir" color="#059669" icon={CheckCircle2} />
-            <StatCard label="Tasques pendents" value={stats.pendingTasks || 0} sub={`${stats.todayTasks || 0} per avui`} color="#d97706" icon={ListTodo} />
-            <StatCard label="Devolucions avui" value={stats.returnsToday || 0} sub="Projectes que tornen" color="#7c3aed" icon={Truck} />
-            <StatCard label="Incidències" value={stats.openIncidents || 0} sub={stats.criticalIncidents > 0 ? `${stats.criticalIncidents} crítica` : 'Cap crítica'} color={stats.openIncidents > 0 ? '#dc2626' : '#059669'} icon={AlertTriangle} />
+            <StatCard label="Projectes actius" value={stats.activeProjects || 0} sub={`${stats.readyProjects || 0} preparats`} color="#00617F" icon={Package} onClick={() => navigate('/operations/projects')} />
+            <StatCard label="Preparats" value={stats.readyProjects || 0} sub="Llestos per sortir" color="#059669" icon={CheckCircle2} onClick={() => navigate('/operations/projects?status=READY')} />
+            <StatCard label="Tasques pendents" value={stats.pendingTasks || 0} sub={`${stats.todayTasks || 0} per avui`} color="#d97706" icon={ListTodo} onClick={() => navigate('/operations/tasks')} />
+            <StatCard label="Devolucions avui" value={stats.returnsToday || 0} sub="Projectes que tornen" color="#7c3aed" icon={Truck} onClick={() => navigate('/operations/projects?view=returns')} />
+            <StatCard label="Incidències" value={stats.openIncidents || 0} sub={stats.criticalIncidents > 0 ? `${stats.criticalIncidents} crítica` : 'Cap crítica'} color={stats.openIncidents > 0 ? '#dc2626' : '#059669'} icon={AlertTriangle} onClick={() => navigate('/operations/incidents')} />
           </div>
 
           {/* Personal disponible */}
@@ -397,9 +397,12 @@ export default function Dashboard() {
 // Stat Card
 // ===========================================
 
-function StatCard({ label, value, sub, color, icon: Icon }) {
+function StatCard({ label, value, sub, color, icon: Icon, onClick }) {
   return (
-    <div className="bg-white rounded-xl border p-3 md:p-4">
+    <div
+      className={`bg-white rounded-xl border p-3 md:p-4 transition-all ${onClick ? 'cursor-pointer hover:shadow-md hover:border-gray-300 active:scale-[0.98]' : ''}`}
+      onClick={onClick}
+    >
       <div className="flex items-center justify-between mb-2 md:mb-3">
         <span className="text-[11px] md:text-[10px] text-gray-400 uppercase tracking-wide">{label}</span>
         <div className="w-7 h-7 md:w-8 md:h-8 rounded-lg flex items-center justify-center" style={{ background: `${color}10` }}>

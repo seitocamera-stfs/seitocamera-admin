@@ -38,20 +38,16 @@ export default function Layout() {
 
       {/* Contingut principal */}
       <main className="flex-1 overflow-auto min-w-0" style={{ background: '#f8f9fa' }}>
-        {/* Barra superior mòbil amb hamburger + notificacions */}
-        <div className="lg:hidden sticky top-0 z-30 flex items-center gap-3 px-3 py-2 border-b bg-white">
+        {/* Barra superior: hamburger (mòbil) + campaneta (sempre) */}
+        <div className="sticky top-0 z-30 flex items-center gap-3 px-3 lg:px-6 py-2 border-b bg-white">
           <button
             onClick={() => setSidebarOpen(true)}
-            className="p-2 -ml-1 rounded-lg hover:bg-gray-100 active:bg-gray-200"
+            className="p-2 -ml-1 rounded-lg hover:bg-gray-100 active:bg-gray-200 lg:hidden"
           >
             <Menu size={20} className="text-gray-700" />
           </button>
-          <span className="text-sm font-semibold text-gray-800 tracking-wide flex-1">SEITO</span>
-          <NotificationBell />
-        </div>
-
-        {/* Barra de notificacions desktop (fixada dalt a la dreta) */}
-        <div className="hidden lg:flex fixed top-3 right-4 z-30">
+          <span className="text-sm font-semibold text-gray-800 tracking-wide lg:hidden">SEITO</span>
+          <div className="flex-1" />
           <NotificationBell />
         </div>
 
