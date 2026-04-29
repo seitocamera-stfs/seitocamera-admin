@@ -1,9 +1,16 @@
 -- Enums per absències
-CREATE TYPE "AbsenceType" AS ENUM ('VACANCES', 'MALALTIA', 'RODATGE', 'PERMIS', 'FORMACIO', 'ALTRE');
-CREATE TYPE "AbsenceStatus" AS ENUM ('PENDENT', 'APROVADA', 'REBUTJADA');
+DO $$ BEGIN
+  CREATE TYPE "AbsenceType" AS ENUM ('VACANCES', 'MALALTIA', 'RODATGE', 'PERMIS', 'FORMACIO', 'ALTRE');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE "AbsenceStatus" AS ENUM ('PENDENT', 'APROVADA', 'REBUTJADA');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Taula d'absències de personal
-CREATE TABLE "staff_absences" (
+CREATE TABLE IF NOT EXISTS "staff_absences" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "approvedById" TEXT,
@@ -20,10 +27,17 @@ CREATE TABLE "staff_absences" (
 );
 
 -- Índexs
-CREATE INDEX "staff_absences_userId_idx" ON "staff_absences"("userId");
-CREATE INDEX "staff_absences_startDate_endDate_idx" ON "staff_absences"("startDate", "endDate");
-CREATE INDEX "staff_absences_status_idx" ON "staff_absences"("status");
+CREATE INDEX IF NOT EXISTS "staff_absences_userId_idx" ON "staff_absences"("userId");
+CREATE INDEX IF NOT EXISTS "staff_absences_startDate_endDate_idx" ON "staff_absences"("startDate", "endDate");
+CREATE INDEX IF NOT EXISTS "staff_absences_status_idx" ON "staff_absences"("status");
 
 -- Foreign keys
-ALTER TABLE "staff_absences" ADD CONSTRAINT "staff_absences_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-ALTER TABLE "staff_absences" ADD CONSTRAINT "staff_absences_approvedById_fkey" FOREIGN KEY ("approvedById") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE "staff_absences" ADD CONSTRAINT "staff_absences_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  ALTER TABLE "staff_absences" ADD CONSTRAINT "staff_absences_approvedById_fkey" FOREIGN KEY ("approvedById") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;

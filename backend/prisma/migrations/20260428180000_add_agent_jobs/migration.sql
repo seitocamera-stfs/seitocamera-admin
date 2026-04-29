@@ -2,7 +2,7 @@
 ALTER TYPE "SuggestionType" ADD VALUE IF NOT EXISTS 'CONCILIATION_MATCH';
 
 -- CreateTable: agent_jobs
-CREATE TABLE "agent_jobs" (
+CREATE TABLE IF NOT EXISTS "agent_jobs" (
     "id" TEXT NOT NULL,
     "jobType" TEXT NOT NULL,
     "status" TEXT NOT NULL DEFAULT 'running',
@@ -20,7 +20,7 @@ CREATE TABLE "agent_jobs" (
 );
 
 -- CreateTable: agent_job_configs
-CREATE TABLE "agent_job_configs" (
+CREATE TABLE IF NOT EXISTS "agent_job_configs" (
     "id" TEXT NOT NULL,
     "jobType" TEXT NOT NULL,
     "label" TEXT NOT NULL,
@@ -34,6 +34,6 @@ CREATE TABLE "agent_job_configs" (
 );
 
 -- CreateIndex
-CREATE INDEX "agent_jobs_jobType_idx" ON "agent_jobs"("jobType");
-CREATE INDEX "agent_jobs_createdAt_idx" ON "agent_jobs"("createdAt");
-CREATE UNIQUE INDEX "agent_job_configs_jobType_key" ON "agent_job_configs"("jobType");
+CREATE INDEX IF NOT EXISTS "agent_jobs_jobType_idx" ON "agent_jobs"("jobType");
+CREATE INDEX IF NOT EXISTS "agent_jobs_createdAt_idx" ON "agent_jobs"("createdAt");
+CREATE UNIQUE INDEX IF NOT EXISTS "agent_job_configs_jobType_key" ON "agent_job_configs"("jobType");

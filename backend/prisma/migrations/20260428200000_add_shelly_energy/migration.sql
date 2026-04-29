@@ -2,7 +2,7 @@
 ALTER TYPE "ServiceProvider" ADD VALUE IF NOT EXISTS 'SHELLY';
 
 -- Crear taula de lectures d'energia Shelly
-CREATE TABLE "shelly_energy_readings" (
+CREATE TABLE IF NOT EXISTS "shelly_energy_readings" (
     "id" TEXT NOT NULL,
     "date" DATE NOT NULL,
     "whPhaseA" DECIMAL(12,4) NOT NULL DEFAULT 0,
@@ -19,5 +19,5 @@ CREATE TABLE "shelly_energy_readings" (
 );
 
 -- Índexs
-CREATE INDEX "shelly_energy_readings_date_idx" ON "shelly_energy_readings"("date");
-CREATE UNIQUE INDEX "shelly_energy_readings_date_deviceId_key" ON "shelly_energy_readings"("date", "deviceId");
+CREATE INDEX IF NOT EXISTS "shelly_energy_readings_date_idx" ON "shelly_energy_readings"("date");
+CREATE UNIQUE INDEX IF NOT EXISTS "shelly_energy_readings_date_deviceId_key" ON "shelly_energy_readings"("date", "deviceId");
