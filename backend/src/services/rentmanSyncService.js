@@ -286,9 +286,10 @@ async function syncAllInvoices({ fetchProjects = true, onlyRecentDays = null } =
 function mapRentmanStatusToProjectStatus(rentmanStatus) {
   const s = (rentmanStatus || '').toLowerCase();
   if (['option', 'quotation', 'draft'].includes(s)) return 'PENDING_PREP';
-  if (['confirmed', 'active'].includes(s)) return 'IN_PREPARATION';
-  if (['out', 'on_location'].includes(s)) return 'OUT';
-  if (['returned'].includes(s)) return 'RETURNED';
+  if (['confirmed', 'confirmado'].includes(s)) return 'IN_PREPARATION';
+  if (['active', 'prepared', 'preparado'].includes(s)) return 'READY';
+  if (['out', 'on_location', 'en localización', 'en_localizacion', 'on location'].includes(s)) return 'OUT';
+  if (['returned', 'esperado de regreso', 'expected_return', 'expected return'].includes(s)) return 'RETURNED';
   if (['closed', 'cancelled', 'archived'].includes(s)) return 'CLOSED';
   return 'PENDING_PREP';
 }
@@ -398,6 +399,7 @@ async function syncOneProject(rmProject) {
 
   // Estat
   const status = mapRentmanStatusToProjectStatus(rmProject.status);
+  const rentmanStatus = rmProject.status || null; // Estat natiu de Rentman (confirmed, out, etc.)
 
   // Buscar si ja existeix
   const existing = await prisma.rentalProject.findFirst({
@@ -446,6 +448,11 @@ async function syncOneProject(rmProject) {
       updates.budgetReference = rmProject.reference;
     }
 
+    // Actualitzar estat Rentman natiu
+    if (rentmanStatus && existing.rentmanStatus !== rentmanStatus) {
+      updates.rentmanStatus = rentmanStatus;
+    }
+
     if (Object.keys(updates).length === 0) {
       return 'unchanged';
     }
@@ -473,6 +480,7 @@ async function syncOneProject(rmProject) {
       returnTime,
       status,
       rentmanProjectId,
+      rentmanStatus,
       budgetReference: rmProject.reference || null,
       internalNotes: rmProject.location ? `Ubicació: ${rmProject.location}` : null,
     },

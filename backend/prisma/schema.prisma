@@ -980,6 +980,7 @@ model RentalProject {
 
   // Referències externes
   rentmanProjectId    String?
+  rentmanStatus       String?          // Estat natiu de Rentman (confirmed, out, returned, etc.)
   budgetReference     String?
 
   // Observacions

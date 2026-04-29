@@ -30,6 +30,29 @@ const STATUS_CONFIG = {
 const ALL_STATUSES = Object.keys(STATUS_CONFIG);
 const KANBAN_STATUSES = ALL_STATUSES.filter(s => STATUS_CONFIG[s].kanban);
 
+// Estats natius de Rentman — es mostra com a badge addicional quan el projecte ve de RM
+const RENTMAN_STATUS_CONFIG = {
+  confirmed:    { label: 'Confirmado',          color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  active:       { label: 'Activo',              color: 'bg-blue-50 text-blue-700 border-blue-200' },
+  prepared:     { label: 'Preparado',           color: 'bg-green-50 text-green-700 border-green-200' },
+  out:          { label: 'En localización',     color: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  on_location:  { label: 'En localización',     color: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  returned:     { label: 'Esperado de regreso', color: 'bg-purple-50 text-purple-700 border-purple-200' },
+  closed:       { label: 'Cerrado',             color: 'bg-gray-50 text-gray-500 border-gray-200' },
+  cancelled:    { label: 'Cancelado',           color: 'bg-red-50 text-red-600 border-red-200' },
+  option:       { label: 'Opción',              color: 'bg-yellow-50 text-yellow-700 border-yellow-200' },
+  quotation:    { label: 'Presupuesto',         color: 'bg-orange-50 text-orange-700 border-orange-200' },
+};
+
+function getRentmanStatusBadge(rentmanStatus) {
+  if (!rentmanStatus) return null;
+  const key = rentmanStatus.toLowerCase();
+  const config = RENTMAN_STATUS_CONFIG[key];
+  if (config) return config;
+  // Fallback per estats desconeguts
+  return { label: rentmanStatus, color: 'bg-gray-50 text-gray-600 border-gray-200' };
+}
+
 const PRIORITY_LABELS = { 0: 'Normal', 1: 'Alta', 2: 'Urgent' };
 
 // ===========================================
@@ -308,9 +331,19 @@ export default function Projects() {
                       )}
                     </td>
                     <td className="p-3">
-                      <span className={`text-xs px-2 py-1 rounded-full whitespace-nowrap ${STATUS_CONFIG[p.status]?.color}`}>
-                        {STATUS_CONFIG[p.status]?.label}
-                      </span>
+                      <div className="flex flex-col gap-1">
+                        <span className={`text-xs px-2 py-1 rounded-full whitespace-nowrap ${STATUS_CONFIG[p.status]?.color}`}>
+                          {STATUS_CONFIG[p.status]?.label}
+                        </span>
+                        {p.rentmanStatus && (() => {
+                          const rmBadge = getRentmanStatusBadge(p.rentmanStatus);
+                          return (
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded border whitespace-nowrap ${rmBadge.color}`} title="Estat Rentman">
+                              RM: {rmBadge.label}
+                            </span>
+                          );
+                        })()}
+                      </div>
                     </td>
                     <td className="p-3 text-center">
                       <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
@@ -383,6 +416,16 @@ export default function Projects() {
                           <User size={11} /> {p.leadUser.name}
                         </div>
                       )}
+                      {p.rentmanStatus && (() => {
+                        const rmBadge = getRentmanStatusBadge(p.rentmanStatus);
+                        return (
+                          <div className="mt-1.5">
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded border ${rmBadge.color}`}>
+                              RM: {rmBadge.label}
+                            </span>
+                          </div>
+                        );
+                      })()}
                       <div className="flex items-center gap-2 mt-2">
                         {p._count?.incidents > 0 && (
                           <span className="text-xs text-amber-600 flex items-center gap-0.5">
@@ -673,6 +716,14 @@ function ProjectDetailModal({ projectId, onClose, onUpdate }) {
           <span className={`text-sm px-3 py-1 rounded-full font-medium ${STATUS_CONFIG[project.status]?.color}`}>
             {STATUS_CONFIG[project.status]?.label}
           </span>
+          {project.rentmanStatus && (() => {
+            const rmBadge = getRentmanStatusBadge(project.rentmanStatus);
+            return (
+              <span className={`text-xs px-2 py-1 rounded border ${rmBadge.color}`} title="Estat a Rentman">
+                RM: {rmBadge.label}
+              </span>
+            );
+          })()}
           {project.priority > 0 && (
             <span className={`text-sm font-bold ${project.priority === 2 ? 'text-red-600' : 'text-orange-600'}`}>
               Prioritat {PRIORITY_LABELS[project.priority]}
