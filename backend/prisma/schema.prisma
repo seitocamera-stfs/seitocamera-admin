@@ -61,6 +61,7 @@ model User {
   absences              StaffAbsence[]    @relation("AbsenceUser")
   approvedAbsences      StaffAbsence[]    @relation("AbsenceApprover")
   pushSubscriptions     PushSubscription[]
+  transportsCreated     Transport[]        @relation("transportCreatedBy")
 
   @@map("users")
 }
@@ -1390,4 +1391,76 @@ model PushSubscription {
 
   @@index([userId])
   @@map("push_subscriptions")
+}
+
+// ===========================================
+// Logística — Transports
+// ===========================================
+
+model EmpresaLogistica {
+  id              String   @id @default(cuid())
+  nom             String   @unique
+  emailContacte   String?
+  telefonContacte String?
+  nomContacte     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  conductors      Conductor[]
+  transports      Transport[]
+
+  @@map("empreses_logistica")
+}
+
+model Conductor {
+  id          String   @id @default(cuid())
+  nom         String
+  telefon     String?
+  empresaId   String?
+  createdAt   DateTime @default(now())
+
+  empresa     EmpresaLogistica? @relation(fields: [empresaId], references: [id], onDelete: SetNull)
+  transports  Transport[]
+
+  @@map("conductors")
+}
+
+model Transport {
+  id                   String    @id @default(cuid())
+  projecte             String?
+  tipusServei          String    @default("Entrega")
+  origen               String?
+  notesOrigen          String?
+  desti                String?
+  notesDesti           String?
+  dataCarrega          DateTime? @db.Date
+  dataEntrega          DateTime? @db.Date
+  horaRecollida        String?
+  horaEntregaEstimada  String?
+  horaFiPrevista       String?
+  horaIniciReal        String?
+  horaFiReal           String?
+  minutsExtres         Int?
+  responsableProduccio String?
+  telefonResponsable   String?
+  conductorId          String?
+  empresaId            String?
+  estat                String    @default("Pendent")
+  motiuCancellacio     String?
+  cancellatAt          DateTime?
+  notes                String?
+  historial            Json      @default("[]")
+  createdById          String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  conductor            Conductor?         @relation(fields: [conductorId], references: [id], onDelete: SetNull)
+  empresa              EmpresaLogistica?  @relation(fields: [empresaId], references: [id], onDelete: SetNull)
+  createdBy            User?              @relation("transportCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([estat])
+  @@index([dataCarrega])
+  @@index([conductorId])
+  @@index([empresaId])
+  @@map("transports")
 }

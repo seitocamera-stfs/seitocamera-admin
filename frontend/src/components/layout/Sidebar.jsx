@@ -53,6 +53,13 @@ const sections = [
     ],
   },
   {
+    key: 'logistics',
+    label: 'Logística',
+    items: [
+      { to: '/logistics', icon: Truck, label: 'Transports', section: 'operations' },
+    ],
+  },
+  {
     key: 'accounting',
     label: 'Comptabilitat',
     items: [

@@ -62,3 +62,9 @@
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
   }
 }
+
+@layer components {
+  .input-field {
+    @apply w-full text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-[#00617F] focus:border-[#00617F];
+  }
+}
