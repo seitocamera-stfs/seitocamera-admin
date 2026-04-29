@@ -53,7 +53,7 @@ function App() {
         }
       >
         <Route index element={<Dashboard />} />
-        <Route path="accounting" element={<DashboardComptabilitat />} />
+        <Route path="accounting" element={<RoleGuard section="fiscal"><DashboardComptabilitat /></RoleGuard>} />
         <Route path="invoices/received" element={<RoleGuard section="receivedInvoices"><ReceivedInvoices /></RoleGuard>} />
         <Route path="invoices/issued" element={<RoleGuard section="issuedInvoices"><IssuedInvoices /></RoleGuard>} />
         <Route path="suppliers" element={<RoleGuard section="suppliers"><Suppliers /></RoleGuard>} />
@@ -64,26 +64,26 @@ function App() {
         <Route path="users" element={<RoleGuard section="users"><Users /></RoleGuard>} />
         <Route path="invoices/shared" element={<RoleGuard section="sharedInvoices"><SharedInvoices /></RoleGuard>} />
         <Route path="fiscal" element={<RoleGuard section="fiscal"><Fiscal /></RoleGuard>} />
-        <Route path="agent" element={<AccountingAgent />} />
-        <Route path="agent/rules" element={<AgentRules />} />
-        <Route path="agent/supervisor" element={<AgentSupervisor />} />
-        <Route path="equipment" element={<Equipment />} />
-        <Route path="ai-costs" element={<AiCosts />} />
+        <Route path="agent" element={<RoleGuard section="agent"><AccountingAgent /></RoleGuard>} />
+        <Route path="agent/rules" element={<RoleGuard section="agent"><AgentRules /></RoleGuard>} />
+        <Route path="agent/supervisor" element={<RoleGuard section="agent"><AgentSupervisor /></RoleGuard>} />
+        <Route path="equipment" element={<RoleGuard section="equipment"><Equipment /></RoleGuard>} />
+        <Route path="ai-costs" element={<RoleGuard section="users"><AiCosts /></RoleGuard>} />
         <Route path="settings/connections" element={<RoleGuard section="users"><Connections /></RoleGuard>} />
         {/* Mòdul Operacions */}
-        <Route path="operations/projects" element={<OperationsProjects />} />
-        <Route path="operations/incidents" element={<OperationsIncidents />} />
-        <Route path="operations/roles" element={<OperationsRoles />} />
-        <Route path="operations/protocols" element={<OperationsProtocols />} />
-        <Route path="operations/calendar" element={<OperationsCalendar />} />
-        <Route path="operations/tasks" element={<OperationsTasks />} />
-        <Route path="operations/absences" element={<OperationsAbsences />} />
+        <Route path="operations/projects" element={<RoleGuard section="operations"><OperationsProjects /></RoleGuard>} />
+        <Route path="operations/incidents" element={<RoleGuard section="operations"><OperationsIncidents /></RoleGuard>} />
+        <Route path="operations/roles" element={<RoleGuard section="operations"><OperationsRoles /></RoleGuard>} />
+        <Route path="operations/protocols" element={<RoleGuard section="operations"><OperationsProtocols /></RoleGuard>} />
+        <Route path="operations/calendar" element={<RoleGuard section="operations"><OperationsCalendar /></RoleGuard>} />
+        <Route path="operations/tasks" element={<RoleGuard section="operations"><OperationsTasks /></RoleGuard>} />
+        <Route path="operations/absences" element={<RoleGuard section="operations"><OperationsAbsences /></RoleGuard>} />
         {/* Mòdul Equip */}
-        <Route path="team/clock" element={<TeamTimeClock />} />
-        <Route path="team/entries" element={<TeamTimeEntries />} />
-        <Route path="team/absences" element={<OperationsAbsences />} />
+        <Route path="team/clock" element={<RoleGuard section="operations"><TeamTimeClock /></RoleGuard>} />
+        <Route path="team/entries" element={<RoleGuard section="operations"><TeamTimeEntries /></RoleGuard>} />
+        <Route path="team/absences" element={<RoleGuard section="operations"><OperationsAbsences /></RoleGuard>} />
         {/* Mòdul Logística */}
-        <Route path="logistics" element={<LogisticsDashboard />} />
+        <Route path="logistics" element={<RoleGuard section="logistics"><LogisticsDashboard /></RoleGuard>} />
       </Route>
     </Routes>
   );

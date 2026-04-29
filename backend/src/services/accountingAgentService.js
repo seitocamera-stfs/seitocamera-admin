@@ -150,6 +150,7 @@ Per cada anomalia, respon en JSON:
 {
   "anomalies": [
     {
+      "invoiceNumber": "Nº de la factura afectada (exacte, tal com apareix a les dades)",
       "type": "TAX_WARNING" | "ANOMALY" | "MISSING_DATA" | "DUPLICATE",
       "title": "Títol curt",
       "description": "Descripció detallada",

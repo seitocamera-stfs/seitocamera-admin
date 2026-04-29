@@ -123,13 +123,37 @@ async function runAccountingReview() {
 
     if (recentInvoices.length > 0) {
       try {
+        // Obtenir les factures completes per fer match per invoiceNumber
+        const recentFull = await prisma.receivedInvoice.findMany({
+          where: { id: { in: recentInvoices.map((r) => r.id) } },
+          select: { id: true, invoiceNumber: true },
+        });
+        const invoiceByNumber = new Map(recentFull.map((inv) => [inv.invoiceNumber, inv.id]));
+
         const anomalies = await agent.analyzeAnomalies(recentInvoices.map((r) => r.id));
         results.anomalies = anomalies.length;
 
         for (const anomaly of anomalies) {
+          // Buscar la factura correcta per invoiceNumber retornat pel LLM
+          let targetInvoiceId = recentFull[0]?.id; // fallback al primer
+          if (anomaly.invoiceNumber) {
+            const matched = invoiceByNumber.get(anomaly.invoiceNumber);
+            if (matched) {
+              targetInvoiceId = matched;
+            } else {
+              // Intentar match parcial (per si el LLM afegeix/treu espais)
+              for (const [num, id] of invoiceByNumber) {
+                if (num.includes(anomaly.invoiceNumber) || anomaly.invoiceNumber.includes(num)) {
+                  targetInvoiceId = id;
+                  break;
+                }
+              }
+            }
+          }
+
           await prisma.agentSuggestion.create({
             data: {
-              receivedInvoiceId: recentInvoices[0].id,
+              receivedInvoiceId: targetInvoiceId,
               type: anomaly.type || 'ANOMALY',
               title: anomaly.title,
               description: anomaly.description,
