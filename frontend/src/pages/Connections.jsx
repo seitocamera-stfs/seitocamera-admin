@@ -113,6 +113,8 @@ export default function Connections() {
       setApiSetup({ provider: 'GOCARDLESS', clientId: '', secret: '' });
     } else if (provider === 'RENTMAN') {
       setApiSetup({ provider: 'RENTMAN', apiToken: '' });
+    } else if (provider === 'SHELLY') {
+      setApiSetup({ provider: 'SHELLY', authKey: '', serverUri: '', deviceId: '' });
     }
   };
 
@@ -338,7 +340,7 @@ export default function Connections() {
                     </>
                   )}
 
-                  {(conn.provider === 'QONTO' || conn.provider === 'GOCARDLESS' || conn.provider === 'RENTMAN') && (
+                  {(conn.provider === 'QONTO' || conn.provider === 'GOCARDLESS' || conn.provider === 'RENTMAN' || conn.provider === 'SHELLY') && (
                     <>
                       {isConnected ? (
                         <>
