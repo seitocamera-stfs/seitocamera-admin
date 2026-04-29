@@ -13,6 +13,7 @@
 const { logger } = require('../config/logger');
 const { prisma } = require('../config/database');
 const company = require('../config/company');
+const aiCostTracker = require('./aiCostTracker');
 
 // ===========================================
 // Configuració Claude API
@@ -30,8 +31,9 @@ async function callLLM(systemPrompt, messages, options = {}) {
     throw new Error('ANTHROPIC_API_KEY no configurada. Afegeix-la al fitxer .env');
   }
 
+  const model = options.model || CLAUDE_MODEL;
   const body = {
-    model: options.model || CLAUDE_MODEL,
+    model,
     max_tokens: options.maxTokens || MAX_TOKENS,
     system: systemPrompt,
     messages,
@@ -53,7 +55,24 @@ async function callLLM(systemPrompt, messages, options = {}) {
   }
 
   const data = await response.json();
-  return data.content?.[0]?.text || '';
+  const text = data.content?.[0]?.text || '';
+  const inputTokens = data.usage?.input_tokens || 0;
+  const outputTokens = data.usage?.output_tokens || 0;
+
+  // Registrar cost (fire-and-forget)
+  const serviceName = options.trackingService || 'accounting_agent';
+  aiCostTracker.trackUsage({
+    service: serviceName,
+    model,
+    inputTokens,
+    outputTokens,
+    entityType: options.entityType || null,
+    entityId: options.entityId || null,
+    success: true,
+    metadata: options.metadata || null,
+  }).catch(() => {});
+
+  return text;
 }
 
 // ===========================================
@@ -400,7 +419,7 @@ HISTORIAL PROVEÏDOR:
 
   const response = await callLLM(classifierPrompt, [
     { role: 'user', content: invoiceText },
-  ]);
+  ], { trackingService: 'accounting_agent_classify', entityType: 'invoice', entityId: invoiceId });
 
   try {
     // Extreure JSON de la resposta (pot venir amb text extra)
@@ -472,7 +491,7 @@ async function analyzeAnomalies(invoiceIds) {
 
   const response = await callLLM(anomalyPrompt, [
     { role: 'user', content: `Analitza aquestes ${invoices.length} factures:\n${invoicesText}` },
-  ]);
+  ], { trackingService: 'accounting_agent_anomalies' });
 
   try {
     const jsonMatch = response.match(/\{[\s\S]*\}/);
@@ -1117,7 +1136,7 @@ ${soonDue.map((inv) => `- ${inv.invoiceNumber} | ${inv.supplier?.name || '?'} | 
     { role: 'user', content: userMessage },
   ];
 
-  const response = await callLLM(systemWithContext, claudeMessages, { maxTokens: 4096 });
+  const response = await callLLM(systemWithContext, claudeMessages, { maxTokens: 4096, trackingService: 'accounting_agent_chat' });
   return response;
 }
 

@@ -54,6 +54,7 @@ model User {
   projectAssignments    ProjectAssignment[]
   ledProjects           RentalProject[]   @relation("ProjectLead")
   techSupportProjects   RentalProject[]   @relation("ProjectTechSupport")
+  returnLeadProjects    RentalProject[]   @relation("ProjectReturnLead")
   createdTasks          ProjectTask[]     @relation("TaskCreator")
   assignedTasks         ProjectTask[]     @relation("TaskAssignee")
   completedTasks        ProjectTask[]     @relation("TaskCompleter")
@@ -960,8 +961,9 @@ model RentalProject {
   priority            Int            @default(0) // 0=normal, 1=alta, 2=urgent
 
   // Responsables
-  leadUserId          String?
-  techSupportUserId   String?          // Tècnic de suport assignat
+  leadUserId          String?            // Responsable preparació
+  techSupportUserId   String?            // Tècnic de suport assignat
+  returnLeadUserId    String?            // Responsable devolució (pot ser diferent del de preparació)
   leadRoleCode        OperationalRole?
 
   // Transport
@@ -994,6 +996,7 @@ model RentalProject {
   client              Client?        @relation(fields: [clientId], references: [id])
   leadUser            User?          @relation("ProjectLead", fields: [leadUserId], references: [id])
   techSupportUser     User?          @relation("ProjectTechSupport", fields: [techSupportUserId], references: [id])
+  returnLeadUser      User?          @relation("ProjectReturnLead", fields: [returnLeadUserId], references: [id])
   assignments         ProjectAssignment[]
   statusHistory       ProjectStatusChange[]
   incidents           Incident[]

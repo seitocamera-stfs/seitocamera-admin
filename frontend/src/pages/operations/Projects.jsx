@@ -323,9 +323,16 @@ export default function Projects() {
                     </td>
                     <td className="p-3">
                       {p.leadUser ? (
-                        <span className="flex items-center gap-1 text-sm">
-                          <User size={14} /> {p.leadUser.name}
-                        </span>
+                        <div>
+                          <span className="flex items-center gap-1 text-sm">
+                            <User size={14} /> {p.leadUser.name}
+                          </span>
+                          {p.returnLeadUser && p.returnLeadUserId !== p.leadUserId && (
+                            <span className="text-[10px] text-muted-foreground block mt-0.5">
+                              Devolució: {p.returnLeadUser.name}
+                            </span>
+                          )}
+                        </div>
                       ) : (
                         <span className="text-xs text-muted-foreground italic">Sense assignar</span>
                       )}
@@ -482,7 +489,7 @@ function CreateProjectModal({ onClose, onCreated }) {
     departureDate: '', departureTime: '',
     shootEndDate: '', shootEndTime: '',
     returnDate: '', returnTime: '',
-    priority: 0, leadUserId: '', techSupportUserId: '',
+    priority: 0, leadUserId: '', techSupportUserId: '', returnLeadUserId: '',
     transportType: '', transportNotes: '', pickupTime: '',
     internalNotes: '',
     techValidationRequired: false,
@@ -494,7 +501,7 @@ function CreateProjectModal({ onClose, onCreated }) {
     if (!form.name || !form.departureDate || !form.returnDate) return;
     setSaving(true);
     try {
-      const body = { ...form, leadUserId: form.leadUserId || undefined, techSupportUserId: form.techSupportUserId || undefined };
+      const body = { ...form, leadUserId: form.leadUserId || undefined, techSupportUserId: form.techSupportUserId || undefined, returnLeadUserId: form.returnLeadUserId || undefined };
       await api.post('/operations/projects', body);
       onCreated();
     } catch (err) {
@@ -539,6 +546,14 @@ function CreateProjectModal({ onClose, onCreated }) {
             <select value={form.techSupportUserId} onChange={e => set('techSupportUserId', e.target.value)}
               className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background">
               <option value="">Sense assignar</option>
+              {teamUsers?.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-sm font-medium">Responsable devolució</label>
+            <select value={form.returnLeadUserId} onChange={e => set('returnLeadUserId', e.target.value)}
+              className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background">
+              <option value="">Mateix que preparació</option>
               {teamUsers?.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
             </select>
           </div>
@@ -924,6 +939,7 @@ function GeneralTab({ project, projectId, refetch, onValidateWarehouse, onValida
     setForm({
       leadUserId: project.leadUserId || '',
       techSupportUserId: project.techSupportUserId || '',
+      returnLeadUserId: project.returnLeadUserId || '',
       transportType: project.transportType || '',
       transportNotes: project.transportNotes || '',
       pickupTime: project.pickupTime || '',
@@ -939,6 +955,7 @@ function GeneralTab({ project, projectId, refetch, onValidateWarehouse, onValida
       await api.put(`/operations/projects/${projectId}`, {
         leadUserId: form.leadUserId || null,
         techSupportUserId: form.techSupportUserId || null,
+        returnLeadUserId: form.returnLeadUserId || null,
         transportType: form.transportType || null,
         transportNotes: form.transportNotes || null,
         pickupTime: form.pickupTime || null,
@@ -971,6 +988,14 @@ function GeneralTab({ project, projectId, refetch, onValidateWarehouse, onValida
             <select value={form.techSupportUserId} onChange={e => setForm({ ...form, techSupportUserId: e.target.value })}
               className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background">
               <option value="">Sense assignar</option>
+              {teamUsers?.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-muted-foreground font-medium">Responsable devolució</label>
+            <select value={form.returnLeadUserId} onChange={e => setForm({ ...form, returnLeadUserId: e.target.value })}
+              className="w-full mt-1 border rounded-md px-3 py-2 text-sm bg-background">
+              <option value="">Mateix que preparació</option>
               {teamUsers?.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
             </select>
           </div>
@@ -1043,6 +1068,15 @@ function GeneralTab({ project, projectId, refetch, onValidateWarehouse, onValida
         <div>
           <span className="text-muted-foreground">Tècnic suport:</span>
           <span className="ml-2 font-medium">{project.techSupportUser?.name || <span className="italic text-muted-foreground">Sense assignar</span>}</span>
+        </div>
+        <div>
+          <span className="text-muted-foreground">Resp. devolució:</span>
+          <span className="ml-2 font-medium">
+            {project.returnLeadUser?.name || project.leadUser?.name || <span className="italic text-muted-foreground">Sense assignar</span>}
+            {!project.returnLeadUserId && project.leadUserId && (
+              <span className="text-xs text-muted-foreground ml-1">(= preparació)</span>
+            )}
+          </span>
         </div>
         <div className="col-span-2 border-t pt-3 mt-1">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Cicle del projecte</p>

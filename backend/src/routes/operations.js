@@ -227,6 +227,7 @@ router.get('/projects', async (req, res, next) => {
         include: {
           leadUser: { select: { id: true, name: true } },
           techSupportUser: { select: { id: true, name: true } },
+          returnLeadUser: { select: { id: true, name: true } },
           client: { select: { id: true, name: true } },
           assignments: {
             include: { user: { select: { id: true, name: true } } },
@@ -253,6 +254,7 @@ router.get('/projects/:id', async (req, res, next) => {
       include: {
         leadUser: { select: { id: true, name: true, email: true } },
         techSupportUser: { select: { id: true, name: true, email: true } },
+        returnLeadUser: { select: { id: true, name: true, email: true } },
         client: { select: { id: true, name: true, phone: true, email: true } },
         assignments: {
           include: { user: { select: { id: true, name: true } } },
@@ -299,7 +301,7 @@ router.post('/projects', async (req, res, next) => {
       departureDate, departureTime,
       shootEndDate, shootEndTime,
       returnDate, returnTime,
-      priority = 0, leadUserId, techSupportUserId, leadRoleCode,
+      priority = 0, leadUserId, techSupportUserId, returnLeadUserId, leadRoleCode,
       transportType, transportNotes, pickupTime,
       techValidationRequired = false,
       rentmanProjectId, budgetReference,
@@ -322,6 +324,7 @@ router.post('/projects', async (req, res, next) => {
         priority,
         leadUserId: leadUserId || null,
         techSupportUserId: techSupportUserId || null,
+        returnLeadUserId: returnLeadUserId || null,
         leadRoleCode,
         transportType,
         transportNotes,
@@ -379,6 +382,7 @@ router.put('/projects/:id', async (req, res, next) => {
     delete data.updatedAt;
     delete data.leadUser;
     delete data.techSupportUser;
+    delete data.returnLeadUser;
     delete data.client;
     delete data.assignments;
     delete data.statusHistory;
@@ -394,6 +398,7 @@ router.put('/projects/:id', async (req, res, next) => {
       include: {
         leadUser: { select: { id: true, name: true } },
         techSupportUser: { select: { id: true, name: true } },
+        returnLeadUser: { select: { id: true, name: true } },
         client: { select: { id: true, name: true } },
       },
     });

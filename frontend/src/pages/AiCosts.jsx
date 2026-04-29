@@ -1,12 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
-import { BrainCircuit, ChevronLeft, ChevronRight, TrendingUp, Zap, Mail, FileText, Bot, Package } from 'lucide-react';
+import { BrainCircuit, ChevronLeft, ChevronRight, TrendingUp, Zap, Mail, FileText, Bot, Package, GitCompare, MessageSquare, AlertTriangle, Camera } from 'lucide-react';
 import api from '../lib/api';
 
 const SERVICE_LABELS = {
   email_classification: { label: 'Classificació emails', icon: Mail, color: 'text-blue-600 bg-blue-50' },
   invoice_extraction: { label: 'Extracció factures', icon: FileText, color: 'text-emerald-600 bg-emerald-50' },
   accounting_agent: { label: 'Agent comptable', icon: Bot, color: 'text-purple-600 bg-purple-50' },
-  equipment_extraction: { label: 'Extracció equips', icon: Package, color: 'text-orange-600 bg-orange-50' },
+  accounting_agent_chat: { label: 'Agent comptable (xat)', icon: MessageSquare, color: 'text-purple-600 bg-purple-50' },
+  accounting_agent_classify: { label: 'Agent comptable (classificació)', icon: Bot, color: 'text-violet-600 bg-violet-50' },
+  accounting_agent_anomalies: { label: 'Agent comptable (anomalies)', icon: AlertTriangle, color: 'text-amber-600 bg-amber-50' },
+  equipment_extraction: { label: 'Extracció equips', icon: Camera, color: 'text-orange-600 bg-orange-50' },
+  conciliation: { label: 'Conciliació IA', icon: GitCompare, color: 'text-teal-600 bg-teal-50' },
 };
 
 // Tipus de canvi USD → EUR (actualitzar periòdicament)
@@ -148,6 +152,33 @@ export default function AiCosts() {
         </div>
       </div>
 
+      {/* Desglossament per model */}
+      {(summary?.byModel || []).length > 0 && (
+        <div className="rounded-lg border bg-card">
+          <div className="p-4 border-b">
+            <h2 className="font-semibold flex items-center gap-2"><BrainCircuit size={16} /> Per model</h2>
+          </div>
+          <div className="divide-y">
+            {summary.byModel.map((m) => {
+              const modelName = m.model.includes('haiku') ? 'Claude Haiku' : m.model.includes('sonnet') ? 'Claude Sonnet' : m.model.includes('opus') ? 'Claude Opus' : m.model;
+              const pct = total.costUsd > 0 ? ((m.costUsd / total.costUsd) * 100).toFixed(0) : 0;
+              return (
+                <div key={m.model} className="p-4 flex items-center justify-between">
+                  <div>
+                    <p className="font-medium text-sm">{modelName}</p>
+                    <p className="text-xs text-muted-foreground">{m.calls} crides · {formatTokens(m.inputTokens)} in / {formatTokens(m.outputTokens)} out</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-semibold">{formatCost(m.costUsd)}</p>
+                    <p className="text-xs text-muted-foreground">{pct}%</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Evolució 6 mesos */}
       {overview?.months && (
         <div className="rounded-lg border bg-card">
@@ -217,7 +248,7 @@ export default function AiCosts() {
 
       {/* Info preus */}
       <div className="text-xs text-muted-foreground text-center space-y-1">
-        <p>Preus Claude Haiku: $1.00/M tokens entrada · $5.00/M tokens sortida</p>
+        <p>Preus: Haiku $1/$5 · Sonnet $3/$15 · Opus $15/$75 (per 1M tokens entrada/sortida)</p>
         <p>Conversió: 1 USD = {USD_TO_EUR} EUR · Els costos es calculen a partir dels tokens reportats per l'API</p>
       </div>
     </div>

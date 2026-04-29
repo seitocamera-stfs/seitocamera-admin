@@ -15,6 +15,7 @@
 
 const { logger } = require('../config/logger');
 const { prisma } = require('../config/database');
+const aiCostTracker = require('./aiCostTracker');
 
 // ===========================================
 // Configuració
@@ -70,7 +71,7 @@ Si no trobes cap equip a la factura, respon: { "items": [] }`;
 /**
  * Crida a l'API de Claude
  */
-async function callLLM(text) {
+async function callLLM(text, invoiceId) {
   if (!ANTHROPIC_API_KEY) {
     throw new Error('ANTHROPIC_API_KEY no configurada. Afegeix-la al fitxer .env');
   }
@@ -96,7 +97,22 @@ async function callLLM(text) {
   }
 
   const data = await response.json();
-  return data.content?.[0]?.text || '';
+  const resultText = data.content?.[0]?.text || '';
+
+  // Registrar cost (fire-and-forget)
+  const inputTokens = data.usage?.input_tokens || 0;
+  const outputTokens = data.usage?.output_tokens || 0;
+  aiCostTracker.trackUsage({
+    service: 'equipment_extraction',
+    model: CLAUDE_MODEL,
+    inputTokens,
+    outputTokens,
+    entityType: 'invoice',
+    entityId: invoiceId || null,
+    success: true,
+  }).catch(() => {});
+
+  return resultText;
 }
 
 /**
@@ -194,7 +210,7 @@ TEXT DE LA FACTURA:
 ${text.substring(0, 8000)}`;
 
   // Cridar Claude
-  const response = await callLLM(prompt);
+  const response = await callLLM(prompt, invoiceId);
 
   // Parsejar resposta
   let items = [];
