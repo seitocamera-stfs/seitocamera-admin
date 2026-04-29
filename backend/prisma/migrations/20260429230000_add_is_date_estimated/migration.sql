@@ -10,5 +10,5 @@ END $$;
 -- (factures amb source GDRIVE_SYNC o ZOHO que tenen issueDate = createdAt ± 5 min)
 UPDATE "received_invoices"
 SET "isDateEstimated" = true
-WHERE "source" IN ('GDRIVE_SYNC', 'ZOHO')
+WHERE "source" IN ('GDRIVE_SYNC', 'EMAIL_WITH_PDF')
   AND ABS(EXTRACT(EPOCH FROM ("issueDate" - "createdAt"))) < 300;

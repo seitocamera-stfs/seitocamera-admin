@@ -341,7 +341,7 @@ async function syncGdriveFiles() {
 
           const invoiceData = {
               invoiceNumber,
-              source: zohoMeta?.zohoMessageId ? 'ZOHO' : 'GDRIVE_SYNC',
+              source: zohoMeta?.zohoMessageId ? 'EMAIL_WITH_PDF' : 'GDRIVE_SYNC',
               emailMessageId: zohoMeta?.zohoMessageId || null,
               status: needsAmount ? 'AMOUNT_PENDING' : needsReview ? 'PDF_PENDING' : 'PENDING',
               gdriveFileId: file.id,
@@ -682,7 +682,7 @@ async function syncLogistikFiles() {
 
         const invoiceData = {
           invoiceNumber,
-          source: zohoMetaLogistik?.zohoMessageId ? 'ZOHO' : 'GDRIVE_SYNC',
+          source: zohoMetaLogistik?.zohoMessageId ? 'EMAIL_WITH_PDF' : 'GDRIVE_SYNC',
           emailMessageId: zohoMetaLogistik?.zohoMessageId || null,
           status: needsAmount ? 'AMOUNT_PENDING' : needsReview ? 'PDF_PENDING' : 'PENDING',
           gdriveFileId: file.id,
