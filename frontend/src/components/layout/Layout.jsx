@@ -39,14 +39,14 @@ export default function Layout() {
       {/* Contingut principal */}
       <main className="flex-1 overflow-auto min-w-0" style={{ background: '#f8f9fa' }}>
         {/* Barra superior: hamburger (mòbil) + campaneta (sempre) */}
-        <div className="sticky top-0 z-30 flex items-center gap-3 px-3 lg:px-6 py-2 border-b bg-white">
+        <div className="sticky top-0 z-30 flex items-center gap-2 px-2 lg:px-6 py-1.5 lg:py-2 border-b bg-white">
           <button
             onClick={() => setSidebarOpen(true)}
-            className="p-2 -ml-1 rounded-lg hover:bg-gray-100 active:bg-gray-200 lg:hidden"
+            className="p-1.5 -ml-0.5 rounded-lg hover:bg-gray-100 active:bg-gray-200 lg:hidden"
           >
-            <Menu size={20} className="text-gray-700" />
+            <Menu size={18} className="text-gray-700" />
           </button>
-          <span className="text-sm font-semibold text-gray-800 tracking-wide lg:hidden">SEITO</span>
+          <span className="text-xs font-semibold text-gray-800 tracking-wide lg:hidden">SEITO</span>
           <div className="flex-1" />
           <NotificationBell />
         </div>

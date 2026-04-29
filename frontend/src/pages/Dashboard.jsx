@@ -85,26 +85,26 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen" style={{ background: '#f8f9fa' }}>
       {/* Top bar */}
-      <div className="bg-white border-b px-3 md:px-6 py-3 md:py-4 flex items-center justify-between flex-wrap gap-2">
-        <div>
-          <h1 className="text-base md:text-lg font-medium text-gray-900">Dashboard</h1>
-          <p className="text-[11px] md:text-xs text-gray-400 mt-0.5">{dateStr}</p>
+      <div className="bg-white border-b px-3 md:px-6 py-2 md:py-4 flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <h1 className="text-sm md:text-lg font-medium text-gray-900">Dashboard</h1>
+          <p className="text-[10px] md:text-xs text-gray-400">{dateStr}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 md:gap-2 flex-shrink-0">
           <button
             onClick={handleSync}
             disabled={syncing}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs border rounded-lg text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+            className="flex items-center gap-1 px-2 md:px-3 py-1.5 md:py-2 text-[11px] md:text-xs border rounded-lg text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors"
           >
-            <RefreshCw size={13} className={syncing ? 'animate-spin' : ''} />
-            Sync Rentman
+            <RefreshCw size={12} className={syncing ? 'animate-spin' : ''} />
+            <span className="hidden sm:inline">Sync</span> Rentman
           </button>
           <button
             onClick={() => navigate('/operations/projects')}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs rounded-lg text-white transition-colors"
+            className="flex items-center gap-1 px-2 md:px-3 py-1.5 md:py-2 text-[11px] md:text-xs rounded-lg text-white transition-colors"
             style={{ background: '#00617F' }}
           >
-            <Package size={13} /> Projectes
+            <Package size={12} /> Projectes
           </button>
         </div>
       </div>
@@ -114,14 +114,16 @@ export default function Dashboard() {
           <Loader2 className="animate-spin text-gray-300" size={32} />
         </div>
       ) : (
-        <div className="px-3 md:px-6 py-4 md:py-5 max-w-7xl mx-auto space-y-4 md:space-y-5">
+        <div className="px-3 md:px-6 py-3 md:py-5 max-w-7xl mx-auto space-y-3 md:space-y-5">
           {/* Mètriques */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-2 md:gap-3">
             <StatCard label="Projectes actius" value={stats.activeProjects || 0} sub={`${stats.readyProjects || 0} preparats`} color="#00617F" icon={Package} onClick={() => navigate('/operations/projects')} />
             <StatCard label="Preparats" value={stats.readyProjects || 0} sub="Llestos per sortir" color="#059669" icon={CheckCircle2} onClick={() => navigate('/operations/projects?status=READY')} />
             <StatCard label="Tasques pendents" value={stats.pendingTasks || 0} sub={`${stats.todayTasks || 0} per avui`} color="#d97706" icon={ListTodo} onClick={() => navigate('/operations/tasks')} />
             <StatCard label="Devolucions avui" value={stats.returnsToday || 0} sub="Projectes que tornen" color="#7c3aed" icon={Truck} onClick={() => navigate('/operations/projects?view=returns')} />
-            <StatCard label="Incidències" value={stats.openIncidents || 0} sub={stats.criticalIncidents > 0 ? `${stats.criticalIncidents} crítica` : 'Cap crítica'} color={stats.openIncidents > 0 ? '#dc2626' : '#059669'} icon={AlertTriangle} onClick={() => navigate('/operations/incidents')} />
+            <div className="col-span-2 md:col-span-1">
+              <StatCard label="Incidències" value={stats.openIncidents || 0} sub={stats.criticalIncidents > 0 ? `${stats.criticalIncidents} crítica` : 'Cap crítica'} color={stats.openIncidents > 0 ? '#dc2626' : '#059669'} icon={AlertTriangle} onClick={() => navigate('/operations/incidents')} />
+            </div>
           </div>
 
           {/* Personal disponible */}
@@ -134,10 +136,10 @@ export default function Dashboard() {
             const uniqueAbsent = [...new Map(absent.map(s => [s.user.id, s])).values()];
 
             return (
-              <div className="bg-white rounded-xl border p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-xs font-medium text-gray-900 flex items-center gap-1.5">
-                    <Users size={14} className="text-[#00617F]" /> Personal disponible avui
+              <div className="bg-white rounded-xl border p-3 md:p-4">
+                <div className="flex items-center justify-between mb-2 md:mb-3">
+                  <h3 className="text-[11px] md:text-xs font-medium text-gray-900 flex items-center gap-1.5">
+                    <Users size={13} className="text-[#00617F]" /> Personal disponible avui
                   </h3>
                   <div className="flex items-center gap-2">
                     {uniqueAbsent.length > 0 && (
@@ -150,19 +152,19 @@ export default function Dashboard() {
                     </span>
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-1.5 md:gap-2">
                   {available.map((s) => {
                     const RoleIcon = ROLE_ICONS[s.role.code] || User;
                     return (
                       <div
                         key={s.id}
-                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border bg-gray-50/50"
+                        className="flex items-center gap-1 md:gap-1.5 px-2 md:px-2.5 py-1 md:py-1.5 rounded-lg text-[11px] md:text-xs border bg-gray-50/50"
                         style={{ borderColor: `${s.role.color}40` }}
                       >
                         {s.user.color && (
-                          <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: s.user.color }} />
+                          <span className="w-1.5 h-1.5 md:w-2 md:h-2 rounded-full flex-shrink-0" style={{ background: s.user.color }} />
                         )}
-                        <RoleIcon size={12} style={{ color: s.role.color }} />
+                        <RoleIcon size={11} style={{ color: s.role.color }} />
                         <span className="font-medium text-gray-800">{s.user.name}</span>
                         <span className="text-gray-400">{s.role.shortName}</span>
                       </div>
@@ -174,13 +176,13 @@ export default function Dashboard() {
                     return (
                       <div
                         key={s.id}
-                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border border-red-200 bg-red-50/50 opacity-60"
+                        className="flex items-center gap-1 md:gap-1.5 px-2 md:px-2.5 py-1 md:py-1.5 rounded-lg text-[11px] md:text-xs border border-red-200 bg-red-50/50 opacity-60"
                         title={absenceInfo ? ABSENCE_LABELS[absenceInfo.type] || 'Absent' : 'Absent'}
                       >
                         {s.user.color && (
-                          <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: s.user.color }} />
+                          <span className="w-1.5 h-1.5 md:w-2 md:h-2 rounded-full flex-shrink-0" style={{ background: s.user.color }} />
                         )}
-                        <RoleIcon size={12} style={{ color: '#9ca3af' }} />
+                        <RoleIcon size={11} style={{ color: '#9ca3af' }} />
                         <span className="font-medium text-gray-400 line-through">{s.user.name}</span>
                         <span className="text-red-400 text-[10px]">{absenceInfo ? ABSENCE_LABELS[absenceInfo.type] : 'Absent'}</span>
                       </div>
@@ -192,7 +194,7 @@ export default function Dashboard() {
           })()}
 
           {/* Grid principal: 3 columnes */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 md:gap-4">
             {/* Pròximes sortides */}
             <div className="bg-white rounded-xl border overflow-hidden">
               <div className="flex items-center justify-between px-4 py-3 border-b">
@@ -210,7 +212,7 @@ export default function Dashboard() {
                   departures.map((p) => (
                     <div
                       key={p.id}
-                      className="flex items-center gap-2.5 px-4 py-2.5 border-b last:border-b-0 hover:bg-gray-50/50 cursor-pointer transition-colors"
+                      className="flex items-center gap-2 md:gap-2.5 px-3 md:px-4 py-2 md:py-2.5 border-b last:border-b-0 hover:bg-gray-50/50 cursor-pointer transition-colors"
                       onClick={() => navigate('/operations/projects')}
                     >
                       <span
@@ -257,7 +259,7 @@ export default function Dashboard() {
                     return (
                       <div
                         key={p.id}
-                        className="flex items-center gap-2.5 px-4 py-2.5 border-b last:border-b-0 hover:bg-gray-50/50 cursor-pointer transition-colors"
+                        className="flex items-center gap-2 md:gap-2.5 px-3 md:px-4 py-2 md:py-2.5 border-b last:border-b-0 hover:bg-gray-50/50 cursor-pointer transition-colors"
                         onClick={() => navigate('/operations/projects')}
                       >
                         <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isToday ? 'bg-purple-500' : 'bg-gray-300'}`} />
@@ -305,7 +307,7 @@ export default function Dashboard() {
                   incidents.map((inc) => (
                     <div
                       key={inc.id}
-                      className="flex items-center gap-2.5 px-4 py-2.5 border-b last:border-b-0 hover:bg-gray-50/50 cursor-pointer transition-colors"
+                      className="flex items-center gap-2 md:gap-2.5 px-3 md:px-4 py-2 md:py-2.5 border-b last:border-b-0 hover:bg-gray-50/50 cursor-pointer transition-colors"
                       onClick={() => navigate('/operations/incidents')}
                     >
                       <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium flex-shrink-0 ${SEVERITY_COLORS[inc.severity]}`}>
@@ -400,17 +402,18 @@ export default function Dashboard() {
 function StatCard({ label, value, sub, color, icon: Icon, onClick }) {
   return (
     <div
-      className={`bg-white rounded-xl border p-3 md:p-4 transition-all ${onClick ? 'cursor-pointer hover:shadow-md hover:border-gray-300 active:scale-[0.98]' : ''}`}
+      className={`bg-white rounded-xl border p-2.5 md:p-4 transition-all ${onClick ? 'cursor-pointer hover:shadow-md hover:border-gray-300 active:scale-[0.98]' : ''}`}
       onClick={onClick}
     >
-      <div className="flex items-center justify-between mb-2 md:mb-3">
-        <span className="text-[11px] md:text-[10px] text-gray-400 uppercase tracking-wide">{label}</span>
-        <div className="w-7 h-7 md:w-8 md:h-8 rounded-lg flex items-center justify-center" style={{ background: `${color}10` }}>
-          <Icon size={15} style={{ color }} />
+      <div className="flex items-center justify-between mb-1.5 md:mb-3">
+        <span className="text-[10px] md:text-[10px] text-gray-400 uppercase tracking-wide font-medium leading-tight">{label}</span>
+        <div className="w-6 h-6 md:w-8 md:h-8 rounded-lg flex items-center justify-center flex-shrink-0 ml-1" style={{ background: `${color}10` }}>
+          <Icon size={13} className="md:hidden" style={{ color }} />
+          <Icon size={15} className="hidden md:block" style={{ color }} />
         </div>
       </div>
-      <div className="text-xl md:text-2xl font-medium" style={{ color }}>{value}</div>
-      <div className="text-[11px] md:text-[10px] text-gray-400 mt-1">{sub}</div>
+      <div className="text-lg md:text-2xl font-medium" style={{ color }}>{value}</div>
+      <div className="text-[10px] md:text-[10px] text-gray-400 mt-0.5">{sub}</div>
     </div>
   );
 }
