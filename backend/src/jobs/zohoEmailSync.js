@@ -135,9 +135,18 @@ async function handlePdfAttached(email, supplier) {
       tmpPath = path.join(tmpDir, `${Date.now()}_${safeName}`);
       fs.writeFileSync(tmpPath, buffer);
 
-      // Pujar a factures-rebudes/inbox/
+      // Pujar a factures-rebudes/inbox/ (amb metadata del correu per traçabilitat)
       const uploadResult = await drive.files.create({
-        resource: { name: att.fileName, parents: [inboxFolder.id] },
+        resource: {
+          name: att.fileName,
+          parents: [inboxFolder.id],
+          description: JSON.stringify({
+            zohoMessageId: email.messageId,
+            zohoFrom: fromAddress,
+            zohoSubject: email.emailMeta.subject || '',
+            uploadedAt: new Date().toISOString(),
+          }),
+        },
         media: { mimeType: 'application/pdf', body: fs.createReadStream(tmpPath) },
         fields: 'id, name',
         supportsAllDrives: true,

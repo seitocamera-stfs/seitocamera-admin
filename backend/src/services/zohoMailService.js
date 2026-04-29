@@ -219,46 +219,42 @@ async function apiRequest(method, endpoint, body = null, accountId = null) {
  * Zoho API: GET /folders/{folderId}/messages/{messageId}/attachments/{attachmentId}
  * Docs: https://www.zoho.com/mail/help/api/get-attachment-content.html
  */
-function downloadAttachment(folderId, messageId, attachmentId, accountId = null) {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const token = await getAccessToken();
-      const accId = accountId || process.env.ZOHO_ACCOUNT_ID;
-      const path = `/api/accounts/${accId}/folders/${folderId}/messages/${messageId}/attachments/${attachmentId}`;
+async function downloadAttachment(folderId, messageId, attachmentId, accountId = null) {
+  const token = await getAccessToken();
+  const accId = accountId || process.env.ZOHO_ACCOUNT_ID;
+  const reqPath = `/api/accounts/${accId}/folders/${folderId}/messages/${messageId}/attachments/${attachmentId}`;
 
-      const options = {
-        hostname: 'mail.zoho.eu',
-        path,
-        method: 'GET',
-        headers: {
-          Authorization: `Zoho-oauthtoken ${token}`,
-          Accept: 'application/octet-stream',
-        },
-      };
+  const options = {
+    hostname: 'mail.zoho.eu',
+    path: reqPath,
+    method: 'GET',
+    headers: {
+      Authorization: `Zoho-oauthtoken ${token}`,
+      Accept: 'application/octet-stream',
+    },
+  };
 
-      const req = https.request(options, (res) => {
-        const chunks = [];
-        res.on('data', (chunk) => chunks.push(chunk));
-        res.on('end', () => {
-          const buffer = Buffer.concat(chunks);
-          if (res.statusCode >= 400) {
-            reject(new Error(`Error descarregant attachment: HTTP ${res.statusCode}`));
-          } else {
-            resolve(buffer);
-          }
-        });
+  return new Promise((resolve, reject) => {
+    const req = https.request(options, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => {
+        const buffer = Buffer.concat(chunks);
+        if (res.statusCode >= 400) {
+          reject(new Error(`Error descarregant attachment: HTTP ${res.statusCode}`));
+        } else {
+          resolve(buffer);
+        }
       });
+    });
 
-      req.on('error', reject);
-      req.setTimeout(60000, () => {
-        req.destroy();
-        reject(new Error('Timeout descarregant attachment'));
-      });
+    req.on('error', reject);
+    req.setTimeout(60000, () => {
+      req.destroy();
+      reject(new Error('Timeout descarregant attachment'));
+    });
 
-      req.end();
-    } catch (err) {
-      reject(err);
-    }
+    req.end();
   });
 }
 

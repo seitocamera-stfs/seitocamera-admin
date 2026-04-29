@@ -216,6 +216,7 @@ model ReceivedInvoice {
   filePath          String?
   gdriveFileId      String?       // ID del fitxer a Google Drive
   emailMessageId    String?
+  isDateEstimated   Boolean       @default(false)  // true si issueDate és fallback (data pujada, no extreta del PDF)
   isDuplicate       Boolean       @default(false)
   duplicateOfId     String?       // ID de la factura original si és duplicat
   createdAt         DateTime      @default(now())

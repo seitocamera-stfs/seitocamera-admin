@@ -130,14 +130,30 @@ router.get('/received', async (req, res, next) => {
     }
 
     // Filtre per pagament (pagada = conciliació confirmada O status PAID)
+    // IMPORTANT: No sobreescriure where.status existent (pot venir del filtre d'status)
     if (paid === 'true') {
       where.OR = [
         { status: 'PAID' },
         { conciliations: { some: { status: { in: ['CONFIRMED', 'MANUAL_MATCHED'] } } } },
       ];
     } else if (paid === 'false') {
-      where.status = { not: 'PAID' };
-      where.conciliations = { none: { status: { in: ['CONFIRMED', 'MANUAL_MATCHED'] } } };
+      // Combinar amb status existent usant AND per no sobreescriure
+      const paidFilters = {
+        status: { not: 'PAID' },
+        conciliations: { none: { status: { in: ['CONFIRMED', 'MANUAL_MATCHED'] } } },
+      };
+      if (where.status) {
+        // Ja hi ha un filtre d'status → combinar amb AND
+        where.AND = [
+          ...(where.AND || []),
+          { status: where.status },
+          paidFilters,
+        ];
+        delete where.status;
+      } else {
+        where.status = paidFilters.status;
+        where.conciliations = paidFilters.conciliations;
+      }
     }
 
     // Filtre per alertes — factures que necessiten revisió
@@ -179,17 +195,18 @@ router.get('/received', async (req, res, next) => {
     }
 
     // Ordenació dinàmica
+    // Per issueDate: primer les dates reals, després les estimades (fallback de data de pujada)
     const dir = sortOrder === 'asc' ? 'asc' : 'desc';
     const orderByMap = {
-      invoiceNumber: { invoiceNumber: dir },
-      supplier: { supplier: { name: dir } },
-      issueDate: { issueDate: dir },
-      createdAt: { createdAt: dir },
-      totalAmount: { totalAmount: dir },
-      status: { status: dir },
-      source: { source: dir },
+      invoiceNumber: [{ invoiceNumber: dir }],
+      supplier: [{ supplier: { name: dir } }],
+      issueDate: [{ isDateEstimated: 'asc' }, { issueDate: dir }], // dates reals primer
+      createdAt: [{ createdAt: dir }],
+      totalAmount: [{ totalAmount: dir }],
+      status: [{ status: dir }],
+      source: [{ source: dir }],
     };
-    const orderBy = orderByMap[sortBy] || { issueDate: 'desc' };
+    const orderBy = orderByMap[sortBy] || [{ isDateEstimated: 'asc' }, { issueDate: 'desc' }];
 
     const [invoices, total] = await Promise.all([
       prisma.receivedInvoice.findMany({
@@ -1166,11 +1183,12 @@ router.post('/received', authorize('ADMIN', 'EDITOR'), upload.single('file'), as
     if (data.issueDate) data.issueDate = new Date(data.issueDate);
     if (data.dueDate) data.dueDate = new Date(data.dueDate);
 
-    // Detecció de duplicats pel número de factura
+    // Detecció de duplicats pel número de factura (excloure factures a la paperera)
     const duplicateCheck = await prisma.receivedInvoice.findFirst({
       where: {
         invoiceNumber: { equals: data.invoiceNumber, mode: 'insensitive' },
         supplierId: data.supplierId,
+        deletedAt: null,
       },
       select: { id: true, invoiceNumber: true, totalAmount: true, status: true },
     });
@@ -1668,13 +1686,12 @@ router.delete('/received/:id', requireLevel('receivedInvoices', 'admin'), async 
       await prisma.receivedInvoice.delete({ where: { id: req.params.id } });
       res.json({ message: 'Factura eliminada definitivament i esborrada de Google Drive' });
     } else {
-      // Soft delete → moure a paperera + esborrar de Drive
-      await deleteFromDrive();
+      // Soft delete → moure a paperera (NO esborrar de Drive per permetre restaurar)
       await prisma.receivedInvoice.update({
         where: { id: req.params.id },
         data: { deletedAt: new Date() },
       });
-      res.json({ message: 'Factura moguda a la paperera i esborrada de Google Drive' });
+      res.json({ message: 'Factura moguda a la paperera' });
     }
   } catch (error) {
     if (error.code === 'P2025') return res.status(404).json({ error: 'Factura no trobada' });

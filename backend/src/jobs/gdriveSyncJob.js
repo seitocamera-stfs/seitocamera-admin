@@ -127,7 +127,7 @@ async function syncGdriveFiles() {
     const drive = gdrive.getDriveClient();
     const res = await drive.files.list({
       q: `'${inboxId}' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'`,
-      fields: 'files(id, name, mimeType, size, createdTime, modifiedTime)',
+      fields: 'files(id, name, mimeType, size, createdTime, modifiedTime, description)',
       orderBy: 'createdTime asc',
       supportsAllDrives: true,
       includeItemsFromAllDrives: true,
@@ -278,6 +278,7 @@ async function syncGdriveFiles() {
           taxAmount = (totalAmount && subtotal) ? Math.round((totalAmount - subtotal) * 100) / 100 : null;
         }
         const dateFromPdf = !!pdfAnalysis.invoiceDate;
+        const isDateEstimated = !dateFromPdf; // true si la data és fallback (no extreta del PDF)
         const issueDate = pdfAnalysis.invoiceDate || (file.createdTime ? new Date(file.createdTime) : new Date());
         const dueDate = pdfAnalysis.dueDate || null;
         const needsReview = !pdfAnalysis.invoiceNumber || !pdfAnalysis.totalAmount || !dateFromPdf;
@@ -332,14 +333,22 @@ async function syncGdriveFiles() {
           // ===== NO DUPLICAT: primer crear a BD, després moure =====
           const destFolderId = await gdrive.getDateBasedFolderId('factures-rebudes', issueDate);
 
+          // Extreure metadata Zoho de la descripció del fitxer (si ve de zohoEmailSync)
+          let zohoMeta = null;
+          if (file.description) {
+            try { zohoMeta = JSON.parse(file.description); } catch {}
+          }
+
           const invoiceData = {
               invoiceNumber,
-              source: 'GDRIVE_SYNC',
+              source: zohoMeta?.zohoMessageId ? 'ZOHO' : 'GDRIVE_SYNC',
+              emailMessageId: zohoMeta?.zohoMessageId || null,
               status: needsAmount ? 'AMOUNT_PENDING' : needsReview ? 'PDF_PENDING' : 'PENDING',
               gdriveFileId: file.id,
               originalFileName: file.name,
               supplierId: matchedSupplier?.id || null,
               isDuplicate: false,
+              isDateEstimated,
               description: needsAmount
                   ? `🔴 IMPORT PENDENT: no s'ha pogut detectar l'import. Cal revisar manualment. Fitxer: ${file.name}`
                   : needsReview
@@ -562,7 +571,7 @@ async function syncLogistikFiles() {
     const drive = gdrive.getDriveClient();
     const res = await drive.files.list({
       q: `'${inboxId}' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'`,
-      fields: 'files(id, name, mimeType, size, createdTime, modifiedTime)',
+      fields: 'files(id, name, mimeType, size, createdTime, modifiedTime, description)',
       orderBy: 'createdTime asc',
       supportsAllDrives: true,
       includeItemsFromAllDrives: true,
@@ -645,6 +654,7 @@ async function syncLogistikFiles() {
         }
 
         const dateFromPdf = !!pdfAnalysis.invoiceDate;
+        const isDateEstimated = !dateFromPdf; // true si la data és fallback (no extreta del PDF)
         const issueDate = pdfAnalysis.invoiceDate || (file.createdTime ? new Date(file.createdTime) : new Date());
         const dueDate = pdfAnalysis.dueDate || null;
         const needsReview = !pdfAnalysis.invoiceNumber || !pdfAnalysis.totalAmount || !dateFromPdf;
@@ -664,14 +674,22 @@ async function syncLogistikFiles() {
           }
         }
 
+        // Extreure metadata Zoho de la descripció del fitxer (si ve de zohoEmailSync)
+        let zohoMetaLogistik = null;
+        if (file.description) {
+          try { zohoMetaLogistik = JSON.parse(file.description); } catch {}
+        }
+
         const invoiceData = {
           invoiceNumber,
-          source: 'GDRIVE_SYNC',
+          source: zohoMetaLogistik?.zohoMessageId ? 'ZOHO' : 'GDRIVE_SYNC',
+          emailMessageId: zohoMetaLogistik?.zohoMessageId || null,
           status: needsAmount ? 'AMOUNT_PENDING' : needsReview ? 'PDF_PENDING' : 'PENDING',
           gdriveFileId: file.id,
           originalFileName: file.name,
           supplierId: matchedSupplier?.id || null,
           isDuplicate: false,
+          isDateEstimated,
           origin: 'LOGISTIK',
           isShared: true,
           sharedPercentSeito,

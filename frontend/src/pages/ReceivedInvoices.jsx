@@ -984,7 +984,10 @@ export default function ReceivedInvoices() {
                       )}
                     </td>
                     <td className="p-3">{inv.supplier?.name || (<span className="text-xs text-red-400 italic">Sense proveïdor</span>)}</td>
-                    <td className="p-3 text-muted-foreground">{formatDate(inv.issueDate)}</td>
+                    <td className="p-3 text-muted-foreground">
+                      {formatDate(inv.issueDate)}
+                      {inv.isDateEstimated && <span className="ml-1 text-xs text-amber-500" title="Data estimada (no extreta del PDF)">~</span>}
+                    </td>
                     <td className="p-3 text-muted-foreground text-xs">{formatDate(inv.createdAt)}</td>
                     <td className="p-3 text-right font-medium">{formatCurrency(inv.totalAmount)}</td>
                     {/* Estat eliminat — redundant amb Pagament */}
