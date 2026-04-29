@@ -1,6 +1,6 @@
 const express = require('express');
 const { prisma } = require('../config/database');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authorize } = require('../middleware/auth');
 const { requireSection } = require('../middleware/sectionAccess');
 const { logger } = require('../config/logger');
 
@@ -1428,8 +1428,8 @@ router.get('/protocols/:slug', async (req, res, next) => {
   }
 });
 
-// PUT /api/operations/protocols/:id — Editar protocol
-router.put('/protocols/:id', async (req, res, next) => {
+// PUT /api/operations/protocols/:id — Editar protocol (només ADMIN)
+router.put('/protocols/:id', authorize('ADMIN'), async (req, res, next) => {
   try {
     const { title, content, category, sortOrder } = req.body;
     const protocol = await prisma.protocol.update({
@@ -1448,8 +1448,8 @@ router.put('/protocols/:id', async (req, res, next) => {
   }
 });
 
-// POST /api/operations/protocols — Crear protocol
-router.post('/protocols', async (req, res, next) => {
+// POST /api/operations/protocols — Crear protocol (només ADMIN)
+router.post('/protocols', authorize('ADMIN'), async (req, res, next) => {
   try {
     const { title, category, content, sortOrder = 0 } = req.body;
     if (!title || !category) return res.status(400).json({ error: 'Títol i categoria són obligatoris' });
@@ -1472,8 +1472,8 @@ router.post('/protocols', async (req, res, next) => {
   }
 });
 
-// DELETE /api/operations/protocols/:id — Eliminar protocol
-router.delete('/protocols/:id', async (req, res, next) => {
+// DELETE /api/operations/protocols/:id — Eliminar protocol (només ADMIN)
+router.delete('/protocols/:id', authorize('ADMIN'), async (req, res, next) => {
   try {
     await prisma.protocol.delete({ where: { id: req.params.id } });
     res.json({ message: 'Protocol eliminat' });

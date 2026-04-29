@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { useApiGet } from '../../hooks/useApi';
 import api from '../../lib/api';
+import useAuthStore from '../../stores/authStore';
 
 const CATEGORY_LABELS = {
   daily: 'Protocol Diari',
@@ -32,6 +33,8 @@ export default function Protocols() {
   const [newForm, setNewForm] = useState({ title: '', category: 'daily', content: '' });
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const currentUser = useAuthStore((s) => s.user);
+  const isAdmin = currentUser?.role === 'ADMIN';
 
   const selected = protocols?.find(p => p.id === selectedId);
 
@@ -213,12 +216,14 @@ export default function Protocols() {
           <BookOpen size={28} className="text-primary" />
           <h1 className="text-2xl font-bold">Protocols Operatius</h1>
         </div>
-        <button
-          onClick={() => setShowNew(!showNew)}
-          className="flex items-center gap-1.5 text-sm bg-primary text-primary-foreground px-3 py-2 rounded-md hover:bg-primary/90"
-        >
-          <Plus size={16} /> Nou protocol
-        </button>
+        {isAdmin && (
+          <button
+            onClick={() => setShowNew(!showNew)}
+            className="flex items-center gap-1.5 text-sm bg-primary text-primary-foreground px-3 py-2 rounded-md hover:bg-primary/90"
+          >
+            <Plus size={16} /> Nou protocol
+          </button>
+        )}
       </div>
 
       {error && <div className="bg-red-50 text-red-600 p-4 rounded-lg mb-4">{error}</div>}
@@ -315,16 +320,18 @@ export default function Protocols() {
                   </span>
                 </div>
                 {!editing ? (
-                  <div className="flex items-center gap-3">
-                    <button onClick={handleEdit}
-                      className="flex items-center gap-1.5 text-sm text-primary hover:underline">
-                      <Edit2 size={14} /> Editar
-                    </button>
-                    <button onClick={handleDelete} disabled={deleting}
-                      className="flex items-center gap-1.5 text-sm text-red-500 hover:underline disabled:opacity-50">
-                      <Trash2 size={14} /> {deleting ? 'Eliminant...' : 'Eliminar'}
-                    </button>
-                  </div>
+                  isAdmin && (
+                    <div className="flex items-center gap-3">
+                      <button onClick={handleEdit}
+                        className="flex items-center gap-1.5 text-sm text-primary hover:underline">
+                        <Edit2 size={14} /> Editar
+                      </button>
+                      <button onClick={handleDelete} disabled={deleting}
+                        className="flex items-center gap-1.5 text-sm text-red-500 hover:underline disabled:opacity-50">
+                        <Trash2 size={14} /> {deleting ? 'Eliminant...' : 'Eliminar'}
+                      </button>
+                    </div>
+                  )
                 ) : (
                   <div className="flex gap-2">
                     <button onClick={() => setEditing(false)}
