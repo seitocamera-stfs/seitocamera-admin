@@ -6,22 +6,16 @@ const { logger } = require('../config/logger');
 // Shelly Cloud API Service
 // ===========================================
 // Connecta amb Shelly Pro 3EM per obtenir lectures de consum elèctric.
-// Les dades s'utilitzen per calcular el repartiment de factures compartides.
-//
-// API Docs: https://shelly-api-docs.shelly.cloud/cloud-control-api/
+// Estratègia: poll periòdic de /device/status → guardar comptador acumulat.
+// El consum d'un període = lectura final - lectura inicial.
 // ===========================================
 
-/**
- * Obté les credencials de Shelly des de ServiceConnection
- * @returns {{ authKey, serverUri, deviceId } | null}
- */
 async function getCredentials() {
   try {
     const conn = await prisma.serviceConnection.findUnique({
       where: { provider: 'SHELLY' },
     });
     if (!conn || !conn.apiKey) return null;
-
     return {
       authKey: conn.apiKey,
       serverUri: conn.config?.serverUri || conn.config?.server_uri,
@@ -34,28 +28,18 @@ async function getCredentials() {
   }
 }
 
-/**
- * Comprova si Shelly està configurat i actiu
- */
 async function isAvailable() {
   const creds = await getCredentials();
   return !!(creds && creds.authKey && creds.serverUri && creds.deviceId);
 }
 
 // ===========================================
-// HTTP Helper per Shelly Cloud API
+// HTTP Helper
 // ===========================================
 
-/**
- * Fa una petició POST a l'API Cloud de Shelly (form-urlencoded)
- * @param {string} serverUri - Ex: "shelly-243-eu.shelly.cloud"
- * @param {string} path - Ex: "/device/status"
- * @param {Object} formData - Camps form-urlencoded
- */
 function shellyCloudRequest(serverUri, path, formData) {
   return new Promise((resolve, reject) => {
     const postData = new URLSearchParams(formData).toString();
-
     const options = {
       hostname: serverUri,
       path,
@@ -65,7 +49,6 @@ function shellyCloudRequest(serverUri, path, formData) {
         'Content-Length': Buffer.byteLength(postData),
       },
     };
-
     const req = https.request(options, (res) => {
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
@@ -82,228 +65,191 @@ function shellyCloudRequest(serverUri, path, formData) {
         }
       });
     });
-
     req.on('error', reject);
-    req.setTimeout(30000, () => {
-      req.destroy();
-      reject(new Error('Shelly API timeout (30s)'));
-    });
-
+    req.setTimeout(30000, () => { req.destroy(); reject(new Error('Shelly API timeout (30s)')); });
     req.write(postData);
     req.end();
   });
 }
 
+// ===========================================
+// Lectura del comptador acumulat
+// ===========================================
+
 /**
- * Obté l'estat del dispositiu via Shelly Cloud API
- * Endpoint: POST /device/status
+ * Obté l'estat actual del dispositiu (inclou comptadors acumulats d'energia).
+ * Retorna les lectures de emdata:0 (total_act en Wh acumulat des de sempre).
  */
 async function getDeviceStatus() {
   const creds = await getCredentials();
   if (!creds) throw new Error('Shelly no configurat');
-
   return shellyCloudRequest(creds.serverUri, '/device/status', {
     id: creds.deviceId,
     auth_key: creds.authKey,
   });
 }
 
-// ===========================================
-// Lectures de consum
-// ===========================================
-
 /**
- * Obté les dades de consum d'un dia concret des de l'API Shelly.
- * Usa l'endpoint /device/status que retorna les lectures acumulades totals,
- * i les lectures individuals per dia via Cloud RPC.
- *
- * @param {Date} date - Dia a consultar
- * @returns {{ phaseA: number, phaseB: number, phaseC: number, totalKwh: number, records: number }}
+ * Fa una lectura del comptador actual i la guarda a la BD.
+ * Es crida periòdicament (cada 2-4h) pel cron job.
+ * Guarda els Wh acumulats de cada fase + total.
  */
-async function fetchDayData(date) {
+async function takeReading() {
   const creds = await getCredentials();
   if (!creds) throw new Error('Shelly no configurat');
 
-  // Calcular timestamps per al dia
-  const dayStart = new Date(date);
-  dayStart.setHours(0, 0, 0, 0);
-  const dayEnd = new Date(dayStart);
-  dayEnd.setDate(dayEnd.getDate() + 1);
+  const response = await getDeviceStatus();
+  const status = response.data?.device_status || {};
+  const emdata = status['emdata:0'];
 
-  const tsStart = Math.floor(dayStart.getTime() / 1000);
-  const tsEnd = Math.floor(dayEnd.getTime() / 1000);
+  if (!emdata) {
+    throw new Error('No s\'han trobat dades emdata:0 al dispositiu');
+  }
 
-  logger.info(`Shelly fetchDayData: ${date.toISOString().split('T')[0]} (ts: ${tsStart} → ${tsEnd})`);
+  const now = new Date();
+  const dateOnly = new Date(now);
+  dateOnly.setHours(0, 0, 0, 0);
 
-  // Usar Cloud RPC endpoint per EMData.GetData
-  const response = await shellyCloudRequest(creds.serverUri, '/device/rpc', {
-    id: creds.deviceId,
-    auth_key: creds.authKey,
-    method: 'EMData.GetData',
-    params: JSON.stringify({ id: 0, ts: tsStart, end_ts: tsEnd }),
+  // Guardar lectura acumulada (upsert per dia+dispositiu)
+  const reading = await prisma.shellyEnergyReading.upsert({
+    where: {
+      date_deviceId: {
+        date: dateOnly,
+        deviceId: creds.deviceId,
+      },
+    },
+    update: {
+      // Guardem els acumulats totals (Wh → kWh)
+      whPhaseA: emdata.a_total_act_energy / 1000,
+      whPhaseB: emdata.b_total_act_energy / 1000,
+      whPhaseC: emdata.c_total_act_energy / 1000,
+      totalKwh: emdata.total_act / 1000,
+      minuteRecords: 1, // indica que tenim lectura
+      syncedAt: now,
+    },
+    create: {
+      date: dateOnly,
+      deviceId: creds.deviceId,
+      whPhaseA: emdata.a_total_act_energy / 1000,
+      whPhaseB: emdata.b_total_act_energy / 1000,
+      whPhaseC: emdata.c_total_act_energy / 1000,
+      totalKwh: emdata.total_act / 1000,
+      minuteRecords: 1,
+    },
   });
 
-  // La resposta conté { isok: true, data: { keys: [...], data: [...] } }
-  const result = response.data || response;
-  const keys = result.keys || [];
-  const records = result.data || [];
+  const totalKwh = Math.round(emdata.total_act / 10) / 100;
+  logger.info(`Shelly reading: ${totalKwh} kWh acumulats (A: ${Math.round(emdata.a_total_act_energy/10)/100}, B: ${Math.round(emdata.b_total_act_energy/10)/100}, C: ${Math.round(emdata.c_total_act_energy/10)/100})`);
 
-  // Trobar els índexs de les claus d'energia
-  const idxA = keys.indexOf('a_total_act_energy');
-  const idxB = keys.indexOf('b_total_act_energy');
-  const idxC = keys.indexOf('c_total_act_energy');
-  const idxTotal = keys.indexOf('total_act');
-
-  let phaseA = 0, phaseB = 0, phaseC = 0, totalWh = 0;
-
-  for (const record of records) {
-    const vals = record.values || record;
-    if (Array.isArray(vals)) {
-      if (idxA >= 0 && vals[idxA] != null) phaseA += vals[idxA];
-      if (idxB >= 0 && vals[idxB] != null) phaseB += vals[idxB];
-      if (idxC >= 0 && vals[idxC] != null) phaseC += vals[idxC];
-      if (idxTotal >= 0 && vals[idxTotal] != null) totalWh += vals[idxTotal];
-    }
-  }
-
-  // Si no hi ha total_act, calcular com a suma de fases
-  if (totalWh === 0 && (phaseA + phaseB + phaseC) > 0) {
-    totalWh = phaseA + phaseB + phaseC;
-  }
-
-  // Convertir Wh a kWh
   return {
-    phaseA: phaseA / 1000,
-    phaseB: phaseB / 1000,
-    phaseC: phaseC / 1000,
-    totalKwh: totalWh / 1000,
-    records: records.length,
+    date: dateOnly,
+    phaseA: emdata.a_total_act_energy,
+    phaseB: emdata.b_total_act_energy,
+    phaseC: emdata.c_total_act_energy,
+    totalWh: emdata.total_act,
+    totalKwh,
   };
 }
 
-/**
- * Sincronitza un dia: descarrega dades i upsert a la BD
- */
-async function syncDay(date) {
-  const creds = await getCredentials();
-  if (!creds) throw new Error('Shelly no configurat');
-
-  const dateOnly = new Date(date);
-  dateOnly.setHours(0, 0, 0, 0);
-
-  try {
-    const data = await fetchDayData(dateOnly);
-
-    await prisma.shellyEnergyReading.upsert({
-      where: {
-        date_deviceId: {
-          date: dateOnly,
-          deviceId: creds.deviceId,
-        },
-      },
-      update: {
-        whPhaseA: data.phaseA,
-        whPhaseB: data.phaseB,
-        whPhaseC: data.phaseC,
-        totalKwh: data.totalKwh,
-        minuteRecords: data.records,
-        syncedAt: new Date(),
-      },
-      create: {
-        date: dateOnly,
-        deviceId: creds.deviceId,
-        whPhaseA: data.phaseA,
-        whPhaseB: data.phaseB,
-        whPhaseC: data.phaseC,
-        totalKwh: data.totalKwh,
-        minuteRecords: data.records,
-      },
-    });
-
-    logger.info(`Shelly syncDay: ${dateOnly.toISOString().split('T')[0]} → ${data.totalKwh.toFixed(2)} kWh (${data.records} registres)`);
-    return data;
-  } catch (err) {
-    logger.error(`Shelly syncDay error (${dateOnly.toISOString().split('T')[0]}): ${err.message}`);
-    throw err;
-  }
-}
+// ===========================================
+// Càlcul de consum per període
+// ===========================================
 
 /**
- * Sincronitza un rang de dates
- */
-async function syncDateRange(from, to) {
-  const results = [];
-  const current = new Date(from);
-  current.setHours(0, 0, 0, 0);
-  const end = new Date(to);
-  end.setHours(0, 0, 0, 0);
-
-  while (current <= end) {
-    try {
-      const data = await syncDay(new Date(current));
-      results.push({ date: current.toISOString().split('T')[0], ...data });
-    } catch (err) {
-      results.push({ date: current.toISOString().split('T')[0], error: err.message });
-    }
-    current.setDate(current.getDate() + 1);
-    // Petit delay per no sobrecarregar l'API
-    await new Promise((r) => setTimeout(r, 500));
-  }
-
-  return results;
-}
-
-/**
- * Obté les lectures emmagatzemades per un període
- * @returns {{ totalKwh, days, dailyBreakdown[] }}
+ * Calcula el consum d'un període a partir de les lectures acumulades.
+ * Consum = lectura final - lectura inicial.
+ *
+ * @param {Date} from - Inici del període
+ * @param {Date} to - Fi del període
+ * @returns {{ consumKwh, readingStart, readingEnd, daysWithData }}
  */
 async function getConsumption(from, to) {
-  const readings = await prisma.shellyEnergyReading.findMany({
+  const fromDate = new Date(from);
+  fromDate.setHours(0, 0, 0, 0);
+  const toDate = new Date(to);
+  toDate.setHours(0, 0, 0, 0);
+
+  // Buscar la lectura més propera a l'inici del període (la primera disponible >= from, o l'última < from)
+  const readingStart = await prisma.shellyEnergyReading.findFirst({
+    where: { date: { lte: fromDate } },
+    orderBy: { date: 'desc' },
+  }) || await prisma.shellyEnergyReading.findFirst({
+    where: { date: { gte: fromDate } },
+    orderBy: { date: 'asc' },
+  });
+
+  // Buscar la lectura més propera al final del període
+  const readingEnd = await prisma.shellyEnergyReading.findFirst({
+    where: { date: { lte: toDate } },
+    orderBy: { date: 'desc' },
+  }) || await prisma.shellyEnergyReading.findFirst({
+    where: { date: { gte: toDate } },
+    orderBy: { date: 'desc' },
+  });
+
+  if (!readingStart || !readingEnd) {
+    return {
+      consumKwh: 0,
+      days: 0,
+      error: 'No hi ha lectures de Shelly per aquest període. Cal esperar que el sync acumuli dades.',
+    };
+  }
+
+  if (readingStart.id === readingEnd.id) {
+    return {
+      consumKwh: 0,
+      days: 0,
+      error: 'Només hi ha una lectura disponible. Calen mínim dues lectures per calcular consum.',
+    };
+  }
+
+  // Consum = diferència entre lectures acumulades
+  const consumKwh = parseFloat(readingEnd.totalKwh) - parseFloat(readingStart.totalKwh);
+
+  // Totes les lectures del període per breakdown diari
+  const allReadings = await prisma.shellyEnergyReading.findMany({
     where: {
-      date: {
-        gte: new Date(from),
-        lte: new Date(to),
-      },
+      date: { gte: readingStart.date, lte: readingEnd.date },
     },
     orderBy: { date: 'asc' },
   });
 
-  let totalKwh = 0;
-  const dailyBreakdown = readings.map((r) => {
-    const kwh = parseFloat(r.totalKwh);
-    totalKwh += kwh;
-    return {
-      date: r.date.toISOString().split('T')[0],
-      phaseA: parseFloat(r.whPhaseA),
-      phaseB: parseFloat(r.whPhaseB),
-      phaseC: parseFloat(r.whPhaseC),
-      totalKwh: kwh,
-      minuteRecords: r.minuteRecords,
-      completeness: Math.round((r.minuteRecords / 1440) * 100),
-    };
-  });
+  const dailyBreakdown = [];
+  for (let i = 1; i < allReadings.length; i++) {
+    const prev = allReadings[i - 1];
+    const curr = allReadings[i];
+    dailyBreakdown.push({
+      date: curr.date.toISOString().split('T')[0],
+      consumKwh: Math.round((parseFloat(curr.totalKwh) - parseFloat(prev.totalKwh)) * 100) / 100,
+    });
+  }
 
   return {
-    totalKwh: Math.round(totalKwh * 100) / 100,
-    days: readings.length,
+    consumKwh: Math.round(consumKwh * 100) / 100,
+    days: allReadings.length,
+    readingStart: { date: readingStart.date.toISOString().split('T')[0], totalKwh: parseFloat(readingStart.totalKwh) },
+    readingEnd: { date: readingEnd.date.toISOString().split('T')[0], totalKwh: parseFloat(readingEnd.totalKwh) },
     dailyBreakdown,
   };
 }
 
 /**
- * Calcula el suggeriment de split per una factura de llum
+ * Calcula el repartiment d'una factura de llum.
+ *
  * @param {Date} from - Inici del període de facturació
  * @param {Date} to - Fi del període
- * @param {number} totalBillKwh - kWh totals de la factura de llum
+ * @param {number} totalBillKwh - kWh totals de la factura
+ * @param {number} totalBillAmount - Import total de la factura (€)
+ * @returns {{ shellyKwh, seitoKwh, seitoPercent, logistikPercent, seitoAmount, logistikAmount }}
  */
-async function suggestSplit(from, to, totalBillKwh) {
+async function suggestSplit(from, to, totalBillKwh, totalBillAmount = 0) {
   const consumption = await getConsumption(from, to);
 
-  if (consumption.days === 0) {
-    return { error: 'No hi ha dades de consum per aquest període' };
+  if (consumption.error) {
+    return { error: consumption.error };
   }
 
-  const shellyKwh = consumption.totalKwh; // Consum no-Seito
+  const shellyKwh = consumption.consumKwh; // Consum de l'altra part (mesurat per Shelly)
   const seitoKwh = Math.max(0, totalBillKwh - shellyKwh);
 
   const logistikPercent = totalBillKwh > 0
@@ -311,19 +257,30 @@ async function suggestSplit(from, to, totalBillKwh) {
     : 50;
   const seitoPercent = Math.round((100 - logistikPercent) * 100) / 100;
 
-  return {
+  const result = {
     shellyKwh,
     seitoKwh: Math.round(seitoKwh * 100) / 100,
     totalBillKwh,
     seitoPercent,
     logistikPercent,
     daysWithData: consumption.days,
+    readingStart: consumption.readingStart,
+    readingEnd: consumption.readingEnd,
     dailyBreakdown: consumption.dailyBreakdown,
   };
+
+  // Si tenim l'import, calcular euros
+  if (totalBillAmount > 0) {
+    result.totalBillAmount = totalBillAmount;
+    result.seitoAmount = Math.round(totalBillAmount * seitoPercent) / 100;
+    result.logistikAmount = Math.round(totalBillAmount * logistikPercent) / 100;
+  }
+
+  return result;
 }
 
 /**
- * Test de connexió via /device/status
+ * Test de connexió
  */
 async function testConnection() {
   try {
@@ -346,9 +303,7 @@ module.exports = {
   getCredentials,
   isAvailable,
   getDeviceStatus,
-  fetchDayData,
-  syncDay,
-  syncDateRange,
+  takeReading,
   getConsumption,
   suggestSplit,
   testConnection,

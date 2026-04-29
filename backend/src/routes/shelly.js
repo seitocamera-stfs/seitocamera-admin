@@ -76,13 +76,15 @@ router.get('/consumption/monthly/:year/:month', async (req, res, next) => {
  */
 router.get('/suggest-split', async (req, res, next) => {
   try {
-    const { from, to, totalKwh } = req.query;
+    const { from, to, totalKwh, totalAmount } = req.query;
     if (!from || !to || !totalKwh) {
       return res.status(400).json({
         error: 'Cal indicar from, to (YYYY-MM-DD) i totalKwh (de la factura)',
       });
     }
-    const suggestion = await shellyService.suggestSplit(from, to, parseFloat(totalKwh));
+    const suggestion = await shellyService.suggestSplit(
+      from, to, parseFloat(totalKwh), totalAmount ? parseFloat(totalAmount) : 0
+    );
     res.json(suggestion);
   } catch (err) {
     next(err);
@@ -104,17 +106,13 @@ router.post('/sync', authorize('ADMIN'), async (req, res, next) => {
 });
 
 /**
- * POST /api/shelly/sync-range
- * Sincronitzar un rang de dates específic (admin)
+ * POST /api/shelly/take-reading
+ * Forçar una lectura del comptador ara (admin)
  */
-router.post('/sync-range', authorize('ADMIN'), async (req, res, next) => {
+router.post('/take-reading', authorize('ADMIN'), async (req, res, next) => {
   try {
-    const { from, to } = req.body;
-    if (!from || !to) {
-      return res.status(400).json({ error: 'Cal indicar from i to (YYYY-MM-DD)' });
-    }
-    const results = await shellyService.syncDateRange(new Date(from), new Date(to));
-    res.json({ results });
+    const reading = await shellyService.takeReading();
+    res.json({ success: true, ...reading });
   } catch (err) {
     next(err);
   }
