@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
+import NotificationBell from './NotificationBell';
 import useCompanyStore from '../../stores/companyStore';
 import { Menu } from 'lucide-react';
 
@@ -37,7 +38,7 @@ export default function Layout() {
 
       {/* Contingut principal */}
       <main className="flex-1 overflow-auto min-w-0" style={{ background: '#f8f9fa' }}>
-        {/* Barra superior mòbil amb hamburger */}
+        {/* Barra superior mòbil amb hamburger + notificacions */}
         <div className="lg:hidden sticky top-0 z-30 flex items-center gap-3 px-3 py-2 border-b bg-white">
           <button
             onClick={() => setSidebarOpen(true)}
@@ -45,9 +46,15 @@ export default function Layout() {
           >
             <Menu size={20} className="text-gray-700" />
           </button>
-          <span className="text-sm font-semibold text-gray-800 tracking-wide">SEITO</span>
-          <span className="text-[9px] text-gray-400 tracking-[2px]">CAMERA</span>
+          <span className="text-sm font-semibold text-gray-800 tracking-wide flex-1">SEITO</span>
+          <NotificationBell />
         </div>
+
+        {/* Barra de notificacions desktop (fixada dalt a la dreta) */}
+        <div className="hidden lg:flex fixed top-3 right-4 z-30">
+          <NotificationBell />
+        </div>
+
         <Outlet />
       </main>
     </div>
