@@ -1451,12 +1451,34 @@ router.put('/protocols/:id', async (req, res, next) => {
 // POST /api/operations/protocols — Crear protocol
 router.post('/protocols', async (req, res, next) => {
   try {
-    const { title, slug, category, content, sortOrder = 0 } = req.body;
+    const { title, category, content, sortOrder = 0 } = req.body;
+    if (!title || !category) return res.status(400).json({ error: 'Títol i categoria són obligatoris' });
+    // Generar slug automàticament a partir del títol
+    const slug = title
+      .toLowerCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .substring(0, 60);
+    // Assegurar unicitat del slug
+    const existing = await prisma.protocol.findUnique({ where: { slug } });
+    const finalSlug = existing ? `${slug}-${Date.now()}` : slug;
     const protocol = await prisma.protocol.create({
-      data: { title, slug, category, content, sortOrder, lastEditedById: req.user.id },
+      data: { title, slug: finalSlug, category, content: content || '', sortOrder, lastEditedById: req.user.id },
     });
     res.json(protocol);
   } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/operations/protocols/:id — Eliminar protocol
+router.delete('/protocols/:id', async (req, res, next) => {
+  try {
+    await prisma.protocol.delete({ where: { id: req.params.id } });
+    res.json({ message: 'Protocol eliminat' });
+  } catch (err) {
+    if (err.code === 'P2025') return res.status(404).json({ error: 'Protocol no trobat' });
     next(err);
   }
 });

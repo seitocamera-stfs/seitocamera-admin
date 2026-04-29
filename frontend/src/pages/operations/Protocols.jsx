@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import {
-  BookOpen, Edit2, Save, X, Loader2, ChevronDown, ChevronRight,
+  BookOpen, Edit2, Save, X, Loader2, ChevronDown, ChevronRight, Plus, Trash2,
 } from 'lucide-react';
 import { useApiGet } from '../../hooks/useApi';
 import api from '../../lib/api';
@@ -28,6 +28,10 @@ export default function Protocols() {
   const [editContent, setEditContent] = useState('');
   const [saving, setSaving] = useState(false);
   const [expandedCategory, setExpandedCategory] = useState(null);
+  const [showNew, setShowNew] = useState(false);
+  const [newForm, setNewForm] = useState({ title: '', category: 'daily', content: '' });
+  const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const selected = protocols?.find(p => p.id === selectedId);
 
@@ -59,6 +63,37 @@ export default function Protocols() {
       alert('Error guardant');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleCreate = async () => {
+    if (!newForm.title.trim()) return alert('El títol és obligatori');
+    setCreating(true);
+    try {
+      const res = await api.post('/operations/protocols', newForm);
+      setShowNew(false);
+      setNewForm({ title: '', category: 'daily', content: '' });
+      await refetch();
+      setSelectedId(res.data.id);
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error creant protocol');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!selected) return;
+    if (!confirm(`Eliminar el protocol "${selected.title}"?`)) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/operations/protocols/${selected.id}`);
+      setSelectedId(null);
+      refetch();
+    } catch (err) {
+      alert('Error eliminant');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -173,12 +208,57 @@ export default function Protocols() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      <div className="flex items-center gap-3 mb-6">
-        <BookOpen size={28} className="text-primary" />
-        <h1 className="text-2xl font-bold">Protocols Operatius</h1>
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <BookOpen size={28} className="text-primary" />
+          <h1 className="text-2xl font-bold">Protocols Operatius</h1>
+        </div>
+        <button
+          onClick={() => setShowNew(!showNew)}
+          className="flex items-center gap-1.5 text-sm bg-primary text-primary-foreground px-3 py-2 rounded-md hover:bg-primary/90"
+        >
+          <Plus size={16} /> Nou protocol
+        </button>
       </div>
 
       {error && <div className="bg-red-50 text-red-600 p-4 rounded-lg mb-4">{error}</div>}
+
+      {showNew && (
+        <div className="bg-card border rounded-lg p-4 mb-4">
+          <h3 className="font-semibold mb-3">Nou protocol</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+            <input
+              type="text"
+              placeholder="Títol del protocol"
+              value={newForm.title}
+              onChange={e => setNewForm({ ...newForm, title: e.target.value })}
+              className="rounded-md border bg-background px-3 py-2 text-sm col-span-2"
+            />
+            <select
+              value={newForm.category}
+              onChange={e => setNewForm({ ...newForm, category: e.target.value })}
+              className="rounded-md border bg-background px-3 py-2 text-sm"
+            >
+              {Object.entries(CATEGORY_LABELS).map(([k, v]) => (
+                <option key={k} value={k}>{v}</option>
+              ))}
+            </select>
+          </div>
+          <textarea
+            placeholder="Contingut del protocol (Markdown)..."
+            value={newForm.content}
+            onChange={e => setNewForm({ ...newForm, content: e.target.value })}
+            className="w-full min-h-[120px] border rounded-md p-3 text-sm bg-background font-mono mb-3"
+          />
+          <div className="flex gap-2 justify-end">
+            <button onClick={() => setShowNew(false)} className="text-sm text-muted-foreground hover:underline px-3 py-1.5">Cancel·lar</button>
+            <button onClick={handleCreate} disabled={creating}
+              className="text-sm bg-primary text-primary-foreground px-4 py-1.5 rounded-md hover:bg-primary/90 disabled:opacity-50">
+              {creating ? 'Creant...' : 'Crear protocol'}
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="flex gap-6">
         {/* Sidebar: llista de protocols */}
@@ -235,10 +315,16 @@ export default function Protocols() {
                   </span>
                 </div>
                 {!editing ? (
-                  <button onClick={handleEdit}
-                    className="flex items-center gap-1.5 text-sm text-primary hover:underline">
-                    <Edit2 size={14} /> Editar
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button onClick={handleEdit}
+                      className="flex items-center gap-1.5 text-sm text-primary hover:underline">
+                      <Edit2 size={14} /> Editar
+                    </button>
+                    <button onClick={handleDelete} disabled={deleting}
+                      className="flex items-center gap-1.5 text-sm text-red-500 hover:underline disabled:opacity-50">
+                      <Trash2 size={14} /> {deleting ? 'Eliminant...' : 'Eliminar'}
+                    </button>
+                  </div>
                 ) : (
                   <div className="flex gap-2">
                     <button onClick={() => setEditing(false)}
