@@ -735,9 +735,17 @@ router.put('/tasks/:id', async (req, res, next) => {
       },
     });
 
-    // Log reassignació
+    // Notificar + push si es reassigna
     if (assignedToId && assignedToId !== currentTask?.assignedToId && assignedToId !== req.user.id) {
-      logger.info(`Tasca ${task.id} assignada a ${assignedToId} per ${req.user.id}`);
+      logger.info(`Tasca ${task.id} reassignada a ${assignedToId} per ${req.user.id}`);
+      await createNotificationForUser(assignedToId, {
+        type: 'task_assigned',
+        title: `Tasca de ${req.user.name || 'un company'}`,
+        message: `${task.title}${task.project ? ` — ${task.project.name}` : ''}`,
+        entityType: 'task',
+        entityId: task.id,
+        priority: 'normal',
+      });
     }
 
     res.json(task);
@@ -1362,9 +1370,17 @@ router.post('/tasks', async (req, res, next) => {
       },
     });
 
-    // Log assignació
+    // Notificar + push si s'assigna a algú
     if (assignedToId && assignedToId !== req.user.id) {
       logger.info(`Nova tasca ${task.id} assignada a ${assignedToId} per ${req.user.id}`);
+      await createNotificationForUser(assignedToId, {
+        type: 'task_assigned',
+        title: `Tasca de ${req.user.name || 'un company'}`,
+        message: `${title.trim()}${task.project ? ` — ${task.project.name}` : ''}`,
+        entityType: 'task',
+        entityId: task.id,
+        priority: 'normal',
+      });
     }
 
     res.status(201).json(task);
