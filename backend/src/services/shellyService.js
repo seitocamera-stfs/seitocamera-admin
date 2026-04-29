@@ -55,15 +55,15 @@ async function isAvailable() {
  */
 function shellyRequest(serverUri, authKey, body) {
   return new Promise((resolve, reject) => {
-    const postData = JSON.stringify(body);
+    // Shelly Cloud API espera form-urlencoded amb auth_key al body
+    const postData = new URLSearchParams(body).toString();
 
     const options = {
       hostname: serverUri,
       path: `/device/rpc`,
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authKey}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
         'Content-Length': Buffer.byteLength(postData),
       },
     };
@@ -103,14 +103,16 @@ async function callRpc(method, params = {}) {
   const creds = await getCredentials();
   if (!creds) throw new Error('Shelly no configurat');
 
+  // Shelly Cloud API: form-encoded amb id, auth_key, method (i opcionalment params com JSON string)
   const body = {
     id: creds.deviceId,
     auth_key: creds.authKey,
     method,
-    params,
   };
+  if (Object.keys(params).length > 0) {
+    body.params = JSON.stringify(params);
+  }
 
-  // L'API Shelly Cloud utilitza form-encoded o JSON amb auth_key al body
   return shellyRequest(creds.serverUri, creds.authKey, body);
 }
 
