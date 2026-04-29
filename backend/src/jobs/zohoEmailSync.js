@@ -22,6 +22,20 @@ const os = require('os');
 let isRunning = false;
 let runStartedAt = null;
 const MAX_RUN_MINUTES = 10; // Safety timeout
+const PER_EMAIL_TIMEOUT_MS = 30000; // 30s timeout per email
+
+/**
+ * Executa una funció amb timeout.
+ * Si la funció tarda més de `ms`, rebutja amb error.
+ */
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Timeout (${ms}ms) processant: ${label}`)), ms)
+    ),
+  ]);
+}
 
 /**
  * Busca un proveïdor a la BD pel remitent del correu.
@@ -305,28 +319,29 @@ async function syncZohoEmails() {
 
       try {
         const classification = email.classification || 'NOT_INVOICE';
+        const emailLabel = `${email.emailMeta.from} — ${email.emailMeta.subject || '?'}`;
 
         // Detectar proveïdor
         const supplier = await findSupplierByEmail(email.emailMeta.from);
 
         switch (classification) {
           case 'PDF_ATTACHED':
-            // A: descarregar PDF → GDrive inbox
-            await handlePdfAttached(email, supplier);
+            // A: descarregar PDF → GDrive inbox (amb timeout)
+            await withTimeout(handlePdfAttached(email, supplier), PER_EMAIL_TIMEOUT_MS, emailLabel);
             await redis.set(`zoho:processed:${email.messageId}`, 'pdf_uploaded', 'EX', 90 * 24 * 3600);
             stats.pdfAttached++;
             break;
 
           case 'LINK_DETECTED':
             // B: recordatori amb instruccions de plataforma
-            await handleLinkDetected(email, supplier, adminId);
+            await withTimeout(handleLinkDetected(email, supplier, adminId), PER_EMAIL_TIMEOUT_MS, emailLabel);
             await redis.set(`zoho:processed:${email.messageId}`, 'link_reminder', 'EX', 90 * 24 * 3600);
             stats.linkDetected++;
             break;
 
           case 'MANUAL_REVIEW':
             // C: recordatori de revisió manual
-            await handleManualReview(email, supplier, adminId);
+            await withTimeout(handleManualReview(email, supplier, adminId), PER_EMAIL_TIMEOUT_MS, emailLabel);
             await redis.set(`zoho:processed:${email.messageId}`, 'manual_review', 'EX', 90 * 24 * 3600);
             stats.manualReview++;
             break;
@@ -339,7 +354,7 @@ async function syncZohoEmails() {
         }
 
       } catch (err) {
-        logger.error(`Zoho cron: Error processant correu ${email.messageId}: ${err.message}`);
+        logger.error(`Zoho cron: Error processant correu ${email.messageId} (${email.emailMeta.from}): ${err.message}`);
         stats.errors++;
       }
     }
