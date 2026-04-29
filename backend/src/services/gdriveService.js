@@ -66,9 +66,10 @@ async function findOrCreateFolder(name, parentId = null) {
   const drive = getDriveClient();
 
   // Buscar si ja existeix
+  const safeName = name.replace(/'/g, "\\'");
   const query = parentId
-    ? `name='${name}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`
-    : `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+    ? `name='${safeName}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`
+    : `name='${safeName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
 
   const res = await drive.files.list({
     q: query,

@@ -50,12 +50,12 @@ export default function Fiscal() {
     setModelLoading(false);
   };
 
-  // Recarregar quan canvien any/trimestre
+  // Recarregar quan canvien any/trimestre/model
   useEffect(() => {
     if (activeModel) {
       loadModel(activeModel);
     }
-  }, [year, quarter]);
+  }, [year, quarter, activeModel]);
 
   // Anys disponibles
   const years = [];

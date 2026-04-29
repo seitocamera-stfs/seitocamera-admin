@@ -65,7 +65,7 @@ export default function Absences() {
   const toDate = new Date(year, month, 0);
   const to = toDateStr(toDate);
 
-  const { data: absences, loading, refetch } = useApiGet(`/operations/absences?from=${from}&to=${to}`);
+  const { data: absences, loading, refetch } = useApiGet('/operations/absences', { from, to });
   const { data: allUsers } = useApiGet(isAdmin ? '/users' : null);
 
   // Calendar grid

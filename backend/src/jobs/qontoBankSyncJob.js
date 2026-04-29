@@ -76,11 +76,21 @@ async function runBankSync(options = {}) {
             fullSync: options.fullSync || false,
           });
         } else if (account.syncType === 'OPEN_BANKING') {
-          const openBanking = require('../services/openBankingService');
-          result = await openBanking.syncTransactions({
-            bankAccountId: account.id,
-            fullSync: options.fullSync || false,
-          });
+          try {
+            const openBanking = require('../services/openBankingService');
+            if (typeof openBanking.syncTransactions === 'function') {
+              result = await openBanking.syncTransactions({
+                bankAccountId: account.id,
+                fullSync: options.fullSync || false,
+              });
+            } else {
+              logger.warn(`Bank sync [${account.name}]: OPEN_BANKING sync no implementat`);
+              result = { created: 0, skipped: 0, errors: 0, message: 'Not implemented' };
+            }
+          } catch (obErr) {
+            logger.warn(`Bank sync [${account.name}]: OPEN_BANKING no disponible: ${obErr.message}`);
+            result = { created: 0, skipped: 0, errors: 1, message: obErr.message };
+          }
         }
 
         if (result) {
@@ -188,7 +198,11 @@ async function getLastSyncResult() {
 function startQontoBankSyncJob() {
   // Cada 30 minuts, dies laborables (Dill-Div), de 8h a 21h
   const task = cron.schedule('*/30 8-21 * * 1-5', async () => {
-    await runBankSync();
+    try {
+      await runBankSync();
+    } catch (err) {
+      logger.error(`Bank sync cron error: ${err.message}`);
+    }
   }, {
     timezone: 'Europe/Madrid',
   });
@@ -198,7 +212,11 @@ function startQontoBankSyncJob() {
   // Sync inicial al arrencar (amb delay de 30s)
   setTimeout(async () => {
     logger.info('Bank sync job: Sincronització inicial...');
-    await runBankSync();
+    try {
+      await runBankSync();
+    } catch (err) {
+      logger.error(`Bank sync inicial error: ${err.message}`);
+    }
   }, 30000);
 
   return task;

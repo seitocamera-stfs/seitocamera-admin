@@ -186,8 +186,9 @@ async function start() {
     startQontoBankSyncJob();
     const { startShellySyncJob } = require('./jobs/shellySyncJob');
     startShellySyncJob();
-    const { startAccountingReviewJob } = require('./jobs/accountingReviewJob');
-    startAccountingReviewJob();
+    // accountingReviewJob desactivat — agentJobsService ja fa classify + anomalies
+    // const { startAccountingReviewJob } = require('./jobs/accountingReviewJob');
+    // startAccountingReviewJob();
     const { initJobs } = require('./services/agentJobsService');
     initJobs();
 

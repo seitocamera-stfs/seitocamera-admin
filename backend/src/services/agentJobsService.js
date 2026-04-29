@@ -53,6 +53,7 @@ const DEFAULT_JOBS = [
 
 // Referència als cron jobs actius
 const activeJobs = {};
+const runningJobs = new Set(); // Guard contra execucions concurrents
 
 // ===========================================
 // Funcions dels jobs
@@ -539,6 +540,11 @@ function scheduleJob(config) {
   }
 
   activeJobs[config.jobType] = cron.schedule(config.cronSchedule, async () => {
+    if (runningJobs.has(config.jobType)) {
+      logger.info(`[Agent Jobs] ${config.jobType} ja en execució, saltant`);
+      return;
+    }
+    runningJobs.add(config.jobType);
     logger.info(`[Agent Jobs] Executant ${config.jobType}...`);
     try {
       await fn();
@@ -548,6 +554,8 @@ function scheduleJob(config) {
       });
     } catch (err) {
       logger.error(`[Agent Jobs] Error executant ${config.jobType}: ${err.message}`);
+    } finally {
+      runningJobs.delete(config.jobType);
     }
   });
 

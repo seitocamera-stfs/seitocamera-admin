@@ -63,7 +63,8 @@ export default function Conciliation() {
     if (selectedMovement && isPending) {
       findCandidates(selectedMovement);
     }
-  }, [selectedMovement]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMovement, isPending]);
 
   const findCandidates = async (movement) => {
     setSearchingCandidates(true);
