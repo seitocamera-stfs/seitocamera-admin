@@ -56,7 +56,7 @@ const sections = [
     key: 'logistics',
     label: 'Logística',
     items: [
-      { to: '/logistics', icon: Truck, label: 'Transports', section: 'operations' },
+      { to: '/logistics', icon: Truck, label: 'Transports', section: 'logistics' },
     ],
   },
   {

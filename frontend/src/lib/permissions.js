@@ -31,6 +31,7 @@ export const SECTIONS = {
   equipment: { label: 'Inventari equips', path: '/equipment' },
   agent: { label: 'Agent comptable', path: '/agent' },
   operations: { label: 'Operacions', path: '/operations/daily' },
+  logistics: { label: 'Logística', path: '/logistics' },
   users: { label: 'Usuaris', path: '/users' },
 };
 
@@ -50,6 +51,7 @@ export const CUSTOMIZABLE_SECTIONS = [
   'equipment',
   'agent',
   'operations',
+  'logistics',
 ];
 
 const LEVEL_ORDER = { read: 1, write: 2, admin: 3 };
@@ -76,6 +78,7 @@ export const ROLE_PERMISSIONS = {
     equipment: 'admin',
     agent: 'admin',
     operations: 'admin',
+    logistics: 'admin',
     users: 'admin',
     // Panells del dashboard
     _dashboardPanels: [
@@ -97,6 +100,7 @@ export const ROLE_PERMISSIONS = {
     equipment: 'write',
     agent: 'write',
     operations: 'write',
+    logistics: 'write',
     _dashboardPanels: [
       'receivedPending', 'issuedPending', 'unconciliated',
       'reminders', 'recentReceived', 'unconciliatedList',
