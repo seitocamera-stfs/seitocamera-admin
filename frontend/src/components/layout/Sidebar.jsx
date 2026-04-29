@@ -29,6 +29,8 @@ import {
   Activity,
   CalendarOff,
   X,
+  ClipboardList,
+  Timer,
 } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
 import useCompanyStore from '../../stores/companyStore';
@@ -47,9 +49,17 @@ const sections = [
       { to: '/operations/calendar', icon: Calendar, label: 'Calendari', section: 'operations' },
       { to: '/operations/projects', icon: Package, label: 'Projectes', section: 'operations' },
       { to: '/operations/tasks', icon: ListTodo, label: 'Tasques', section: 'operations' },
-      { to: '/operations/absences', icon: CalendarOff, label: 'Absències', section: 'operations' },
       { to: '/operations/incidents', icon: AlertTriangle, label: 'Incidències', section: 'operations' },
       { to: '/operations/protocols', icon: BookOpen, label: 'Protocols', section: 'operations' },
+    ],
+  },
+  {
+    key: 'team',
+    label: 'Equip',
+    items: [
+      { to: '/team/clock', icon: Timer, label: 'Control horari', section: 'operations' },
+      { to: '/team/entries', icon: ClipboardList, label: 'Registres horaris', section: 'operations' },
+      { to: '/team/absences', icon: CalendarOff, label: 'Absències', section: 'operations' },
     ],
   },
   {

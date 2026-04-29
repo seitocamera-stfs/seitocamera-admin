@@ -61,6 +61,8 @@ model User {
   agentRules            AgentRule[]       @relation("agentRulesCreated")
   absences              StaffAbsence[]    @relation("AbsenceUser")
   approvedAbsences      StaffAbsence[]    @relation("AbsenceApprover")
+  timeEntries           TimeEntry[]       @relation("TimeEntryUser")
+  approvedTimeEntries   TimeEntry[]       @relation("TimeEntryApprover")
   pushSubscriptions     PushSubscription[]
   transportsCreated     Transport[]        @relation("transportCreatedBy")
 
@@ -1376,6 +1378,58 @@ model StaffAbsence {
   @@index([startDate, endDate])
   @@index([status])
   @@map("staff_absences")
+}
+
+// ===========================================
+// Control Horari
+// ===========================================
+
+enum TimeEntryType {
+  OFICINA
+  RODATGE
+  TRANSPORT_ENTREGA
+  TRANSPORT_RECOLLIDA
+  TRANSPORT_COMPLET
+}
+
+enum ShootingRole {
+  VIDEOASSIST
+  AUX_CAMERA
+}
+
+enum OvertimeStatus {
+  PENDENT
+  APROVADA
+  REBUTJADA
+}
+
+model TimeEntry {
+  id              String          @id @default(cuid())
+  userId          String
+  date            DateTime        @db.Date
+  clockIn         DateTime
+  clockOut        DateTime?
+  type            TimeEntryType   @default(OFICINA)
+  shootingRole    ShootingRole?   // Només si type = RODATGE
+  projectName     String?         // Nom del projecte/rodatge/transport
+  notes           String?
+  // Hores extres (calculades automàticament, jornada estàndard 8h)
+  totalMinutes    Int?            // Minuts totals treballats
+  overtimeMinutes Int             @default(0)
+  overtimeStatus  OvertimeStatus  @default(PENDENT)
+  approvedById    String?
+  approvedAt      DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  user            User            @relation("TimeEntryUser", fields: [userId], references: [id])
+  approvedBy      User?           @relation("TimeEntryApprover", fields: [approvedById], references: [id])
+
+  @@index([userId])
+  @@index([date])
+  @@index([userId, date])
+  @@index([overtimeStatus])
+  @@map("time_entries")
 }
 
 // ===========================================

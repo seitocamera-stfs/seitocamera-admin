@@ -29,6 +29,8 @@ import OperationsProtocols from './pages/operations/Protocols';
 import OperationsCalendar from './pages/operations/Calendar';
 import OperationsTasks from './pages/operations/Tasks';
 import OperationsAbsences from './pages/operations/Absences';
+import TeamTimeClock from './pages/team/TimeClock';
+import TeamTimeEntries from './pages/team/TimeEntries';
 import LogisticsDashboard from './pages/logistics/LogisticsDashboard';
 import useAuthStore from './stores/authStore';
 
@@ -76,6 +78,10 @@ function App() {
         <Route path="operations/calendar" element={<OperationsCalendar />} />
         <Route path="operations/tasks" element={<OperationsTasks />} />
         <Route path="operations/absences" element={<OperationsAbsences />} />
+        {/* Mòdul Equip */}
+        <Route path="team/clock" element={<TeamTimeClock />} />
+        <Route path="team/entries" element={<TeamTimeEntries />} />
+        <Route path="team/absences" element={<OperationsAbsences />} />
         {/* Mòdul Logística */}
         <Route path="logistics" element={<LogisticsDashboard />} />
       </Route>

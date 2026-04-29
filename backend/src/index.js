@@ -145,6 +145,7 @@ app.use('/api/operations', require('./routes/operations'));
 app.use('/api/shelly', require('./routes/shelly'));
 app.use('/api/push', require('./routes/push'));
 app.use('/api/logistics', require('./routes/logistics'));
+app.use('/api/team', require('./routes/team'));
 
 // ===========================================
 // Gestió d'errors
