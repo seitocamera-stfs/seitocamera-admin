@@ -9,7 +9,6 @@ const { logger } = require('../config/logger');
 // Les dades s'utilitzen per calcular el repartiment de factures compartides.
 //
 // API Docs: https://shelly-api-docs.shelly.cloud/cloud-control-api/
-// EMData: https://shelly-api-docs.shelly.cloud/gen2/ComponentsAndServices/EMData/
 // ===========================================
 
 /**
@@ -48,19 +47,18 @@ async function isAvailable() {
 // ===========================================
 
 /**
- * Fa una petició POST a l'API Cloud de Shelly
- * @param {string} serverUri - Ex: "shelly-103-eu.shelly.cloud"
- * @param {string} authKey - Cloud auth key
- * @param {Object} body - JSON body
+ * Fa una petició POST a l'API Cloud de Shelly (form-urlencoded)
+ * @param {string} serverUri - Ex: "shelly-243-eu.shelly.cloud"
+ * @param {string} path - Ex: "/device/status"
+ * @param {Object} formData - Camps form-urlencoded
  */
-function shellyRequest(serverUri, authKey, body) {
+function shellyCloudRequest(serverUri, path, formData) {
   return new Promise((resolve, reject) => {
-    // Shelly Cloud API espera form-urlencoded amb auth_key al body
-    const postData = new URLSearchParams(body).toString();
+    const postData = new URLSearchParams(formData).toString();
 
     const options = {
       hostname: serverUri,
-      path: `/device/rpc`,
+      path,
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -97,23 +95,17 @@ function shellyRequest(serverUri, authKey, body) {
 }
 
 /**
- * Crida un mètode RPC al dispositiu Shelly via Cloud
+ * Obté l'estat del dispositiu via Shelly Cloud API
+ * Endpoint: POST /device/status
  */
-async function callRpc(method, params = {}) {
+async function getDeviceStatus() {
   const creds = await getCredentials();
   if (!creds) throw new Error('Shelly no configurat');
 
-  // Shelly Cloud API: form-encoded amb id, auth_key, method (i opcionalment params com JSON string)
-  const body = {
+  return shellyCloudRequest(creds.serverUri, '/device/status', {
     id: creds.deviceId,
     auth_key: creds.authKey,
-    method,
-  };
-  if (Object.keys(params).length > 0) {
-    body.params = JSON.stringify(params);
-  }
-
-  return shellyRequest(creds.serverUri, creds.authKey, body);
+  });
 }
 
 // ===========================================
@@ -122,13 +114,17 @@ async function callRpc(method, params = {}) {
 
 /**
  * Obté les dades de consum d'un dia concret des de l'API Shelly.
- * EMData.GetData retorna lectures per minut en Wh.
+ * Usa l'endpoint /device/status que retorna les lectures acumulades totals,
+ * i les lectures individuals per dia via Cloud RPC.
  *
  * @param {Date} date - Dia a consultar
  * @returns {{ phaseA: number, phaseB: number, phaseC: number, totalKwh: number, records: number }}
  */
 async function fetchDayData(date) {
-  // Calcular timestamps UTC per al dia (Barcelona = UTC+1/+2)
+  const creds = await getCredentials();
+  if (!creds) throw new Error('Shelly no configurat');
+
+  // Calcular timestamps per al dia
   const dayStart = new Date(date);
   dayStart.setHours(0, 0, 0, 0);
   const dayEnd = new Date(dayStart);
@@ -139,13 +135,15 @@ async function fetchDayData(date) {
 
   logger.info(`Shelly fetchDayData: ${date.toISOString().split('T')[0]} (ts: ${tsStart} → ${tsEnd})`);
 
-  const response = await callRpc('EMData.GetData', {
-    id: 0,
-    ts: tsStart,
-    end_ts: tsEnd,
+  // Usar Cloud RPC endpoint per EMData.GetData
+  const response = await shellyCloudRequest(creds.serverUri, '/device/rpc', {
+    id: creds.deviceId,
+    auth_key: creds.authKey,
+    method: 'EMData.GetData',
+    params: JSON.stringify({ id: 0, ts: tsStart, end_ts: tsEnd }),
   });
 
-  // La resposta conté { data: { keys: [...], data: [{ ts, period, values: [...] }] } }
+  // La resposta conté { isok: true, data: { keys: [...], data: [...] } }
   const result = response.data || response;
   const keys = result.keys || [];
   const records = result.data || [];
@@ -325,16 +323,19 @@ async function suggestSplit(from, to, totalBillKwh) {
 }
 
 /**
- * Test de connexió
+ * Test de connexió via /device/status
  */
 async function testConnection() {
   try {
-    const response = await callRpc('Shelly.GetStatus');
+    const response = await getDeviceStatus();
+    const status = response.data?.device_status || {};
     return {
       connected: true,
-      deviceId: response.data?.sys?.id || 'desconegut',
-      model: response.data?.sys?.model || 'desconegut',
-      uptime: response.data?.sys?.uptime,
+      online: response.data?.online || false,
+      deviceId: status.sys?.id || status.id || 'desconegut',
+      model: status.sys?.model || 'desconegut',
+      wifi: status.wifi?.ssid || null,
+      totalKwh: status['emdata:0']?.total_act ? Math.round(status['emdata:0'].total_act / 10) / 100 : null,
     };
   } catch (err) {
     return { connected: false, error: err.message };
@@ -344,6 +345,7 @@ async function testConnection() {
 module.exports = {
   getCredentials,
   isAvailable,
+  getDeviceStatus,
   fetchDayData,
   syncDay,
   syncDateRange,
