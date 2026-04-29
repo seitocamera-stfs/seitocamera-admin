@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bell, Check, CheckCheck, Package, ListTodo, AlertTriangle, MessageCircle, UserCheck, X } from 'lucide-react';
+import { Bell, BellRing, Check, CheckCheck, Package, ListTodo, AlertTriangle, MessageCircle, UserCheck, X } from 'lucide-react';
 import api from '../../lib/api';
+import usePushNotifications from '../../hooks/usePushNotifications';
 
 // ===========================================
 // Constants
@@ -39,6 +40,7 @@ function timeAgo(dateStr) {
 
 export default function NotificationBell() {
   const navigate = useNavigate();
+  const push = usePushNotifications();
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [open, setOpen] = useState(false);
@@ -218,6 +220,48 @@ export default function NotificationBell() {
               })
             )}
           </div>
+
+          {/* Push notifications toggle */}
+          {push.isSupported && (
+            <div className="border-t px-4 py-2.5 bg-gray-50/80 flex items-center justify-between">
+              {push.isSubscribed ? (
+                <>
+                  <div className="flex items-center gap-2 text-[11px] text-green-600">
+                    <BellRing size={13} />
+                    <span>Push activat</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={push.sendTest}
+                      className="text-[10px] text-gray-400 hover:text-gray-600 px-2 py-1 rounded hover:bg-gray-100"
+                    >
+                      Test
+                    </button>
+                    <button
+                      onClick={push.unsubscribe}
+                      className="text-[10px] text-gray-400 hover:text-red-500 px-2 py-1 rounded hover:bg-gray-100"
+                    >
+                      Desactivar
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <button
+                  onClick={push.subscribe}
+                  disabled={push.loading || push.permission === 'denied'}
+                  className="w-full flex items-center justify-center gap-2 py-1.5 text-[11px] font-medium text-[#00617F] hover:bg-[#00617F]/5 rounded-lg transition-colors disabled:opacity-40"
+                >
+                  <BellRing size={13} />
+                  {push.permission === 'denied'
+                    ? 'Notificacions push bloquejades al navegador'
+                    : push.loading
+                      ? 'Activant...'
+                      : 'Activar notificacions push'
+                  }
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

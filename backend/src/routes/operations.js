@@ -500,15 +500,12 @@ router.post('/projects/:id/assignments', async (req, res, next) => {
     });
 
     // Notificar l'usuari assignat
-    await prisma.opNotification.create({
-      data: {
-        userId,
-        type: 'project_assigned',
-        title: 'Assignat a un projecte',
-        message: `T'han assignat al projecte`,
-        entityType: 'rental_project',
-        entityId: req.params.id,
-      },
+    createNotificationForUser(userId, {
+      type: 'project_assigned',
+      title: 'Assignat a un projecte',
+      message: `T'han assignat al projecte`,
+      entityType: 'rental_project',
+      entityId: req.params.id,
     });
 
     res.json(assignment);
@@ -669,16 +666,13 @@ router.post('/projects/:id/tasks', async (req, res, next) => {
         where: { id: req.params.id },
         select: { name: true },
       });
-      await prisma.opNotification.create({
-        data: {
-          userId: assignedToId,
+      await createNotificationForUser(assignedToId, {
           type: 'task_assigned',
           title: `Tasca delegada per ${req.user.name || 'un company'}`,
           message: `${title}${project ? ` — Projecte: ${project.name}` : ''}`,
           entityType: 'rental_project',
           entityId: req.params.id,
           priority: requiresSupervision ? 'high' : 'normal',
-        },
       });
     }
 
@@ -874,16 +868,13 @@ router.post('/incidents', async (req, res, next) => {
         });
       }
     } else if (assignedToId) {
-      await prisma.opNotification.create({
-        data: {
-          userId: assignedToId,
+      await createNotificationForUser(assignedToId, {
           type: 'incident_assigned',
           title: `Nova incidència assignada: ${title}`,
           message: description.substring(0, 200),
           entityType: 'incident',
           entityId: incident.id,
           priority: severity === 'HIGH' ? 'high' : 'normal',
-        },
       });
     }
 
@@ -1743,7 +1734,28 @@ router.get('/dashboard', async (req, res, next) => {
 // ===========================================
 
 /**
+ * Crea notificació per un usuari + push
+ */
+async function createNotificationForUser(userId, notifData) {
+  try {
+    await prisma.opNotification.create({ data: { userId, ...notifData } });
+    try {
+      const pushService = require('../services/pushService');
+      pushService.sendToUser(userId, {
+        title: notifData.title || 'SeitoCamera',
+        body: notifData.message || '',
+        url: '/',
+        tag: notifData.type || 'notification',
+      }).catch(() => {});
+    } catch { /* */ }
+  } catch (err) {
+    logger.error(`Error creant notificació per user ${userId}: ${err.message}`);
+  }
+}
+
+/**
  * Crea notificació per a tots els usuaris assignats a un rol operatiu
+ * + envia push notification als dispositius subscrits
  */
 async function createNotificationForRole(roleCode, notifData) {
   try {
@@ -1765,6 +1777,18 @@ async function createNotificationForRole(roleCode, notifData) {
           ...notifData,
         })),
       });
+
+      // Enviar push als dispositius subscrits
+      try {
+        const pushService = require('../services/pushService');
+        const userIds = assignments.map(a => a.userId);
+        pushService.sendToUsers(userIds, {
+          title: notifData.title || 'SeitoCamera',
+          body: notifData.message || '',
+          url: notifData.entityType ? `/${notifData.entityType}s` : '/',
+          tag: notifData.type || 'notification',
+        }).catch(() => {}); // Fire & forget
+      } catch { /* push no disponible */ }
     }
   } catch (err) {
     logger.error(`Error creant notificació per rol ${roleCode}: ${err.message}`);
