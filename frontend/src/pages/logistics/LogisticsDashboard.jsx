@@ -3,8 +3,10 @@ import {
   Truck, Plus, Search, X, Filter, ChevronDown, ChevronRight,
   Package, PackageCheck, PackageOpen, Clock, Phone, MapPin,
   Trash2, StickyNote, CalendarDays, Table, Building2, RefreshCw,
+  User, Ban, MessageCircle, Link2,
 } from 'lucide-react';
 import api from '../../lib/api';
+import { enviarViaWhatsapp, enviarViaWhatsappEmpresa, copyDriverLink } from '../../services/whatsappService';
 
 // ===========================================
 // Constants
@@ -249,7 +251,7 @@ export default function LogisticsDashboard() {
                       <Th>Origen</Th>
                       <Th>Destí</Th>
                       <Th>Data/Hora</Th>
-                      <Th>Responsable</Th>
+                      <Th>Cap producció</Th>
                       <Th>Conductor</Th>
                       <Th>Empresa</Th>
                       <Th>Estat</Th>
@@ -344,7 +346,12 @@ function TransportRow({ t, conductors, empreses, onUpdate, onDelete }) {
           </div>
         </td>
         <td className="px-3 py-2.5 min-w-[130px]">
-          <InlineEdit value={t.responsableProduccio} onSave={v => onUpdate(t.id, { responsableProduccio: v })} placeholder="Responsable" />
+          <InlineEdit value={t.responsableProduccio} onSave={v => onUpdate(t.id, { responsableProduccio: v })} placeholder="Cap producció" />
+          {t.telefonResponsable && (
+            <a href={`tel:${t.telefonResponsable}`} className="text-[10px] text-blue-500 hover:underline flex items-center gap-0.5 mt-0.5">
+              <Phone size={10} /> {t.telefonResponsable}
+            </a>
+          )}
         </td>
         <td className="px-3 py-2.5 min-w-[130px]">
           <select
@@ -379,9 +386,25 @@ function TransportRow({ t, conductors, empreses, onUpdate, onDelete }) {
           {descHoresExtres(minsExtres)}
         </td>
         <td className="px-3 py-2.5 text-right">
-          <button onClick={() => onDelete(t.id)} className="p-1.5 rounded hover:bg-red-50 text-gray-400 hover:text-red-500" title="Eliminar">
-            <Trash2 size={14} />
-          </button>
+          <div className="flex items-center justify-end gap-0.5">
+            <button
+              onClick={() => enviarViaWhatsapp(t)}
+              className="p-1.5 rounded hover:bg-emerald-50 text-gray-400 hover:text-emerald-600"
+              title={t.conductor?.telefon ? `WhatsApp al conductor (${t.conductor.telefon})` : 'WhatsApp al conductor'}
+            >
+              <MessageCircle size={14} />
+            </button>
+            <button
+              onClick={() => { copyDriverLink(t); }}
+              className="p-1.5 rounded hover:bg-blue-50 text-gray-400 hover:text-blue-600"
+              title="Copiar enllaç conductor"
+            >
+              <Link2 size={14} />
+            </button>
+            <button onClick={() => onDelete(t.id)} className="p-1.5 rounded hover:bg-red-50 text-gray-400 hover:text-red-500" title="Eliminar">
+              <Trash2 size={14} />
+            </button>
+          </div>
         </td>
       </tr>
 
@@ -389,15 +412,102 @@ function TransportRow({ t, conductors, empreses, onUpdate, onDelete }) {
       {expanded && (
         <tr className="bg-gray-50/50">
           <td colSpan={12} className="px-6 py-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+              {/* Col 1: Notes i detalls */}
               <div>
-                <h4 className="font-medium text-gray-700 mb-2 flex items-center gap-1"><StickyNote size={12} /> Notes</h4>
+                <h4 className="font-medium text-gray-700 mb-2 flex items-center gap-1"><StickyNote size={12} /> Detalls</h4>
+
+                {/* Data entrega + hora entrega estimada */}
+                <div className="space-y-1.5 mb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500 w-32 shrink-0">Data entrega:</span>
+                    <InlineEdit value={t.dataEntrega ? new Date(t.dataEntrega).toISOString().split('T')[0] : ''} onSave={v => onUpdate(t.id, { dataEntrega: v })} placeholder="AAAA-MM-DD" type="date" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500 w-32 shrink-0">Hora entrega est.:</span>
+                    <InlineEdit value={t.horaEntregaEstimada} onSave={v => onUpdate(t.id, { horaEntregaEstimada: v })} placeholder="HH:MM" type="time" className="text-gray-700" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Phone size={11} className="text-gray-400" />
+                    <span className="text-gray-500 w-28 shrink-0">Tel. responsable:</span>
+                    <InlineEdit value={t.telefonResponsable} onSave={v => onUpdate(t.id, { telefonResponsable: v })} placeholder="+34..." className="text-gray-700" />
+                    {t.telefonResponsable && (
+                      <a href={`tel:${t.telefonResponsable}`} className="text-[10px] text-blue-500 hover:underline">Trucar</a>
+                    )}
+                  </div>
+                </div>
+
+                {/* Enllaç conductor */}
+                <div className="flex items-center gap-2 flex-wrap mb-3">
+                  <span className="text-gray-500 text-[11px] font-medium">Enllaç conductor:</span>
+                  <button onClick={() => copyDriverLink(t)} className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline">
+                    <Link2 size={11} /> Copiar enllaç
+                  </button>
+                  <button
+                    onClick={() => enviarViaWhatsapp(t)}
+                    className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-medium"
+                  >
+                    <MessageCircle size={11} /> Al conductor
+                  </button>
+                  <button
+                    onClick={() => {
+                      const emp = empreses.find(e => e.id === t.empresaId);
+                      enviarViaWhatsappEmpresa(t, emp);
+                    }}
+                    disabled={!t.empresaId}
+                    className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-medium"
+                  >
+                    <Building2 size={11} /> A l'empresa
+                  </button>
+                </div>
+
+                {/* Notes */}
                 <InlineEdit value={t.notes} onSave={v => onUpdate(t.id, { notes: v })} placeholder="Afegir notes..." multiline />
                 {t.notesOrigen && <p className="text-gray-500 mt-1">Origen: {t.notesOrigen}</p>}
                 {t.notesDesti && <p className="text-gray-500 mt-1">Destí: {t.notesDesti}</p>}
-                {t.horaIniciReal && <p className="text-gray-600 mt-2">Inici real: <span className="font-medium">{t.horaIniciReal}</span></p>}
-                {t.horaFiReal && <p className="text-gray-600">Fi real: <span className="font-medium">{t.horaFiReal}</span></p>}
+
+                {/* Motiu cancel·lació */}
+                {t.estat === 'Cancel·lat' && (
+                  <div className="mt-3 p-2 bg-rose-50 rounded-lg border border-rose-100">
+                    <div className="flex items-center gap-1 text-rose-600 font-medium mb-1"><Ban size={11} /> Motiu cancel·lació</div>
+                    <InlineEdit value={t.motiuCancellacio} onSave={v => onUpdate(t.id, { motiuCancellacio: v })} placeholder="Afegir motiu..." multiline className="text-rose-700" />
+                  </div>
+                )}
               </div>
+
+              {/* Col 2: Horaris reals */}
+              <div>
+                <h4 className="font-medium text-gray-700 mb-2 flex items-center gap-1"><Clock size={12} /> Jornada</h4>
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500 w-20">Inici real:</span>
+                    <InlineEdit value={t.horaIniciReal} onSave={v => onUpdate(t.id, { horaIniciReal: v })} placeholder="HH:MM" type="time" className="font-medium text-gray-700" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500 w-20">Fi real:</span>
+                    <InlineEdit value={t.horaFiReal} onSave={v => onUpdate(t.id, { horaFiReal: v })} placeholder="HH:MM" type="time" className="font-medium text-gray-700" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500 w-20">H. extres:</span>
+                    <span className={`font-medium ${minsExtres != null && minsExtres > 0 ? 'text-rose-600' : minsExtres != null ? 'text-emerald-600' : 'text-gray-400'}`}>
+                      {descHoresExtres(minsExtres)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Creador */}
+                <div className="mt-4 pt-3 border-t border-gray-200">
+                  <div className="flex items-center gap-1.5 text-gray-400">
+                    <User size={11} />
+                    <span>Creat per <span className="text-gray-600 font-medium">{t.createdBy?.name || '—'}</span></span>
+                  </div>
+                  <div className="text-[10px] text-gray-400 ml-4 mt-0.5">
+                    {t.createdAt ? new Date(t.createdAt).toLocaleString('ca-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Col 3: Historial */}
               <div>
                 <h4 className="font-medium text-gray-700 mb-2 flex items-center gap-1"><Clock size={12} /> Historial</h4>
                 {(t.historial || []).length === 0 ? (
@@ -474,8 +584,9 @@ function InlineEdit({ value, onSave, placeholder, type = 'text', className = '',
 function NewTransportModal({ conductors, empreses, onClose, onCreate }) {
   const [form, setForm] = useState({
     projecte: '', tipusServei: 'Entrega', origen: '', desti: '',
-    dataCarrega: '', horaRecollida: '', horaFiPrevista: '',
-    responsableProduccio: '', conductorId: '', empresaId: '', notes: '',
+    dataCarrega: '', dataEntrega: '', horaRecollida: '', horaFiPrevista: '',
+    horaEntregaEstimada: '', responsableProduccio: '', telefonResponsable: '',
+    conductorId: '', empresaId: '', notes: '',
   });
 
   const handleSubmit = (e) => {
@@ -513,6 +624,14 @@ function NewTransportModal({ conductors, empreses, onClose, onCreate }) {
             </Field>
           </div>
           <div className="grid grid-cols-2 gap-3">
+            <Field label="Data entrega">
+              <input type="date" value={form.dataEntrega} onChange={e => setForm({ ...form, dataEntrega: e.target.value })} className="input-field" />
+            </Field>
+            <Field label="Hora entrega estimada">
+              <input type="time" value={form.horaEntregaEstimada} onChange={e => setForm({ ...form, horaEntregaEstimada: e.target.value })} className="input-field" />
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
             <Field label="Hora recollida">
               <input type="time" value={form.horaRecollida} onChange={e => setForm({ ...form, horaRecollida: e.target.value })} className="input-field" />
             </Field>
@@ -520,9 +639,14 @@ function NewTransportModal({ conductors, empreses, onClose, onCreate }) {
               <input type="time" value={form.horaFiPrevista} onChange={e => setForm({ ...form, horaFiPrevista: e.target.value })} className="input-field" />
             </Field>
           </div>
-          <Field label="Responsable producció">
-            <input value={form.responsableProduccio} onChange={e => setForm({ ...form, responsableProduccio: e.target.value })} className="input-field" placeholder="Nom responsable" />
-          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Cap de producció">
+              <input value={form.responsableProduccio} onChange={e => setForm({ ...form, responsableProduccio: e.target.value })} className="input-field" placeholder="Nom responsable" />
+            </Field>
+            <Field label="Telèfon responsable">
+              <input value={form.telefonResponsable} onChange={e => setForm({ ...form, telefonResponsable: e.target.value })} className="input-field" placeholder="+34..." type="tel" />
+            </Field>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Conductor">
               <select value={form.conductorId} onChange={e => setForm({ ...form, conductorId: e.target.value })} className="input-field">

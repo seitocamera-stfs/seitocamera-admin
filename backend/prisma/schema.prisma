@@ -1508,6 +1508,7 @@ model Transport {
   motiuCancellacio     String?
   cancellatAt          DateTime?
   notes                String?
+  publicToken          String?   @unique @default(cuid())
   historial            Json      @default("[]")
   createdById          String?
   createdAt            DateTime  @default(now())

@@ -32,6 +32,7 @@ import OperationsAbsences from './pages/operations/Absences';
 import TeamTimeClock from './pages/team/TimeClock';
 import TeamTimeEntries from './pages/team/TimeEntries';
 import LogisticsDashboard from './pages/logistics/LogisticsDashboard';
+import DriverView from './pages/logistics/DriverView';
 import useAuthStore from './stores/authStore';
 
 function App() {
@@ -44,6 +45,8 @@ function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      {/* Ruta pública per al conductor (sense autenticació) */}
+      <Route path="/ruta/:token" element={<DriverView />} />
       <Route
         path="/"
         element={

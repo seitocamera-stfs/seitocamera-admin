@@ -147,6 +147,104 @@ app.use('/api/push', require('./routes/push'));
 app.use('/api/logistics', require('./routes/logistics'));
 app.use('/api/team', require('./routes/team'));
 
+// Ruta pública per al conductor (sense autenticació, accés per token)
+app.get('/api/logistics/public/:token', async (req, res) => {
+  try {
+    const transport = await prisma.transport.findUnique({
+      where: { publicToken: req.params.token },
+      include: {
+        conductor: { select: { nom: true, telefon: true } },
+        empresa: { select: { nom: true } },
+      },
+    });
+    if (!transport) return res.status(404).json({ error: 'Ruta no trobada' });
+    // Retornar només camps necessaris pel conductor (no exposar dades internes)
+    res.json({
+      id: transport.id,
+      projecte: transport.projecte,
+      tipusServei: transport.tipusServei,
+      origen: transport.origen,
+      notesOrigen: transport.notesOrigen,
+      desti: transport.desti,
+      notesDesti: transport.notesDesti,
+      dataCarrega: transport.dataCarrega,
+      dataEntrega: transport.dataEntrega,
+      horaRecollida: transport.horaRecollida,
+      horaEntregaEstimada: transport.horaEntregaEstimada,
+      horaFiPrevista: transport.horaFiPrevista,
+      horaIniciReal: transport.horaIniciReal,
+      horaFiReal: transport.horaFiReal,
+      minutsExtres: transport.minutsExtres,
+      responsableProduccio: transport.responsableProduccio,
+      telefonResponsable: transport.telefonResponsable,
+      conductor: transport.conductor,
+      empresa: transport.empresa,
+      estat: transport.estat,
+      motiuCancellacio: transport.motiuCancellacio,
+      notes: transport.notes,
+    });
+  } catch (err) {
+    logger.error('Error ruta pública conductor:', err.message);
+    res.status(500).json({ error: 'Error intern' });
+  }
+});
+
+// POST /api/logistics/public/:token/start — Conductor marca inici ruta (públic)
+app.post('/api/logistics/public/:token/start', async (req, res) => {
+  try {
+    const transport = await prisma.transport.findUnique({ where: { publicToken: req.params.token } });
+    if (!transport) return res.status(404).json({ error: 'Ruta no trobada' });
+    if (transport.estat === 'Cancel·lat') return res.status(400).json({ error: 'Ruta cancel·lada' });
+    if (transport.horaIniciReal) return res.status(400).json({ error: 'Ruta ja iniciada' });
+
+    const { hora } = req.body;
+    const historial = [...(transport.historial || []), { timestamp: new Date().toISOString(), accio: 'inici_ruta', detall: `Ruta iniciada pel conductor a les ${hora}` }];
+    const updated = await prisma.transport.update({
+      where: { id: transport.id },
+      data: { horaIniciReal: hora, estat: 'En Preparació', historial },
+    });
+    res.json({ ok: true, estat: updated.estat, horaIniciReal: updated.horaIniciReal });
+  } catch (err) {
+    logger.error('Error inici ruta pública:', err.message);
+    res.status(500).json({ error: 'Error intern' });
+  }
+});
+
+// POST /api/logistics/public/:token/end — Conductor marca fi ruta (públic)
+app.post('/api/logistics/public/:token/end', async (req, res) => {
+  try {
+    const transport = await prisma.transport.findUnique({ where: { publicToken: req.params.token } });
+    if (!transport) return res.status(404).json({ error: 'Ruta no trobada' });
+    if (transport.estat === 'Cancel·lat') return res.status(400).json({ error: 'Ruta cancel·lada' });
+    if (!transport.horaIniciReal) return res.status(400).json({ error: 'Ruta no iniciada' });
+    if (transport.horaFiReal) return res.status(400).json({ error: 'Ruta ja finalitzada' });
+
+    const { hora } = req.body;
+    // Calcular hores extres
+    const toMin = (hm) => { if (!hm) return null; const m = hm.match(/^(\d{1,2}):(\d{2})$/); return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : null; };
+    const prev = toMin(transport.horaFiPrevista);
+    const real = toMin(hora);
+    let minutsExtres = null;
+    if (prev != null && real != null) {
+      minutsExtres = real - prev;
+      if (minutsExtres < -12 * 60) minutsExtres += 24 * 60;
+    }
+
+    let historial = [...(transport.historial || []),
+      { timestamp: new Date().toISOString(), accio: 'tancament', detall: `Hora final: ${hora} (previst ${transport.horaFiPrevista || '—'})` },
+      { timestamp: new Date().toISOString(), accio: 'canvi_estat', detall: `${transport.estat} → Lliurat` },
+    ];
+    const updated = await prisma.transport.update({
+      where: { id: transport.id },
+      data: { horaFiReal: hora, minutsExtres, estat: 'Lliurat', historial },
+    });
+    res.json({ ok: true, estat: updated.estat, horaFiReal: updated.horaFiReal, minutsExtres: updated.minutsExtres });
+  } catch (err) {
+    logger.error('Error fi ruta pública:', err.message);
+    res.status(500).json({ error: 'Error intern' });
+  }
+});
+
 // ===========================================
 // Gestió d'errors
 // ===========================================
