@@ -1229,12 +1229,16 @@ router.post('/received', authorize('ADMIN', 'EDITOR'), upload.single('file'), as
     // Pujar PDF a Google Drive en segon pla
     if (req.file && (process.env.GOOGLE_SERVICE_ACCOUNT_KEY || process.env.GOOGLE_CREDENTIALS_JSON || process.env.GOOGLE_REFRESH_TOKEN)) {
       gdrive.uploadFile(req.file.path, 'factures-rebudes', req.file.originalname, invoice.issueDate || new Date())
-        .then((gFile) => {
-          prisma.receivedInvoice.update({
-            where: { id: invoice.id },
-            data: { gdriveFileId: gFile.id },
-          }).catch(() => {});
-          logger.info(`PDF pujat a Google Drive: ${req.file.originalname} (${gFile.id})`);
+        .then(async (gFile) => {
+          try {
+            await prisma.receivedInvoice.update({
+              where: { id: invoice.id },
+              data: { gdriveFileId: gFile.id },
+            });
+            logger.info(`PDF pujat a Google Drive: ${req.file.originalname} (${gFile.id})`);
+          } catch (dbErr) {
+            logger.error(`Error guardant gdriveFileId per factura ${invoice.id}: ${dbErr.message}`);
+          }
         })
         .catch((err) => {
           logger.warn(`Error pujant PDF a Google Drive: ${err.message}`);
@@ -1384,12 +1388,16 @@ router.post('/received/:id/attach-pdf', authorize('ADMIN', 'EDITOR'), upload.sin
     // Pujar a Google Drive en segon pla
     if (process.env.GOOGLE_SERVICE_ACCOUNT_KEY || process.env.GOOGLE_CREDENTIALS_JSON || process.env.GOOGLE_REFRESH_TOKEN) {
       gdrive.uploadFile(req.file.path, 'factures-rebudes', req.file.originalname, updated.issueDate || new Date())
-        .then((gFile) => {
-          prisma.receivedInvoice.update({
-            where: { id: req.params.id },
-            data: { gdriveFileId: gFile.id },
-          }).catch(() => {});
-          logger.info(`PDF adjuntat i pujat a Google Drive: ${req.file.originalname} (${gFile.id})`);
+        .then(async (gFile) => {
+          try {
+            await prisma.receivedInvoice.update({
+              where: { id: req.params.id },
+              data: { gdriveFileId: gFile.id },
+            });
+            logger.info(`PDF adjuntat i pujat a Google Drive: ${req.file.originalname} (${gFile.id})`);
+          } catch (dbErr) {
+            logger.error(`Error guardant gdriveFileId per factura ${req.params.id}: ${dbErr.message}`);
+          }
         })
         .catch((err) => {
           logger.warn(`Error pujant PDF a Google Drive: ${err.message}`);
@@ -1511,13 +1519,12 @@ router.put('/received/:id', authorize('ADMIN', 'EDITOR'), async (req, res, next)
         if (conflict) {
           if (body.mergeDuplicate) {
             // FUSIONAR: eliminar la factura actual (la DUP) i mantenir l'original
-            // Si la DUP té millors dades, actualitzar l'original primer
+            // Transacció atòmica per garantir consistència del merge
             const currentFull = await prisma.receivedInvoice.findUnique({
               where: { id: invoiceId },
               select: { gdriveFileId: true, totalAmount: true, issueDate: true, description: true },
             });
 
-            // Actualitzar l'original amb les dades editades (si l'usuari ha canviat algo)
             const mergeData = {};
             if (data.totalAmount && data.totalAmount > 0 && (!conflict.totalAmount || parseFloat(conflict.totalAmount) === 0)) {
               mergeData.totalAmount = data.totalAmount;
@@ -1528,14 +1535,21 @@ router.put('/received/:id', authorize('ADMIN', 'EDITOR'), async (req, res, next)
             if (data.issueDate) mergeData.issueDate = data.issueDate;
             if (data.description) mergeData.description = data.description;
 
-            if (Object.keys(mergeData).length > 0) {
-              await prisma.receivedInvoice.update({
-                where: { id: conflict.id },
-                data: mergeData,
+            // Operacions de BD atòmiques dins transacció
+            await prisma.$transaction(async (tx) => {
+              if (Object.keys(mergeData).length > 0) {
+                await tx.receivedInvoice.update({
+                  where: { id: conflict.id },
+                  data: mergeData,
+                });
+              }
+              await tx.receivedInvoice.update({
+                where: { id: invoiceId },
+                data: { deletedAt: new Date(), description: `Fusionada amb factura ${conflict.invoiceNumber} (${conflict.id})` },
               });
-            }
+            });
 
-            // Soft-delete la factura duplicada + esborrar del Drive
+            // Esborrar fitxer de Drive fora de la transacció (operació externa)
             if (currentFull?.gdriveFileId) {
               try {
                 await gdrive.deleteFile(currentFull.gdriveFileId);
@@ -1544,10 +1558,6 @@ router.put('/received/:id', authorize('ADMIN', 'EDITOR'), async (req, res, next)
                 logger.warn(`Merge: no s'ha pogut esborrar de Drive ${currentFull.gdriveFileId}: ${driveErr.message}`);
               }
             }
-            await prisma.receivedInvoice.update({
-              where: { id: invoiceId },
-              data: { deletedAt: new Date(), description: `Fusionada amb factura ${conflict.invoiceNumber} (${conflict.id})` },
-            });
 
             logger.info(`Merge: factura DUP ${invoiceId} fusionada amb original ${conflict.id} (${conflict.invoiceNumber})`);
 

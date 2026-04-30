@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 const { logger } = require('../config/logger');
 const company = require('../config/company');
 
@@ -1298,7 +1299,7 @@ async function ocrPdf(filePathOrBuffer) {
     for (let i = 0; i < pages.length; i++) {
       try {
         // Guardar imatge temporal
-        const tmpPath = path.join(os.tmpdir(), `ocr_page_${Date.now()}_${i}.png`);
+        const tmpPath = path.join(os.tmpdir(), `ocr_page_${crypto.randomUUID()}_${i}.png`);
         fs.writeFileSync(tmpPath, pages[i]);
 
         const { data } = await worker.recognize(tmpPath);

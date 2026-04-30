@@ -99,37 +99,45 @@ router.post('/time-entries/clock-in', async (req, res, next) => {
     const today = new Date(now);
     today.setHours(0, 0, 0, 0);
 
-    // Comprovar si ja hi ha una entrada oberta
-    const openEntry = await prisma.timeEntry.findFirst({
-      where: { userId: req.user.id, clockOut: null },
-    });
-
-    if (openEntry) {
-      return res.status(400).json({
-        error: 'Ja tens una entrada oberta. Fitxa la sortida primer.',
-        openEntry,
+    // Transacció serialitzable per evitar entrades duplicades amb requests concurrents
+    const entry = await prisma.$transaction(async (tx) => {
+      // Comprovar si ja hi ha una entrada oberta
+      const openEntry = await tx.timeEntry.findFirst({
+        where: { userId: req.user.id, clockOut: null },
       });
-    }
 
-    const entry = await prisma.timeEntry.create({
-      data: {
-        userId: req.user.id,
-        date: today,
-        clockIn: now,
-        type,
-        shootingRole: type === 'RODATGE' ? (shootingRole || null) : null,
-        projectName: projectName || null,
-        notes: notes || null,
-        updatedAt: now,
-      },
-      include: {
-        user: { select: { id: true, name: true } },
-      },
+      if (openEntry) {
+        const err = new Error('Ja tens una entrada oberta. Fitxa la sortida primer.');
+        err.statusCode = 400;
+        err.openEntry = openEntry;
+        throw err;
+      }
+
+      return tx.timeEntry.create({
+        data: {
+          userId: req.user.id,
+          date: today,
+          clockIn: now,
+          type,
+          shootingRole: type === 'RODATGE' ? (shootingRole || null) : null,
+          projectName: projectName || null,
+          notes: notes || null,
+          updatedAt: now,
+        },
+        include: {
+          user: { select: { id: true, name: true } },
+        },
+      });
+    }, {
+      isolationLevel: 'Serializable',
     });
 
     logger.info(`Clock-in: ${req.user.name} (${type}${projectName ? ` — ${projectName}` : ''})`);
     res.json(entry);
   } catch (err) {
+    if (err.statusCode === 400) {
+      return res.status(400).json({ error: err.message, openEntry: err.openEntry });
+    }
     next(err);
   }
 });
@@ -143,31 +151,40 @@ router.post('/time-entries/clock-out', async (req, res, next) => {
     const { notes } = req.body;
     const now = new Date();
 
-    // Buscar entrada oberta
-    const openEntry = await prisma.timeEntry.findFirst({
-      where: { userId: req.user.id, clockOut: null },
-    });
+    // Transacció serialitzable per evitar doble clock-out concurrent
+    const { entry, totalMinutes, overtimeMinutes } = await prisma.$transaction(async (tx) => {
+      // Buscar entrada oberta
+      const openEntry = await tx.timeEntry.findFirst({
+        where: { userId: req.user.id, clockOut: null },
+      });
 
-    if (!openEntry) {
-      return res.status(400).json({ error: 'No tens cap entrada oberta.' });
-    }
+      if (!openEntry) {
+        const err = new Error('No tens cap entrada oberta.');
+        err.statusCode = 400;
+        throw err;
+      }
 
-    // Calcular minuts totals i hores extres
-    const totalMinutes = Math.round((now - new Date(openEntry.clockIn)) / 60000);
-    const overtimeMinutes = Math.max(0, totalMinutes - STANDARD_MINUTES);
+      // Calcular minuts totals i hores extres
+      const _totalMinutes = Math.round((now - new Date(openEntry.clockIn)) / 60000);
+      const _overtimeMinutes = Math.max(0, _totalMinutes - STANDARD_MINUTES);
 
-    const entry = await prisma.timeEntry.update({
-      where: { id: openEntry.id },
-      data: {
-        clockOut: now,
-        totalMinutes,
-        overtimeMinutes,
-        overtimeStatus: overtimeMinutes > 0 ? 'PENDENT' : 'APROVADA',
-        notes: notes || openEntry.notes,
-      },
-      include: {
-        user: { select: { id: true, name: true } },
-      },
+      const updated = await tx.timeEntry.update({
+        where: { id: openEntry.id },
+        data: {
+          clockOut: now,
+          totalMinutes: _totalMinutes,
+          overtimeMinutes: _overtimeMinutes,
+          overtimeStatus: _overtimeMinutes > 0 ? 'PENDENT' : 'APROVADA',
+          notes: notes || openEntry.notes,
+        },
+        include: {
+          user: { select: { id: true, name: true } },
+        },
+      });
+
+      return { entry: updated, totalMinutes: _totalMinutes, overtimeMinutes: _overtimeMinutes };
+    }, {
+      isolationLevel: 'Serializable',
     });
 
     const hours = Math.floor(totalMinutes / 60);
@@ -176,6 +193,9 @@ router.post('/time-entries/clock-out', async (req, res, next) => {
 
     res.json(entry);
   } catch (err) {
+    if (err.statusCode === 400) {
+      return res.status(400).json({ error: err.message });
+    }
     next(err);
   }
 });
