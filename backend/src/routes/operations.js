@@ -596,7 +596,7 @@ router.post('/projects/:id/assignments', async (req, res, next) => {
     });
 
     // Notificar l'usuari assignat
-    createNotificationForUser(userId, {
+    await createNotificationForUser(userId, {
       type: 'project_assigned',
       title: 'Assignat a un projecte',
       message: `T'han assignat al projecte`,
@@ -953,35 +953,39 @@ router.post('/incidents', async (req, res, next) => {
       actionTaken,
     } = req.body;
 
-    const incident = await prisma.incident.create({
-      data: {
-        projectId: projectId || null,
-        equipmentId: equipmentId || null,
-        title,
-        description,
-        severity,
-        assignedToId,
-        assignedRoleCode,
-        reportedById: req.user.id,
-        affectsFutureDeparture,
-        affectedProjectId,
-        requiresClientNotification,
-        equipmentBlocked,
-        actionTaken,
-      },
-      include: {
-        project: { select: { id: true, name: true } },
-        equipment: { select: { id: true, name: true } },
-      },
-    });
-
-    // Bloquejar equip si cal
-    if (equipmentBlocked && equipmentId) {
-      await prisma.equipment.update({
-        where: { id: equipmentId },
-        data: { status: 'BLOCKED' },
+    const incident = await prisma.$transaction(async (tx) => {
+      const inc = await tx.incident.create({
+        data: {
+          projectId: projectId || null,
+          equipmentId: equipmentId || null,
+          title,
+          description,
+          severity,
+          assignedToId,
+          assignedRoleCode,
+          reportedById: req.user.id,
+          affectsFutureDeparture,
+          affectedProjectId,
+          requiresClientNotification,
+          equipmentBlocked,
+          actionTaken,
+        },
+        include: {
+          project: { select: { id: true, name: true } },
+          equipment: { select: { id: true, name: true } },
+        },
       });
-    }
+
+      // Bloquejar equip si cal (dins transacció)
+      if (equipmentBlocked && equipmentId) {
+        await tx.equipment.update({
+          where: { id: equipmentId },
+          data: { status: 'BLOCKED' },
+        });
+      }
+
+      return inc;
+    });
 
     // Notificacions segons severitat
     if (severity === 'CRITICAL') {
@@ -1040,25 +1044,28 @@ router.put('/incidents/:id', async (req, res, next) => {
       data.resolvedById = req.user.id;
     }
 
-    // Si es desbloqueja l'equip
     const current = await prisma.incident.findUnique({ where: { id: req.params.id } });
-    if (current?.equipmentBlocked && data.equipmentBlocked === false && current.equipmentId) {
-      await prisma.equipment.update({
-        where: { id: current.equipmentId },
-        data: { status: 'ACTIVE' },
-      });
-    }
-    // Si es bloqueja ara
-    if (!current?.equipmentBlocked && data.equipmentBlocked === true && (data.equipmentId || current?.equipmentId)) {
-      await prisma.equipment.update({
-        where: { id: data.equipmentId || current.equipmentId },
-        data: { status: 'BLOCKED' },
-      });
-    }
 
-    const incident = await prisma.incident.update({
-      where: { id: req.params.id },
-      data,
+    const incident = await prisma.$transaction(async (tx) => {
+      // Si es desbloqueja l'equip
+      if (current?.equipmentBlocked && data.equipmentBlocked === false && current.equipmentId) {
+        await tx.equipment.update({
+          where: { id: current.equipmentId },
+          data: { status: 'ACTIVE' },
+        });
+      }
+      // Si es bloqueja ara
+      if (!current?.equipmentBlocked && data.equipmentBlocked === true && (data.equipmentId || current?.equipmentId)) {
+        await tx.equipment.update({
+          where: { id: data.equipmentId || current.equipmentId },
+          data: { status: 'BLOCKED' },
+        });
+      }
+
+      return tx.incident.update({
+        where: { id: req.params.id },
+        data,
+      });
     });
     res.json(incident);
   } catch (err) {
