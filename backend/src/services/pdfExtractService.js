@@ -750,12 +750,13 @@ function detectDocumentType(text) {
         /\bfactura\s+rectificativa/i,
       ],
     },
-    // Albarans
+    // Albarans — NOMÉS si apareix com a títol/encapçalament del document
+    // "Albarán nºK/15317" dins una factura és una referència, no indica que sigui un albarà
     {
       type: 'delivery',
       label: 'Albarà',
       patterns: [
-        /\balbar[aà][n]?\b/i,
+        /^[\s]*albar[aà]n?\b/im,                          // "Albarán" al principi de línia (títol)
         /\bnota\s+(?:de\s+)?(?:lliurament|entrega|envío)\b/i,
         /\bdelivery\s+note\b/i,
         /\bpacking\s+(?:slip|list)\b/i,
@@ -822,8 +823,10 @@ function detectDocumentType(text) {
       if (regex.test(header)) {
         // Verificar que NO hi ha "factura" com a títol principal (que sobreescriuria)
         // Un rebut pot mencionar "Número de factura" dins la taula, però el títol és "RECIBO"
-        const hasInvoiceTitle = /\b(?:factura|invoice)\b/i.test(header.substring(0, 500));
-        const isFirstMention = header.search(regex) < header.search(/\b(?:factura|invoice)\b/i);
+        // "NF", "Nº FACTURA", "Fra.", "Ftra." també indiquen factura
+        const invoicePattern = /\b(?:factura|invoice|fra\.|ftra\.)\b|(?:^|\s)N[ºF]\s*\d/im;
+        const hasInvoiceTitle = invoicePattern.test(header.substring(0, 500));
+        const isFirstMention = header.search(regex) < header.search(invoicePattern);
 
         if (!hasInvoiceTitle || isFirstMention) {
           logger.debug(`detectDocumentType: ${group.type} (${group.label}) — pattern: ${regex}`);
@@ -834,7 +837,8 @@ function detectDocumentType(text) {
   }
 
   // Si trobem "factura" o "invoice" explícitament
-  if (/\b(?:factura|invoice|fra\.)\b/i.test(header)) {
+  // "NF" seguit de número és un codi de factura habitual (ex: "NF 260348")
+  if (/\b(?:factura|invoice|fra\.|ftra\.)\b|(?:^|\s)NF\s+\d/im.test(header)) {
     return { type: 'invoice', confidence: 0.9, label: 'Factura' };
   }
 
