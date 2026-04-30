@@ -1956,6 +1956,27 @@ router.post('/absences', async (req, res, next) => {
     });
 
     logger.info(`Absència creada: ${absence.user.name} ${type} ${startDate}→${endDate} [${absence.status}]`);
+
+    // Notificar admin per mail si és una sol·licitud de vacances (no-admin)
+    if (type === 'VACANCES' && !isAdmin) {
+      try {
+        const zohoMail = require('../services/zohoMailService');
+        const startStr = new Date(startDate).toLocaleDateString('ca-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        const endStr = new Date(endDate).toLocaleDateString('ca-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        await zohoMail.sendEmail({
+          to: 'admin@seitocamera.com',
+          subject: `Sol·licitud de vacances: ${absence.user.name} (${startStr} — ${endStr})`,
+          body: `${absence.user.name} ha sol·licitat vacances.\n\n` +
+            `Dates: ${startStr} — ${endStr}\n` +
+            `Notes: ${notes || '—'}\n\n` +
+            `Entra al panell d'administració per aprovar o rebutjar la sol·licitud.`,
+        });
+        logger.info(`Mail enviat a admin@seitocamera.com per vacances de ${absence.user.name}`);
+      } catch (mailErr) {
+        logger.warn(`No s'ha pogut enviar mail de vacances: ${mailErr.message}`);
+      }
+    }
+
     res.status(201).json(absence);
   } catch (err) {
     next(err);
@@ -2024,6 +2045,26 @@ router.put('/absences/:id/approve', async (req, res, next) => {
     });
 
     logger.info(`Absència aprovada: ${absence.user.name} ${absence.type} ${absence.startDate}→${absence.endDate}`);
+
+    // Notificar l'usuari per mail si té email
+    if (absence.type === 'VACANCES') {
+      try {
+        const userFull = await prisma.user.findUnique({ where: { id: absence.userId }, select: { email: true } });
+        if (userFull?.email) {
+          const zohoMail = require('../services/zohoMailService');
+          const startStr = new Date(absence.startDate).toLocaleDateString('ca-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
+          const endStr = new Date(absence.endDate).toLocaleDateString('ca-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
+          await zohoMail.sendEmail({
+            to: userFull.email,
+            subject: `Vacances aprovades: ${startStr} — ${endStr}`,
+            body: `Les teves vacances han estat aprovades.\n\nDates: ${startStr} — ${endStr}\nAprovades per: ${absence.approvedBy?.name || 'Administrador'}`,
+          });
+        }
+      } catch (mailErr) {
+        logger.warn(`No s'ha pogut enviar mail d'aprovació: ${mailErr.message}`);
+      }
+    }
+
     res.json(absence);
   } catch (err) {
     next(err);
@@ -2053,6 +2094,28 @@ router.put('/absences/:id/reject', async (req, res, next) => {
     });
 
     logger.info(`Absència rebutjada: ${absence.user.name} ${absence.type}`);
+
+    // Notificar l'usuari per mail si té email
+    if (absence.type === 'VACANCES') {
+      try {
+        const userFull = await prisma.user.findUnique({ where: { id: absence.userId }, select: { email: true } });
+        if (userFull?.email) {
+          const zohoMail = require('../services/zohoMailService');
+          const startStr = new Date(absence.startDate).toLocaleDateString('ca-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
+          const endStr = new Date(absence.endDate).toLocaleDateString('ca-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
+          await zohoMail.sendEmail({
+            to: userFull.email,
+            subject: `Vacances rebutjades: ${startStr} — ${endStr}`,
+            body: `La teva sol·licitud de vacances ha estat rebutjada.\n\nDates: ${startStr} — ${endStr}\n` +
+              `Motiu: ${req.body.reason || 'No especificat'}\n\n` +
+              `Contacta amb l'administrador si tens dubtes.`,
+          });
+        }
+      } catch (mailErr) {
+        logger.warn(`No s'ha pogut enviar mail de rebuig: ${mailErr.message}`);
+      }
+    }
+
     res.json(absence);
   } catch (err) {
     next(err);
