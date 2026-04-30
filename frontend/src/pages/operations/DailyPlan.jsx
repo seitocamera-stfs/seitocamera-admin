@@ -15,30 +15,18 @@ import api from '../../lib/api';
 const STATUS_LABELS = {
   PENDING_PREP: 'Pendent preparar',
   IN_PREPARATION: 'En preparació',
-  PENDING_TECH_REVIEW: 'Revisió tècnica',
-  PENDING_FINAL_CHECK: 'Validació final',
   READY: 'Preparat',
-  PENDING_LOAD: 'Pendent càrrega',
   OUT: 'Sortit',
   RETURNED: 'Retornat',
-  RETURN_REVIEW: 'Revisió devolució',
-  WITH_INCIDENT: 'Amb incidència',
-  EQUIPMENT_BLOCKED: 'Material bloquejat',
   CLOSED: 'Tancat',
 };
 
 const STATUS_COLORS = {
   PENDING_PREP: 'bg-gray-100 text-gray-700',
   IN_PREPARATION: 'bg-blue-100 text-blue-700',
-  PENDING_TECH_REVIEW: 'bg-amber-100 text-amber-700',
-  PENDING_FINAL_CHECK: 'bg-orange-100 text-orange-700',
   READY: 'bg-green-100 text-green-700',
-  PENDING_LOAD: 'bg-teal-100 text-teal-700',
   OUT: 'bg-indigo-100 text-indigo-700',
   RETURNED: 'bg-purple-100 text-purple-700',
-  RETURN_REVIEW: 'bg-yellow-100 text-yellow-700',
-  WITH_INCIDENT: 'bg-red-100 text-red-700',
-  EQUIPMENT_BLOCKED: 'bg-red-200 text-red-800',
   CLOSED: 'bg-gray-200 text-gray-600',
 };
 

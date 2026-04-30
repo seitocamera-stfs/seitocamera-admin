@@ -811,18 +811,12 @@ enum OperationalRole {
 }
 
 enum ProjectStatus {
-  PENDING_PREP           // Pendent de preparar
-  IN_PREPARATION         // En preparació
-  PENDING_TECH_REVIEW    // Pendent de revisió tècnica
-  PENDING_FINAL_CHECK    // Pendent de validació final
-  READY                  // Preparat
-  PENDING_LOAD           // Pendent de càrrega
-  OUT                    // Sortit
-  RETURNED               // Retornat
-  RETURN_REVIEW          // En revisió de devolució
-  WITH_INCIDENT          // Amb incidència
-  EQUIPMENT_BLOCKED      // Material bloquejat
-  CLOSED                 // Tancat
+  PENDING_PREP           // Pendent de preparar (Rentman: option/quotation/draft)
+  IN_PREPARATION         // En preparació (Rentman: confirmado)
+  READY                  // Preparat (Rentman: preparado)
+  OUT                    // Sortit (Rentman: en localización / retrasado / esperado de regreso)
+  RETURNED               // Retornat (Rentman: retornado)
+  CLOSED                 // Tancat (Rentman: closed)
 }
 
 enum IncidentStatus {

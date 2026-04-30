@@ -433,18 +433,6 @@ router.put('/projects/:id/status', async (req, res, next) => {
       },
     });
 
-    // Notificacions automàtiques per canvis d'estat rellevants
-    if (status === 'PENDING_TECH_REVIEW') {
-      await createNotificationForRole('TECH_LEAD', {
-        type: 'tech_review_needed',
-        title: 'Revisió tècnica necessària',
-        message: `${current.name} requereix validació tècnica`,
-        entityType: 'rental_project',
-        entityId: req.params.id,
-        priority: 'high',
-      });
-    }
-
     res.json(project);
   } catch (err) {
     next(err);
@@ -1063,7 +1051,7 @@ router.get('/daily/:date', async (req, res, next) => {
     const returnsToday = await prisma.rentalProject.findMany({
       where: {
         returnDate: { gte: date, lt: nextDay },
-        status: { in: ['OUT', 'RETURNED', 'RETURN_REVIEW'] },
+        status: { in: ['OUT', 'RETURNED'] },
       },
       orderBy: { returnTime: 'asc' },
       include: {
@@ -1851,7 +1839,7 @@ router.get('/dashboard', async (req, res, next) => {
       prisma.rentalProject.findMany({
         where: {
           returnDate: { gte: today, lt: new Date(today.getTime() + 2 * 24 * 3600 * 1000) },
-          status: { in: ['OUT', 'RETURNED', 'RETURN_REVIEW'] },
+          status: { in: ['OUT', 'RETURNED'] },
         },
         select: {
           id: true, name: true, clientName: true, status: true,

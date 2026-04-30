@@ -15,12 +15,10 @@ import api from '../lib/api';
 const STATUS_CONFIG = {
   PENDING_PREP:        { label: 'Pendent preparar',   color: 'bg-gray-100 text-gray-600' },
   IN_PREPARATION:      { label: 'En preparació',      color: 'bg-blue-50 text-blue-700' },
-  PENDING_TECH_REVIEW: { label: 'Revisió tècnica',    color: 'bg-amber-50 text-amber-700' },
-  PENDING_FINAL_CHECK: { label: 'Validació final',    color: 'bg-orange-50 text-orange-700' },
   READY:               { label: 'Preparat',           color: 'bg-emerald-50 text-emerald-700' },
   OUT:                 { label: 'Sortit',             color: 'bg-violet-50 text-violet-700' },
   RETURNED:            { label: 'Retornat',           color: 'bg-purple-50 text-purple-700' },
-  RETURN_REVIEW:       { label: 'Revisió devolució',  color: 'bg-yellow-50 text-yellow-700' },
+  CLOSED:              { label: 'Tancat',             color: 'bg-gray-200 text-gray-500' },
 };
 
 const CATEGORY_LABELS = {

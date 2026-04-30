@@ -435,9 +435,7 @@ async function syncOneProject(rmProject) {
     // Només actualitzem l'estat si encara no s'ha tocat internament
     // (si l'estat intern ha avançat més enllà del mapeig Rentman, no el retrocedim)
     const internalStatusOrder = [
-      'PENDING_PREP', 'IN_PREPARATION', 'PENDING_TECH_REVIEW', 'PENDING_FINAL_CHECK',
-      'READY', 'PENDING_LOAD', 'OUT', 'RETURNED', 'RETURN_REVIEW',
-      'WITH_INCIDENT', 'EQUIPMENT_BLOCKED', 'CLOSED',
+      'PENDING_PREP', 'IN_PREPARATION', 'READY', 'OUT', 'RETURNED', 'CLOSED',
     ];
     const currentIdx = internalStatusOrder.indexOf(existing.status);
     const newIdx = internalStatusOrder.indexOf(status);

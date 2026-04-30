@@ -15,15 +15,9 @@ import Modal from '../../components/shared/Modal';
 const STATUS_CONFIG = {
   PENDING_PREP:        { label: 'Pendent preparar',    color: 'bg-gray-100 text-gray-700',    kanban: true },
   IN_PREPARATION:      { label: 'En preparació',       color: 'bg-blue-100 text-blue-700',    kanban: true },
-  PENDING_TECH_REVIEW: { label: 'Revisió tècnica',     color: 'bg-amber-100 text-amber-700',  kanban: true },
-  PENDING_FINAL_CHECK: { label: 'Validació final',     color: 'bg-orange-100 text-orange-700', kanban: true },
   READY:               { label: 'Preparat',            color: 'bg-green-100 text-green-700',  kanban: true },
-  PENDING_LOAD:        { label: 'Pendent càrrega',     color: 'bg-teal-100 text-teal-700',    kanban: false },
   OUT:                 { label: 'Sortit',              color: 'bg-indigo-100 text-indigo-700', kanban: true },
-  RETURNED:            { label: 'Retornat',            color: 'bg-purple-100 text-purple-700', kanban: false },
-  RETURN_REVIEW:       { label: 'Revisió devolució',   color: 'bg-yellow-100 text-yellow-700', kanban: true },
-  WITH_INCIDENT:       { label: 'Amb incidència',      color: 'bg-red-100 text-red-700',      kanban: false },
-  EQUIPMENT_BLOCKED:   { label: 'Material bloquejat',  color: 'bg-red-200 text-red-800',      kanban: false },
+  RETURNED:            { label: 'Retornat',            color: 'bg-purple-100 text-purple-700', kanban: true },
   CLOSED:              { label: 'Tancat',              color: 'bg-gray-200 text-gray-600',    kanban: false },
 };
 
