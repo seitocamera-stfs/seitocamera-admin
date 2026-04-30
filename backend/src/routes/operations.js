@@ -1196,7 +1196,8 @@ router.get('/calendar/:year/:month', async (req, res, next) => {
         priority: true,
         clientName: true,
         rentmanProjectId: true,
-        leadUser: { select: { id: true, name: true } },
+        leadUser: { select: { id: true, name: true, color: true } },
+        assignments: { select: { user: { select: { id: true, name: true, color: true } } } },
       },
       orderBy: [{ priority: 'desc' }, { departureDate: 'asc' }],
     });
@@ -1208,13 +1209,39 @@ router.get('/calendar/:year/:month', async (req, res, next) => {
       },
       include: {
         project: { select: { id: true, name: true } },
-        assignedTo: { select: { id: true, name: true } },
+        assignedTo: { select: { id: true, name: true, color: true } },
         createdBy: { select: { id: true, name: true } },
       },
       orderBy: { dueAt: 'asc' },
     });
 
-    res.json({ projects, tasks, year, month: month + 1 });
+    // Transports del mes (logística)
+    const transports = await prisma.transport.findMany({
+      where: {
+        OR: [
+          { dataCarrega: { gte: startDate, lt: endDate } },
+          { dataEntrega: { gte: startDate, lt: endDate } },
+        ],
+        estat: { not: 'Cancel·lat' },
+      },
+      select: {
+        id: true,
+        projecte: true,
+        tipusServei: true,
+        origen: true,
+        desti: true,
+        dataCarrega: true,
+        dataEntrega: true,
+        horaRecollida: true,
+        horaEntregaEstimada: true,
+        estat: true,
+        conductor: { select: { nom: true } },
+        empresa: { select: { nom: true } },
+      },
+      orderBy: { dataCarrega: 'asc' },
+    });
+
+    res.json({ projects, tasks, transports, year, month: month + 1 });
   } catch (err) {
     next(err);
   }

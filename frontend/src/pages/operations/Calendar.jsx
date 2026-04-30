@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import {
   CalendarDays, ChevronLeft, ChevronRight,
-  Loader2,
+  Loader2, Truck,
 } from 'lucide-react';
 import { useApiGet } from '../../hooks/useApi';
 
@@ -9,7 +9,7 @@ import { useApiGet } from '../../hooks/useApi';
 // Constants
 // ===========================================
 
-const PROJECT_COLORS = [
+const FALLBACK_COLORS = [
   '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444',
   '#06b6d4', '#ec4899', '#14b8a6', '#f97316', '#6366f1',
   '#84cc16', '#e11d48', '#0ea5e9', '#a855f7', '#22c55e',
@@ -21,42 +21,45 @@ const MONTH_NAMES = [
   'Juliol', 'Agost', 'Setembre', 'Octubre', 'Novembre', 'Desembre',
 ];
 
-const BAR_H = 18;  // px per barra
-const BAR_GAP = 2; // px entre barres
-const BAR_PAD = 2; // px padding superior
+const BAR_H = 18;
+const BAR_GAP = 2;
+const BAR_PAD = 2;
 
 function toDateStr(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function dateToDayNum(dateStr, year, month) {
+function dateToDayIdx(dateStr, calendarDays) {
   const d = new Date(dateStr);
-  if (d.getFullYear() < year || (d.getFullYear() === year && d.getMonth() < month - 1)) return 0;
-  if (d.getFullYear() > year || (d.getFullYear() === year && d.getMonth() > month - 1)) return 32;
-  return d.getDate();
+  const day = d.getDate();
+  const month = d.getMonth();
+  const year = d.getFullYear();
+  for (let i = 0; i < calendarDays.length; i++) {
+    const cd = calendarDays[i];
+    if (cd && cd.day === day && cd.month === month && cd.year === year) return i;
+  }
+  return -1;
 }
 
 /**
- * Distribueix barres en lanes (files) per un rang de dies concret.
- * Retorna un Map<barId, laneIndex> i el nombre total de lanes.
+ * Distribueix barres en lanes (files) per un rang d'índexos concret.
  */
-function assignLanesForRange(bars, rangeStart, rangeEnd) {
-  // Filtrar barres que toquen aquest rang
+function assignLanesForRange(bars, rangeStartIdx, rangeEndIdx) {
   const relevant = bars
-    .filter((b) => !(b.startDay > rangeEnd || b.endDay < rangeStart))
-    .sort((a, b) => a.startDay - b.startDay || (b.endDay - b.startDay) - (a.endDay - a.startDay));
+    .filter((b) => !(b.startIdx > rangeEndIdx || b.endIdx < rangeStartIdx))
+    .sort((a, b) => a.startIdx - b.startIdx || (b.endIdx - b.startIdx) - (a.endIdx - a.startIdx));
 
-  const lanes = []; // Array d'arrays: cada lane conté barres sense solapament
+  const lanes = [];
   const barLane = new Map();
 
   relevant.forEach((bar) => {
     let placed = false;
     for (let i = 0; i < lanes.length; i++) {
       const overlaps = lanes[i].some((b) => {
-        const bStart = Math.max(b.startDay, rangeStart);
-        const bEnd = Math.min(b.endDay, rangeEnd);
-        const barStart = Math.max(bar.startDay, rangeStart);
-        const barEnd = Math.min(bar.endDay, rangeEnd);
+        const bStart = Math.max(b.startIdx, rangeStartIdx);
+        const bEnd = Math.min(b.endIdx, rangeEndIdx);
+        const barStart = Math.max(bar.startIdx, rangeStartIdx);
+        const barEnd = Math.min(bar.endIdx, rangeEndIdx);
         return !(barStart > bEnd || barEnd < bStart);
       });
       if (!overlaps) {
@@ -73,6 +76,19 @@ function assignLanesForRange(bars, rangeStart, rangeEnd) {
   });
 
   return { barLane, totalLanes: lanes.length };
+}
+
+/**
+ * Obté el color del projecte basat en el leadUser o primer assignat.
+ */
+function getProjectColor(project, fallbackIdx) {
+  // Prioritat: leadUser.color → primer assignat amb color → fallback
+  if (project.leadUser?.color) return project.leadUser.color;
+  if (project.assignments?.length > 0) {
+    const withColor = project.assignments.find(a => a.user?.color);
+    if (withColor) return withColor.user.color;
+  }
+  return FALLBACK_COLORS[fallbackIdx % FALLBACK_COLORS.length];
 }
 
 // ===========================================
@@ -102,36 +118,66 @@ export default function Calendar() {
 
   const daysInMonth = new Date(year, month, 0).getDate();
 
+  // Primer dia de la setmana (dl=0)
   const firstDow = useMemo(() => {
     const dow = new Date(year, month - 1, 1).getDay();
     return dow === 0 ? 6 : dow - 1;
   }, [year, month]);
 
+  // Construir calendarDays: dies del mes anterior (padding) + mes actual + dies del mes següent (padding)
   const calendarDays = useMemo(() => {
     const days = [];
-    for (let i = 0; i < firstDow; i++) days.push(null);
-    for (let d = 1; d <= daysInMonth; d++) days.push(d);
+
+    // Padding inici: dies del mes anterior
+    if (firstDow > 0) {
+      const prevMonthDays = new Date(year, month - 1, 0).getDate();
+      const prevMonth = month - 2; // 0-based
+      const prevYear = prevMonth < 0 ? year - 1 : year;
+      const actualPrevMonth = prevMonth < 0 ? 11 : prevMonth;
+      for (let i = firstDow - 1; i >= 0; i--) {
+        days.push({ day: prevMonthDays - i, month: actualPrevMonth, year: prevYear, isCurrentMonth: false });
+      }
+    }
+
+    // Dies del mes actual
+    for (let d = 1; d <= daysInMonth; d++) {
+      days.push({ day: d, month: month - 1, year, isCurrentMonth: true });
+    }
+
+    // Padding final: dies del mes següent fins completar files de 7
+    const remaining = days.length % 7;
+    if (remaining > 0) {
+      const nextMonth = month; // 0-based
+      const nextYear = nextMonth > 11 ? year + 1 : year;
+      const actualNextMonth = nextMonth > 11 ? 0 : nextMonth;
+      const toFill = 7 - remaining;
+      for (let d = 1; d <= toFill; d++) {
+        days.push({ day: d, month: actualNextMonth, year: nextYear, isCurrentMonth: false });
+      }
+    }
+
     return days;
-  }, [firstDow, daysInMonth]);
+  }, [firstDow, daysInMonth, year, month]);
 
   const totalRows = Math.ceil(calendarDays.length / 7);
 
-  // Preparar barres i tasques
-  const { projectBars, tasksByDay } = useMemo(() => {
+  // Preparar barres, tasques i transports
+  const { projectBars, tasksByIdx, transportsByIdx } = useMemo(() => {
     const bars = [];
-    const tByDay = {};
+    const tByIdx = {};
+    const trByIdx = {};
 
     if (data?.projects) {
       data.projects.forEach((p, idx) => {
-        const startDay = Math.max(1, dateToDayNum(p.checkDate || p.departureDate, year, month));
-        const endDay = Math.min(daysInMonth, dateToDayNum(p.returnDate, year, month));
-        if (startDay > daysInMonth || endDay < 1) return;
+        const startIdx = dateToDayIdx(p.checkDate || p.departureDate, calendarDays);
+        const endIdx = dateToDayIdx(p.returnDate, calendarDays);
+        if (startIdx === -1 || endIdx === -1 || startIdx > endIdx) return;
 
         bars.push({
           ...p,
-          startDay: Math.max(startDay, 1),
-          endDay: Math.min(endDay, daysInMonth),
-          color: PROJECT_COLORS[idx % PROJECT_COLORS.length],
+          startIdx,
+          endIdx,
+          color: getProjectColor(p, idx),
         });
       });
     }
@@ -139,31 +185,47 @@ export default function Calendar() {
     if (data?.tasks) {
       data.tasks.forEach((t) => {
         if (!t.dueAt) return;
-        const td = new Date(t.dueAt);
-        if (td.getMonth() !== month - 1 || td.getFullYear() !== year) return;
-        const d = td.getDate();
-        if (!tByDay[d]) tByDay[d] = [];
-        tByDay[d].push(t);
+        const idx = dateToDayIdx(t.dueAt, calendarDays);
+        if (idx === -1) return;
+        if (!tByIdx[idx]) tByIdx[idx] = [];
+        tByIdx[idx].push(t);
       });
     }
 
-    return { projectBars: bars, tasksByDay: tByDay };
-  }, [data, year, month, daysInMonth]);
+    if (data?.transports) {
+      data.transports.forEach((tr) => {
+        // Mostrar al dia de càrrega
+        if (tr.dataCarrega) {
+          const idx = dateToDayIdx(tr.dataCarrega, calendarDays);
+          if (idx !== -1) {
+            if (!trByIdx[idx]) trByIdx[idx] = [];
+            trByIdx[idx].push({ ...tr, displayType: 'carrega' });
+          }
+        }
+        // Si data entrega diferent, mostrar també
+        if (tr.dataEntrega && tr.dataEntrega !== tr.dataCarrega) {
+          const idx = dateToDayIdx(tr.dataEntrega, calendarDays);
+          if (idx !== -1) {
+            if (!trByIdx[idx]) trByIdx[idx] = [];
+            trByIdx[idx].push({ ...tr, displayType: 'entrega' });
+          }
+        }
+      });
+    }
 
-  // Calcular lanes per fila (independent per cada setmana)
+    return { projectBars: bars, tasksByIdx: tByIdx, transportsByIdx: trByIdx };
+  }, [data, calendarDays]);
+
+  // Calcular lanes per fila
   const rowLaneData = useMemo(() => {
     return Array.from({ length: totalRows }).map((_, rowIdx) => {
       const rowStart = rowIdx * 7;
-      const rowDays = calendarDays.slice(rowStart, rowStart + 7);
-      const rowFirstDay = rowDays.find((d) => d !== null) || 0;
-      const rowLastDay = [...rowDays].reverse().find((d) => d !== null) || 0;
+      const rowEnd = rowStart + 6;
 
-      if (rowFirstDay === 0) return { barLane: new Map(), totalLanes: 0, rowFirstDay, rowLastDay, rowDays };
-
-      const { barLane, totalLanes } = assignLanesForRange(projectBars, rowFirstDay, rowLastDay);
-      return { barLane, totalLanes, rowFirstDay, rowLastDay, rowDays };
+      const { barLane, totalLanes } = assignLanesForRange(projectBars, rowStart, rowEnd);
+      return { barLane, totalLanes, rowStart, rowEnd };
     });
-  }, [projectBars, calendarDays, totalRows]);
+  }, [projectBars, totalRows]);
 
   const todayStr = toDateStr(today);
 
@@ -209,62 +271,63 @@ export default function Calendar() {
             </div>
 
             {/* Files del calendari */}
-            {rowLaneData.map(({ barLane, totalLanes, rowFirstDay, rowLastDay, rowDays }, rowIdx) => {
-              // Altura de la zona de barres: adaptada al nombre de lanes d'aquesta fila
+            {rowLaneData.map(({ barLane, totalLanes, rowStart, rowEnd }, rowIdx) => {
               const barsHeight = totalLanes > 0
                 ? totalLanes * (BAR_H + BAR_GAP) + BAR_PAD
-                : 8; // mínim si no hi ha barres
+                : 8;
 
-              // Comprovar si hi ha tasques en aquesta fila
-              const hasRowTasks = rowDays.some((d) => d && tasksByDay[d]);
+              const rowDays = calendarDays.slice(rowStart, rowStart + 7);
+              const hasRowTasks = rowDays.some((_, colIdx) => tasksByIdx[rowStart + colIdx]);
+              const hasRowTransports = rowDays.some((_, colIdx) => transportsByIdx[rowStart + colIdx]);
 
               return (
                 <div key={rowIdx}>
                   {/* Números de dia */}
                   <div className="grid grid-cols-7">
-                    {rowDays.map((day, colIdx) => {
-                      if (day === null) {
-                        return <div key={`empty-${rowIdx}-${colIdx}`} className="h-6 border-r bg-muted/20" />;
-                      }
-                      const dayStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                    {rowDays.map((cd, colIdx) => {
+                      const globalIdx = rowStart + colIdx;
+                      const dayStr = cd ? `${cd.year}-${String(cd.month + 1).padStart(2, '0')}-${String(cd.day).padStart(2, '0')}` : '';
                       const isToday = dayStr === todayStr;
                       return (
-                        <div key={day} className={`h-6 border-r flex items-center px-1 ${isToday ? 'bg-blue-50' : ''}`}>
-                          <span className={`text-xs font-medium ${isToday ? 'bg-primary text-primary-foreground w-5 h-5 rounded-full flex items-center justify-center text-[10px]' : 'text-muted-foreground'}`}>
-                            {day}
+                        <div key={globalIdx} className={`h-6 border-r flex items-center px-1 ${!cd?.isCurrentMonth ? 'bg-muted/30' : ''} ${isToday ? 'bg-blue-50' : ''}`}>
+                          <span className={`text-xs font-medium ${
+                            isToday
+                              ? 'bg-primary text-primary-foreground w-5 h-5 rounded-full flex items-center justify-center text-[10px]'
+                              : cd?.isCurrentMonth
+                                ? 'text-muted-foreground'
+                                : 'text-muted-foreground/40'
+                          }`}>
+                            {cd?.day}
                           </span>
                         </div>
                       );
                     })}
                   </div>
 
-                  {/* Zona de barres — altura dinàmica per fila */}
+                  {/* Zona de barres */}
                   <div className="relative" style={{ height: `${barsHeight}px` }}>
-                    {/* Línies verticals */}
                     <div className="absolute inset-0 grid grid-cols-7 pointer-events-none">
-                      {rowDays.map((day, colIdx) => (
-                        <div key={colIdx} className={`border-r ${day === null ? 'bg-muted/20' : ''}`} />
+                      {rowDays.map((cd, colIdx) => (
+                        <div key={colIdx} className={`border-r ${!cd?.isCurrentMonth ? 'bg-muted/30' : ''}`} />
                       ))}
                     </div>
 
-                    {/* Barres dels projectes */}
                     {projectBars.map((bar) => {
                       const laneIdx = barLane.get(bar.id);
                       if (laneIdx === undefined) return null;
 
-                      const barRowStart = Math.max(bar.startDay, rowFirstDay);
-                      const barRowEnd = Math.min(bar.endDay, rowLastDay);
+                      const barRowStart = Math.max(bar.startIdx, rowStart);
+                      const barRowEnd = Math.min(bar.endIdx, rowEnd);
                       if (barRowStart > barRowEnd) return null;
 
-                      const startColIdx = rowDays.indexOf(barRowStart);
-                      const endColIdx = rowDays.indexOf(barRowEnd);
-                      if (startColIdx === -1 || endColIdx === -1) return null;
+                      const startColIdx = barRowStart - rowStart;
+                      const endColIdx = barRowEnd - rowStart;
 
                       const leftPct = (startColIdx / 7) * 100;
                       const widthPct = ((endColIdx - startColIdx + 1) / 7) * 100;
 
-                      const isStart = bar.startDay >= rowFirstDay && bar.startDay <= rowLastDay;
-                      const isEnd = bar.endDay >= rowFirstDay && bar.endDay <= rowLastDay;
+                      const isStart = bar.startIdx >= rowStart && bar.startIdx <= rowEnd;
+                      const isEnd = bar.endIdx >= rowStart && bar.endIdx <= rowEnd;
 
                       return (
                         <div
@@ -282,7 +345,7 @@ export default function Calendar() {
                               : '0',
                             opacity: 0.9,
                           }}
-                          title={`${bar.name}${bar.clientName ? ` — ${bar.clientName}` : ''}`}
+                          title={`${bar.name}${bar.clientName ? ` — ${bar.clientName}` : ''}${bar.leadUser?.name ? ` (${bar.leadUser.name})` : ''}`}
                         >
                           <span
                             className="text-[9px] text-white font-medium px-1.5 whitespace-nowrap block truncate drop-shadow-sm"
@@ -298,13 +361,15 @@ export default function Calendar() {
                   {/* Tasques */}
                   {hasRowTasks && (
                     <div className="grid grid-cols-7">
-                      {rowDays.map((day, colIdx) => {
-                        if (!day || !tasksByDay[day]) {
-                          return <div key={`t-${rowIdx}-${colIdx}`} className="border-r min-h-0" />;
+                      {rowDays.map((cd, colIdx) => {
+                        const globalIdx = rowStart + colIdx;
+                        const tasks = tasksByIdx[globalIdx];
+                        if (!tasks) {
+                          return <div key={`t-${globalIdx}`} className={`border-r min-h-0 ${!cd?.isCurrentMonth ? 'bg-muted/30' : ''}`} />;
                         }
                         return (
-                          <div key={`t-${rowIdx}-${colIdx}`} className="border-r px-0.5 pb-0.5">
-                            {tasksByDay[day].map((t) => (
+                          <div key={`t-${globalIdx}`} className={`border-r px-0.5 pb-0.5 ${!cd?.isCurrentMonth ? 'bg-muted/30' : ''}`}>
+                            {tasks.map((t) => (
                               <div
                                 key={t.id}
                                 className={`text-[8px] leading-tight px-1 py-0.5 rounded truncate border mb-0.5 ${
@@ -323,7 +388,36 @@ export default function Calendar() {
                     </div>
                   )}
 
-                  {/* Separador de fila */}
+                  {/* Transports */}
+                  {hasRowTransports && (
+                    <div className="grid grid-cols-7">
+                      {rowDays.map((cd, colIdx) => {
+                        const globalIdx = rowStart + colIdx;
+                        const transports = transportsByIdx[globalIdx];
+                        if (!transports) {
+                          return <div key={`tr-${globalIdx}`} className={`border-r min-h-0 ${!cd?.isCurrentMonth ? 'bg-muted/30' : ''}`} />;
+                        }
+                        return (
+                          <div key={`tr-${globalIdx}`} className={`border-r px-0.5 pb-0.5 ${!cd?.isCurrentMonth ? 'bg-muted/30' : ''}`}>
+                            {transports.map((tr, i) => (
+                              <div
+                                key={`${tr.id}-${tr.displayType}-${i}`}
+                                className="text-[8px] leading-tight px-1 py-0.5 rounded truncate border mb-0.5 bg-sky-50 border-sky-200 text-sky-800 flex items-center gap-0.5"
+                                title={`${tr.displayType === 'entrega' ? 'Entrega' : 'Càrrega'}: ${tr.projecte || 'Transport'}${tr.origen ? ` — ${tr.origen}` : ''}${tr.desti ? ` → ${tr.desti}` : ''}${tr.horaRecollida ? ` (${tr.horaRecollida})` : ''}`}
+                              >
+                                <Truck size={7} className="shrink-0" />
+                                <span className="truncate">
+                                  {tr.horaRecollida ? `${tr.horaRecollida} ` : ''}{tr.projecte || tr.desti || 'Transport'}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Separador */}
                   <div className="grid grid-cols-7">
                     {rowDays.map((_, colIdx) => (
                       <div key={`sep-${colIdx}`} className="border-r border-b h-0" />
@@ -335,16 +429,25 @@ export default function Calendar() {
           </div>
 
           {/* Llegenda */}
-          {projectBars.length > 0 && (
-            <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
-              {projectBars.map((bar) => (
-                <span key={bar.id} className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded" style={{ backgroundColor: bar.color }} />
-                  {bar.name}
-                </span>
-              ))}
-            </div>
-          )}
+          <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+            {projectBars.length > 0 && (
+              <div className="flex items-center gap-3 flex-wrap">
+                {projectBars.map((bar) => (
+                  <span key={bar.id} className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded" style={{ backgroundColor: bar.color }} />
+                    {bar.name}
+                    {bar.leadUser?.name && <span className="text-muted-foreground/60">({bar.leadUser.name})</span>}
+                  </span>
+                ))}
+              </div>
+            )}
+            {data?.transports?.length > 0 && (
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded bg-sky-200 border border-sky-300" />
+                Transports
+              </span>
+            )}
+          </div>
         </>
       )}
     </div>
