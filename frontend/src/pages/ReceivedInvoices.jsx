@@ -123,6 +123,7 @@ function EquipmentSection({ invoiceId }) {
 
 export default function ReceivedInvoices() {
   const [search, setSearch] = useState('');
+  const [yearFilter, setYearFilter] = useState(new Date().getFullYear());
   const [statusFilter, setStatusFilter] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
   const [paidFilter, setPaidFilter] = useState('');
@@ -166,6 +167,8 @@ export default function ReceivedInvoices() {
     status: statusFilter || undefined,
     source: sourceFilter || undefined,
     paid: paidFilter || undefined,
+    dateFrom: yearFilter ? `${yearFilter}-01-01` : undefined,
+    dateTo: yearFilter ? `${yearFilter}-12-31` : undefined,
     deleted: showTrash ? 'true' : undefined,
     alerts: showAlerts ? 'true' : undefined,
     sortBy: sortBy || undefined,
@@ -813,6 +816,12 @@ export default function ReceivedInvoices() {
           <option value="">Pagament: totes</option>
           <option value="true">Pagades</option>
           <option value="false">No pagades</option>
+        </select>
+        <select value={yearFilter} onChange={(e) => { setYearFilter(e.target.value ? parseInt(e.target.value) : ''); setPage(1); clearSelection(); }} className="rounded-md border bg-background px-3 py-2 text-sm font-medium">
+          <option value="">Tots els anys</option>
+          {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map(y => (
+            <option key={y} value={y}>{y}</option>
+          ))}
         </select>
       </div>
 
