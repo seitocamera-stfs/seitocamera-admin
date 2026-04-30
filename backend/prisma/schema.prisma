@@ -58,6 +58,10 @@ model User {
   createdTasks          ProjectTask[]     @relation("TaskCreator")
   assignedTasks         ProjectTask[]     @relation("TaskAssignee")
   completedTasks        ProjectTask[]     @relation("TaskCompleter")
+  checklistsCompleted   TaskChecklistItem[] @relation("ChecklistCompleter")
+  createdTemplates      TaskTemplate[]    @relation("TemplateCreator")
+  taskComments          TaskComment[]     @relation("TaskCommenter")
+  taskActivities        TaskActivity[]    @relation("TaskActivityUser")
   agentRules            AgentRule[]       @relation("agentRulesCreated")
   absences              StaffAbsence[]    @relation("AbsenceUser")
   approvedAbsences      StaffAbsence[]    @relation("AbsenceApprover")
@@ -851,6 +855,26 @@ enum TaskCategory {
   GENERAL        // General
 }
 
+enum TaskPriority {
+  LOW            // Baixa
+  NORMAL         // Normal
+  HIGH           // Alta
+  URGENT         // Urgent
+}
+
+enum ProjectType {
+  DOCUMENTAL     // Documental
+  INTERVIEW      // Entrevista
+  EVENT          // Esdeveniment / Event
+  ADVERTISING    // Publicitat
+  CORPORATE      // Corporatiu
+  MUSIC_VIDEO    // Videoclip
+  FILM           // Pel·lícula / Curtmetratge
+  TV             // Televisió
+  PHOTO          // Fotografia
+  OTHER          // Altres
+}
+
 enum TaskReminder {
   NONE           // Sense recordatori
   AT_TIME        // A l'hora de la tasca
@@ -954,7 +978,8 @@ model RentalProject {
   returnTime          String?
   actualReturnDate    DateTime?
 
-  // Estat
+  // Tipus i estat
+  projectType         ProjectType?               // Tipus de projecte (per plantilles de tasques)
   status              ProjectStatus  @default(PENDING_PREP)
   priority            Int            @default(0) // 0=normal, 1=alta, 2=urgent
 
@@ -1080,9 +1105,13 @@ model ProjectTask {
   assignedToId    String?
   completedById   String?
 
-  // Estat i categoria
+  // Estat, categoria i prioritat
   status          OpTaskStatus   @default(OP_PENDING)
   category        TaskCategory   @default(GENERAL)
+  priority        TaskPriority   @default(NORMAL)
+
+  // Plantilla d'origen (si va ser creada des d'una plantilla)
+  templateId      String?
 
   // Data i hora (tot opcional)
   dueAt           DateTime?      // Data límit
@@ -1106,9 +1135,13 @@ model ProjectTask {
 
   // Relacions
   project         RentalProject? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  template        TaskTemplate?  @relation(fields: [templateId], references: [id])
   createdBy       User?          @relation("TaskCreator", fields: [createdById], references: [id])
   assignedTo      User?          @relation("TaskAssignee", fields: [assignedToId], references: [id])
   completedBy     User?          @relation("TaskCompleter", fields: [completedById], references: [id])
+  checklistItems  TaskChecklistItem[]
+  comments        TaskComment[]
+  activities      TaskActivity[]
 
   @@index([projectId])
   @@index([assignedToId])
@@ -1116,7 +1149,119 @@ model ProjectTask {
   @@index([status])
   @@index([dueAt])
   @@index([category])
+  @@index([priority])
   @@map("project_tasks")
+}
+
+// ===========================================
+// Subtasques / Checklist dins tasques
+// ===========================================
+
+model TaskChecklistItem {
+  id              String         @id @default(cuid())
+  taskId          String
+  title           String
+  isCompleted     Boolean        @default(false)
+  completedById   String?
+  completedAt     DateTime?
+  sortOrder       Int            @default(0)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // Relacions
+  task            ProjectTask    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  completedBy     User?          @relation("ChecklistCompleter", fields: [completedById], references: [id])
+
+  @@index([taskId])
+  @@map("task_checklist_items")
+}
+
+// ===========================================
+// Plantilles de tasques
+// ===========================================
+
+model TaskTemplate {
+  id              String         @id @default(cuid())
+  name            String                       // "Preparació sortida documental"
+  description     String?
+  projectType     ProjectType?                 // Tipus de projecte vinculat (opcional)
+  category        TaskCategory   @default(GENERAL)
+  isDefault       Boolean        @default(false)  // S'aplica automàticament
+  isActive        Boolean        @default(true)
+  sortOrder       Int            @default(0)
+  createdById     String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // Relacions
+  createdBy       User?          @relation("TemplateCreator", fields: [createdById], references: [id])
+  items           TaskTemplateItem[]
+  tasks           ProjectTask[]                // Tasques creades des d'aquesta plantilla
+
+  @@index([projectType])
+  @@index([isDefault])
+  @@map("task_templates")
+}
+
+model TaskTemplateItem {
+  id              String         @id @default(cuid())
+  templateId      String
+  title           String                       // Títol de la tasca a crear
+  description     String?
+  category        TaskCategory   @default(GENERAL)
+  priority        TaskPriority   @default(NORMAL)
+  daysOffset      Int            @default(0)   // Dies relatiu a data sortida (-2 = 2 dies abans)
+  sortOrder       Int            @default(0)
+  assignToRole    String?                      // Rol que hauria de fer la tasca (optatiu)
+
+  // Checklist items predefinits (JSON array de strings)
+  checklistItems  Json?                        // ["Comprovar bateries", "Verificar targetes", ...]
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // Relacions
+  template        TaskTemplate   @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([templateId])
+  @@map("task_template_items")
+}
+
+// ===========================================
+// Comentaris i activitat de tasques
+// ===========================================
+
+model TaskComment {
+  id              String         @id @default(cuid())
+  taskId          String
+  userId          String
+  content         String                       // Text del comentari
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // Relacions
+  task            ProjectTask    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user            User           @relation("TaskCommenter", fields: [userId], references: [id])
+
+  @@index([taskId])
+  @@map("task_comments")
+}
+
+model TaskActivity {
+  id              String         @id @default(cuid())
+  taskId          String
+  userId          String?                      // null si és automàtic del sistema
+  action          String                       // "status_change", "assigned", "comment", "checklist_done", etc.
+  details         Json?                        // { from: "OP_PENDING", to: "OP_IN_PROGRESS" }
+  createdAt       DateTime       @default(now())
+
+  // Relacions
+  task            ProjectTask    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user            User?          @relation("TaskActivityUser", fields: [userId], references: [id])
+
+  @@index([taskId])
+  @@index([createdAt])
+  @@map("task_activities")
 }
 
 model Incident {

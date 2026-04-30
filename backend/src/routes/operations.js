@@ -31,6 +31,7 @@ router.use((req, res, next) => {
 // Tasques predeterminades per projecte
 // ===========================================
 
+// Tasques hardcoded legacy (fallback si no hi ha plantilles)
 const DEFAULT_PROJECT_TASKS = [
   { title: 'Backfocus Camera', category: 'TECH' },
   { title: 'Col·limar òptiques', category: 'TECH' },
@@ -52,6 +53,62 @@ async function createDefaultTasks(projectId, createdById = null) {
     });
   } catch (err) {
     logger.error('Error creant tasques predeterminades:', err.message);
+  }
+}
+
+// Crear tasques des de plantilles basades en tipus de projecte
+async function createTasksFromTemplates(projectId, projectType, departureDate, createdById = null) {
+  try {
+    // Buscar plantilles default per aquest tipus de projecte + generals (sense tipus)
+    const templates = await prisma.taskTemplate.findMany({
+      where: {
+        isActive: true,
+        isDefault: true,
+        OR: [
+          { projectType: projectType || undefined },
+          { projectType: null },
+        ],
+      },
+      include: { items: { orderBy: { sortOrder: 'asc' } } },
+    });
+
+    if (templates.length === 0) {
+      // Fallback a tasques hardcoded
+      return createDefaultTasks(projectId, createdById);
+    }
+
+    const refDate = departureDate ? new Date(departureDate) : new Date();
+
+    for (const template of templates) {
+      for (const item of template.items) {
+        const dueAt = new Date(refDate);
+        dueAt.setDate(dueAt.getDate() + item.daysOffset);
+
+        await prisma.projectTask.create({
+          data: {
+            projectId,
+            title: item.title,
+            description: item.description,
+            category: item.category,
+            priority: item.priority,
+            templateId: template.id,
+            createdById,
+            dueAt,
+            status: 'OP_PENDING',
+            ...(item.checklistItems ? {
+              checklistItems: {
+                create: (item.checklistItems || []).map((cl, i) => ({
+                  title: typeof cl === 'string' ? cl : cl.title,
+                  sortOrder: i,
+                })),
+              },
+            } : {}),
+          },
+        });
+      }
+    }
+  } catch (err) {
+    logger.error('Error creant tasques des de plantilles:', err.message);
   }
 }
 
@@ -301,6 +358,7 @@ router.post('/projects', async (req, res, next) => {
       departureDate, departureTime,
       shootEndDate, shootEndTime,
       returnDate, returnTime,
+      projectType,
       priority = 0, leadUserId, techSupportUserId, returnLeadUserId, leadRoleCode,
       transportType, transportNotes, pickupTime,
       techValidationRequired = false,
@@ -313,6 +371,7 @@ router.post('/projects', async (req, res, next) => {
         name,
         clientName,
         clientId: clientId || null,
+        projectType: projectType || null,
         checkDate: checkDate ? new Date(checkDate) : null,
         checkTime: checkTime || null,
         departureDate: new Date(departureDate),
@@ -431,7 +490,51 @@ router.put('/projects/:id/status', async (req, res, next) => {
           },
         },
       },
+      select: { id: true, name: true, status: true, projectType: true, departureDate: true, returnDate: true },
     });
+
+    // === AUTOMATITZACIONS: auto-crear tasques per canvi d'estat ===
+    try {
+      // Quan passa a IN_PREPARATION → crear tasques de preparació
+      if (status === 'IN_PREPARATION' && current.status === 'PENDING_PREP') {
+        const existingTasks = await prisma.projectTask.count({ where: { projectId: req.params.id } });
+        if (existingTasks === 0) {
+          await createTasksFromTemplates(req.params.id, project.projectType, project.departureDate, req.user.id);
+          logger.info(`Auto-creades tasques de preparació per projecte ${project.name}`);
+        }
+      }
+
+      // Quan passa a RETURNED → crear tasques d'inspecció de retorn
+      if (status === 'RETURNED' && current.status === 'OUT') {
+        const returnTemplate = await prisma.taskTemplate.findFirst({
+          where: { isActive: true, name: { contains: 'retorn' } },
+          include: { items: { orderBy: { sortOrder: 'asc' } } },
+        });
+        if (returnTemplate) {
+          for (const item of returnTemplate.items) {
+            await prisma.projectTask.create({
+              data: {
+                projectId: req.params.id,
+                title: item.title,
+                description: item.description,
+                category: item.category,
+                priority: item.priority,
+                templateId: returnTemplate.id,
+                createdById: req.user.id,
+                dueAt: new Date(),
+                status: 'OP_PENDING',
+                ...(item.checklistItems ? {
+                  checklistItems: { create: (item.checklistItems || []).map((cl, i) => ({ title: typeof cl === 'string' ? cl : cl.title, sortOrder: i })) },
+                } : {}),
+              },
+            });
+          }
+          logger.info(`Auto-creades tasques de retorn per projecte ${project.name}`);
+        }
+      }
+    } catch (autoErr) {
+      logger.error('Error en auto-creació tasques:', autoErr.message);
+    }
 
     res.json(project);
   } catch (err) {
@@ -584,50 +687,54 @@ router.delete('/project-equipment/:id', async (req, res, next) => {
 // TASQUES DEL PROJECTE
 // ===========================================
 
-// POST /api/operations/projects/:id/default-tasks — Crear tasques predeterminades
+// POST /api/operations/projects/:id/default-tasks — Crear tasques des de plantilles
 router.post('/projects/:id/default-tasks', async (req, res, next) => {
   try {
     const { id } = req.params;
+    const { templateId } = req.body; // Plantilla específica (opcional)
 
-    // Comprovar que el projecte existeix
     const project = await prisma.rentalProject.findUnique({ where: { id } });
     if (!project) return res.status(404).json({ error: 'Projecte no trobat' });
 
-    // Comprovar si ja té alguna de les tasques predeterminades
-    const existing = await prisma.projectTask.findMany({
-      where: {
-        projectId: id,
-        title: { in: DEFAULT_PROJECT_TASKS.map((t) => t.title) },
-      },
-    });
-    const existingTitles = new Set(existing.map((t) => t.title));
-    const toCreate = DEFAULT_PROJECT_TASKS.filter((t) => !existingTitles.has(t.title));
+    if (templateId) {
+      // Aplicar plantilla específica
+      const template = await prisma.taskTemplate.findUnique({
+        where: { id: templateId },
+        include: { items: { orderBy: { sortOrder: 'asc' } } },
+      });
+      if (!template) return res.status(404).json({ error: 'Plantilla no trobada' });
 
-    if (toCreate.length === 0) {
-      return res.json({ message: 'Totes les tasques predeterminades ja existeixen', created: 0, tasks: [] });
+      const refDate = project.departureDate || new Date();
+      for (const item of template.items) {
+        const dueAt = new Date(refDate);
+        dueAt.setDate(dueAt.getDate() + item.daysOffset);
+        await prisma.projectTask.create({
+          data: {
+            projectId: id, title: item.title, description: item.description,
+            category: item.category, priority: item.priority, templateId: template.id,
+            createdById: req.user.id, dueAt, status: 'OP_PENDING',
+            ...(item.checklistItems ? {
+              checklistItems: { create: (item.checklistItems || []).map((cl, i) => ({ title: typeof cl === 'string' ? cl : cl.title, sortOrder: i })) },
+            } : {}),
+          },
+        });
+      }
+    } else {
+      // Usar plantilles per defecte basades en el tipus de projecte
+      await createTasksFromTemplates(id, project.projectType, project.departureDate, req.user.id);
     }
 
-    await prisma.projectTask.createMany({
-      data: toCreate.map((t) => ({
-        projectId: id,
-        title: t.title,
-        category: t.category,
-        status: 'OP_PENDING',
-        createdById: req.user.id,
-      })),
-    });
-
-    // Retornar totes les tasques del projecte
     const tasks = await prisma.projectTask.findMany({
       where: { projectId: id },
       include: {
         assignedTo: { select: { id: true, name: true } },
         createdBy: { select: { id: true, name: true } },
+        checklistItems: { orderBy: { sortOrder: 'asc' } },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ priority: 'desc' }, { dueAt: { sort: 'asc', nulls: 'last' } }],
     });
 
-    res.json({ message: `${toCreate.length} tasques creades`, created: toCreate.length, tasks });
+    res.json({ message: `${tasks.length} tasques al projecte`, created: tasks.length, tasks });
   } catch (err) {
     next(err);
   }
@@ -680,7 +787,7 @@ router.put('/tasks/:id', async (req, res, next) => {
   try {
     const {
       title, description, notes, assignedToId, status,
-      category, dueAt, dueTime,
+      category, priority, dueAt, dueTime,
       reminder, reminderCustom,
       recurrence, recurrenceCustom, recurrenceEndAt,
       requiresSupervision, projectId,
@@ -692,6 +799,7 @@ router.put('/tasks/:id', async (req, res, next) => {
     if (notes !== undefined) data.notes = notes;
     if (assignedToId !== undefined) data.assignedToId = assignedToId;
     if (category !== undefined) data.category = category;
+    if (priority !== undefined) data.priority = priority;
     if (dueAt !== undefined) data.dueAt = dueAt ? new Date(dueAt) : null;
     if (dueTime !== undefined) data.dueTime = dueTime || null;
     if (reminder !== undefined) data.reminder = reminder;
@@ -701,6 +809,11 @@ router.put('/tasks/:id', async (req, res, next) => {
     if (recurrenceEndAt !== undefined) data.recurrenceEndAt = recurrenceEndAt ? new Date(recurrenceEndAt) : null;
     if (requiresSupervision !== undefined) data.requiresSupervision = requiresSupervision;
     if (projectId !== undefined) data.projectId = projectId || null;
+
+    const currentTask = await prisma.projectTask.findUnique({
+      where: { id: req.params.id },
+      select: { assignedToId: true, title: true, projectId: true, status: true, priority: true },
+    });
 
     if (status !== undefined) {
       data.status = status;
@@ -713,11 +826,6 @@ router.put('/tasks/:id', async (req, res, next) => {
       }
     }
 
-    const currentTask = await prisma.projectTask.findUnique({
-      where: { id: req.params.id },
-      select: { assignedToId: true, title: true, projectId: true },
-    });
-
     const task = await prisma.projectTask.update({
       where: { id: req.params.id },
       data,
@@ -725,8 +833,28 @@ router.put('/tasks/:id', async (req, res, next) => {
         project: { select: { id: true, name: true } },
         createdBy: { select: { id: true, name: true } },
         assignedTo: { select: { id: true, name: true } },
+        checklistItems: {
+          orderBy: { sortOrder: 'asc' },
+          include: { completedBy: { select: { id: true, name: true } } },
+        },
+        _count: { select: { comments: true, activities: true } },
       },
     });
+
+    // Registrar activitat per canvis significatius
+    const activities = [];
+    if (status !== undefined && status !== currentTask?.status) {
+      activities.push({ taskId: task.id, userId: req.user.id, action: 'status_change', details: { from: currentTask?.status, to: status } });
+    }
+    if (assignedToId !== undefined && assignedToId !== currentTask?.assignedToId) {
+      activities.push({ taskId: task.id, userId: req.user.id, action: 'assigned', details: { to: assignedToId } });
+    }
+    if (priority !== undefined && priority !== currentTask?.priority) {
+      activities.push({ taskId: task.id, userId: req.user.id, action: 'priority_change', details: { from: currentTask?.priority, to: priority } });
+    }
+    if (activities.length > 0) {
+      await prisma.taskActivity.createMany({ data: activities });
+    }
 
     // Notificar + push si es reassigna
     if (assignedToId && assignedToId !== currentTask?.assignedToId && assignedToId !== req.user.id) {
@@ -737,7 +865,7 @@ router.put('/tasks/:id', async (req, res, next) => {
         message: `${task.title}${task.project ? ` — ${task.project.name}` : ''}`,
         entityType: 'task',
         entityId: task.id,
-        priority: 'normal',
+        priority: (priority || currentTask?.priority) === 'URGENT' ? 'high' : 'normal',
       });
     }
 
@@ -1309,8 +1437,14 @@ router.get('/tasks', async (req, res, next) => {
           createdBy: { select: { id: true, name: true } },
           assignedTo: { select: { id: true, name: true } },
           completedBy: { select: { id: true, name: true } },
+          checklistItems: {
+            orderBy: { sortOrder: 'asc' },
+            include: { completedBy: { select: { id: true, name: true } } },
+          },
+          _count: { select: { comments: true, activities: true } },
         },
         orderBy: [
+          { priority: 'desc' },
           { dueAt: { sort: 'asc', nulls: 'last' } },
           { createdAt: 'desc' },
         ],
@@ -1359,9 +1493,11 @@ router.post('/tasks', async (req, res, next) => {
       title, description, notes,
       assignedToId, projectId,
       category = 'GENERAL',
+      priority = 'NORMAL',
       dueAt, dueTime,
       reminder = 'NONE', reminderCustom,
       recurrence = 'NONE', recurrenceCustom, recurrenceEndAt,
+      checklistItems, // Array de strings opcionals
     } = req.body;
 
     if (!title?.trim()) return res.status(400).json({ error: 'El títol és obligatori' });
@@ -1375,6 +1511,7 @@ router.post('/tasks', async (req, res, next) => {
         assignedToId: assignedToId || null,
         projectId: projectId || null,
         category,
+        priority,
         dueAt: dueAt ? new Date(dueAt) : null,
         dueTime: dueTime || null,
         reminder,
@@ -1382,12 +1519,26 @@ router.post('/tasks', async (req, res, next) => {
         recurrence,
         recurrenceCustom: recurrenceCustom || null,
         recurrenceEndAt: recurrenceEndAt ? new Date(recurrenceEndAt) : null,
+        ...(checklistItems?.length ? {
+          checklistItems: {
+            create: checklistItems.map((item, i) => ({
+              title: typeof item === 'string' ? item : item.title,
+              sortOrder: i,
+            })),
+          },
+        } : {}),
       },
       include: {
         project: { select: { id: true, name: true } },
         createdBy: { select: { id: true, name: true } },
         assignedTo: { select: { id: true, name: true } },
+        checklistItems: { orderBy: { sortOrder: 'asc' } },
       },
+    });
+
+    // Registrar activitat
+    await prisma.taskActivity.create({
+      data: { taskId: task.id, userId: req.user.id, action: 'created' },
     });
 
     // Notificar + push si s'assigna a algú
@@ -1399,11 +1550,379 @@ router.post('/tasks', async (req, res, next) => {
         message: `${title.trim()}${task.project ? ` — ${task.project.name}` : ''}`,
         entityType: 'task',
         entityId: task.id,
-        priority: 'normal',
+        priority: priority === 'URGENT' ? 'high' : 'normal',
       });
     }
 
     res.status(201).json(task);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ===========================================
+// CHECKLIST ITEMS (Subtasques)
+// ===========================================
+
+// POST /api/operations/tasks/:id/checklist — Afegir item al checklist
+router.post('/tasks/:id/checklist', async (req, res, next) => {
+  try {
+    const { title } = req.body;
+    if (!title?.trim()) return res.status(400).json({ error: 'El títol és obligatori' });
+
+    const maxOrder = await prisma.taskChecklistItem.aggregate({
+      where: { taskId: req.params.id },
+      _max: { sortOrder: true },
+    });
+
+    const item = await prisma.taskChecklistItem.create({
+      data: {
+        taskId: req.params.id,
+        title: title.trim(),
+        sortOrder: (maxOrder._max.sortOrder ?? -1) + 1,
+      },
+    });
+
+    await prisma.taskActivity.create({
+      data: { taskId: req.params.id, userId: req.user.id, action: 'checklist_added', details: { title: title.trim() } },
+    });
+
+    res.status(201).json(item);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/operations/tasks/:taskId/checklist/:itemId — Actualitzar item (toggle, rename, reorder)
+router.put('/tasks/:taskId/checklist/:itemId', async (req, res, next) => {
+  try {
+    const { isCompleted, title, sortOrder } = req.body;
+    const data = {};
+    if (title !== undefined) data.title = title;
+    if (sortOrder !== undefined) data.sortOrder = sortOrder;
+    if (isCompleted !== undefined) {
+      data.isCompleted = isCompleted;
+      data.completedById = isCompleted ? req.user.id : null;
+      data.completedAt = isCompleted ? new Date() : null;
+    }
+
+    const item = await prisma.taskChecklistItem.update({
+      where: { id: req.params.itemId },
+      data,
+      include: { completedBy: { select: { id: true, name: true } } },
+    });
+
+    if (isCompleted !== undefined) {
+      await prisma.taskActivity.create({
+        data: {
+          taskId: req.params.taskId,
+          userId: req.user.id,
+          action: isCompleted ? 'checklist_done' : 'checklist_undone',
+          details: { title: item.title },
+        },
+      });
+    }
+
+    res.json(item);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/operations/tasks/:taskId/checklist/:itemId
+router.delete('/tasks/:taskId/checklist/:itemId', async (req, res, next) => {
+  try {
+    await prisma.taskChecklistItem.delete({ where: { id: req.params.itemId } });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ===========================================
+// COMENTARIS DE TASQUES
+// ===========================================
+
+// GET /api/operations/tasks/:id/comments
+router.get('/tasks/:id/comments', async (req, res, next) => {
+  try {
+    const comments = await prisma.taskComment.findMany({
+      where: { taskId: req.params.id },
+      include: { user: { select: { id: true, name: true } } },
+      orderBy: { createdAt: 'asc' },
+    });
+    res.json(comments);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/operations/tasks/:id/comments
+router.post('/tasks/:id/comments', async (req, res, next) => {
+  try {
+    const { content } = req.body;
+    if (!content?.trim()) return res.status(400).json({ error: 'El contingut és obligatori' });
+
+    const comment = await prisma.taskComment.create({
+      data: { taskId: req.params.id, userId: req.user.id, content: content.trim() },
+      include: { user: { select: { id: true, name: true } } },
+    });
+
+    await prisma.taskActivity.create({
+      data: { taskId: req.params.id, userId: req.user.id, action: 'comment', details: { commentId: comment.id } },
+    });
+
+    // Notificar a l'assignat si no és qui comenta
+    const task = await prisma.projectTask.findUnique({
+      where: { id: req.params.id },
+      select: { assignedToId: true, title: true, createdById: true },
+    });
+    const notifyUsers = [task.assignedToId, task.createdById].filter(uid => uid && uid !== req.user.id);
+    for (const uid of [...new Set(notifyUsers)]) {
+      await createNotificationForUser(uid, {
+        type: 'task_comment',
+        title: `Comentari de ${req.user.name}`,
+        message: `${content.trim().substring(0, 100)}${content.length > 100 ? '...' : ''} — ${task.title}`,
+        entityType: 'task',
+        entityId: req.params.id,
+        priority: 'normal',
+      });
+    }
+
+    res.status(201).json(comment);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/operations/tasks/:taskId/comments/:commentId
+router.delete('/tasks/:taskId/comments/:commentId', async (req, res, next) => {
+  try {
+    const comment = await prisma.taskComment.findUnique({ where: { id: req.params.commentId } });
+    if (!comment) return res.status(404).json({ error: 'Comentari no trobat' });
+    if (comment.userId !== req.user.id && req.user.role !== 'ADMIN') {
+      return res.status(403).json({ error: 'Només pots eliminar els teus comentaris' });
+    }
+    await prisma.taskComment.delete({ where: { id: req.params.commentId } });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ===========================================
+// ACTIVITAT DE TASQUES (historial)
+// ===========================================
+
+// GET /api/operations/tasks/:id/activity
+router.get('/tasks/:id/activity', async (req, res, next) => {
+  try {
+    const activities = await prisma.taskActivity.findMany({
+      where: { taskId: req.params.id },
+      include: { user: { select: { id: true, name: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+    res.json(activities);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ===========================================
+// PLANTILLES DE TASQUES
+// ===========================================
+
+// GET /api/operations/task-templates — Llistar plantilles
+router.get('/task-templates', async (req, res, next) => {
+  try {
+    const { projectType } = req.query;
+    const where = { isActive: true };
+    if (projectType) where.OR = [{ projectType }, { projectType: null }];
+
+    const templates = await prisma.taskTemplate.findMany({
+      where,
+      include: {
+        items: { orderBy: { sortOrder: 'asc' } },
+        createdBy: { select: { id: true, name: true } },
+        _count: { select: { items: true, tasks: true } },
+      },
+      orderBy: { sortOrder: 'asc' },
+    });
+    res.json(templates);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/operations/task-templates/:id
+router.get('/task-templates/:id', async (req, res, next) => {
+  try {
+    const template = await prisma.taskTemplate.findUnique({
+      where: { id: req.params.id },
+      include: {
+        items: { orderBy: { sortOrder: 'asc' } },
+        createdBy: { select: { id: true, name: true } },
+      },
+    });
+    if (!template) return res.status(404).json({ error: 'Plantilla no trobada' });
+    res.json(template);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/operations/task-templates — Crear plantilla
+router.post('/task-templates', async (req, res, next) => {
+  try {
+    const { name, description, projectType, category, isDefault, items } = req.body;
+    if (!name?.trim()) return res.status(400).json({ error: 'El nom és obligatori' });
+
+    const template = await prisma.taskTemplate.create({
+      data: {
+        name: name.trim(),
+        description: description || null,
+        projectType: projectType || null,
+        category: category || 'GENERAL',
+        isDefault: isDefault || false,
+        createdById: req.user.id,
+        ...(items?.length ? {
+          items: {
+            create: items.map((item, i) => ({
+              title: item.title,
+              description: item.description || null,
+              category: item.category || 'GENERAL',
+              priority: item.priority || 'NORMAL',
+              daysOffset: item.daysOffset || 0,
+              sortOrder: i,
+              assignToRole: item.assignToRole || null,
+              checklistItems: item.checklistItems || null,
+            })),
+          },
+        } : {}),
+      },
+      include: { items: { orderBy: { sortOrder: 'asc' } } },
+    });
+
+    res.status(201).json(template);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/operations/task-templates/:id
+router.put('/task-templates/:id', async (req, res, next) => {
+  try {
+    const { name, description, projectType, category, isDefault, isActive, items } = req.body;
+    const data = {};
+    if (name !== undefined) data.name = name;
+    if (description !== undefined) data.description = description;
+    if (projectType !== undefined) data.projectType = projectType || null;
+    if (category !== undefined) data.category = category;
+    if (isDefault !== undefined) data.isDefault = isDefault;
+    if (isActive !== undefined) data.isActive = isActive;
+
+    // Si envien items, reemplaçar tots
+    if (items) {
+      await prisma.taskTemplateItem.deleteMany({ where: { templateId: req.params.id } });
+      await prisma.taskTemplateItem.createMany({
+        data: items.map((item, i) => ({
+          templateId: req.params.id,
+          title: item.title,
+          description: item.description || null,
+          category: item.category || 'GENERAL',
+          priority: item.priority || 'NORMAL',
+          daysOffset: item.daysOffset || 0,
+          sortOrder: i,
+          assignToRole: item.assignToRole || null,
+          checklistItems: item.checklistItems || null,
+        })),
+      });
+    }
+
+    const template = await prisma.taskTemplate.update({
+      where: { id: req.params.id },
+      data,
+      include: { items: { orderBy: { sortOrder: 'asc' } } },
+    });
+
+    res.json(template);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/operations/task-templates/:id
+router.delete('/task-templates/:id', async (req, res, next) => {
+  try {
+    await prisma.taskTemplate.update({ where: { id: req.params.id }, data: { isActive: false } });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/operations/tasks/apply-template — Aplicar plantilla a un projecte
+router.post('/tasks/apply-template', async (req, res, next) => {
+  try {
+    const { templateId, projectId } = req.body;
+    if (!templateId) return res.status(400).json({ error: 'templateId és obligatori' });
+
+    const template = await prisma.taskTemplate.findUnique({
+      where: { id: templateId },
+      include: { items: { orderBy: { sortOrder: 'asc' } } },
+    });
+    if (!template) return res.status(404).json({ error: 'Plantilla no trobada' });
+
+    // Obtenir data de referència del projecte (departureDate) per calcular offsets
+    let referenceDate = new Date();
+    if (projectId) {
+      const project = await prisma.rentalProject.findUnique({
+        where: { id: projectId },
+        select: { departureDate: true },
+      });
+      if (project?.departureDate) referenceDate = new Date(project.departureDate);
+    }
+
+    const created = [];
+    for (const item of template.items) {
+      const dueAt = new Date(referenceDate);
+      dueAt.setDate(dueAt.getDate() + item.daysOffset);
+
+      const task = await prisma.projectTask.create({
+        data: {
+          title: item.title,
+          description: item.description,
+          category: item.category,
+          priority: item.priority,
+          projectId: projectId || null,
+          templateId: template.id,
+          createdById: req.user.id,
+          dueAt,
+          status: 'OP_PENDING',
+          ...(item.checklistItems ? {
+            checklistItems: {
+              create: (item.checklistItems || []).map((cl, i) => ({
+                title: typeof cl === 'string' ? cl : cl.title,
+                sortOrder: i,
+              })),
+            },
+          } : {}),
+        },
+        include: {
+          checklistItems: { orderBy: { sortOrder: 'asc' } },
+          assignedTo: { select: { id: true, name: true } },
+        },
+      });
+
+      await prisma.taskActivity.create({
+        data: { taskId: task.id, userId: req.user.id, action: 'created_from_template', details: { templateName: template.name } },
+      });
+
+      created.push(task);
+    }
+
+    res.status(201).json({ message: `${created.length} tasques creades des de "${template.name}"`, tasks: created });
   } catch (err) {
     next(err);
   }
