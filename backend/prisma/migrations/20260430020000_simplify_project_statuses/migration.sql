@@ -12,9 +12,17 @@ UPDATE "project_status_changes" SET "fromStatus" = 'RETURNED' WHERE "fromStatus"
 UPDATE "project_status_changes" SET "toStatus" = 'RETURNED' WHERE "toStatus" IN ('RETURN_REVIEW', 'WITH_INCIDENT', 'EQUIPMENT_BLOCKED');
 
 -- Eliminar valors de l'enum (PostgreSQL requereix recrear l'enum)
+-- Treure defaults abans de canviar el tipus (sinó error 42804)
+ALTER TABLE "rental_projects" ALTER COLUMN "status" DROP DEFAULT;
+ALTER TABLE "project_status_changes" ALTER COLUMN "fromStatus" DROP DEFAULT;
+ALTER TABLE "project_status_changes" ALTER COLUMN "toStatus" DROP DEFAULT;
+
 ALTER TYPE "ProjectStatus" RENAME TO "ProjectStatus_old";
 CREATE TYPE "ProjectStatus" AS ENUM ('PENDING_PREP', 'IN_PREPARATION', 'READY', 'OUT', 'RETURNED', 'CLOSED');
 ALTER TABLE "rental_projects" ALTER COLUMN "status" TYPE "ProjectStatus" USING "status"::text::"ProjectStatus";
 ALTER TABLE "project_status_changes" ALTER COLUMN "fromStatus" TYPE "ProjectStatus" USING "fromStatus"::text::"ProjectStatus";
 ALTER TABLE "project_status_changes" ALTER COLUMN "toStatus" TYPE "ProjectStatus" USING "toStatus"::text::"ProjectStatus";
 DROP TYPE "ProjectStatus_old";
+
+-- Restaurar defaults
+ALTER TABLE "rental_projects" ALTER COLUMN "status" SET DEFAULT 'PENDING_PREP';
