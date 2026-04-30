@@ -1415,6 +1415,137 @@ router.get('/protocols', async (req, res, next) => {
   }
 });
 
+// PUT /api/operations/protocols/reorder — Reordenar protocols (només ADMIN)
+// IMPORTANT: rutes estàtiques ABANS de :slug/:id per evitar conflictes Express
+router.put('/protocols/reorder', authorize('ADMIN'), async (req, res, next) => {
+  try {
+    const { items } = req.body; // [{ id, sortOrder, category? }]
+    if (!Array.isArray(items)) return res.status(400).json({ error: 'items és obligatori' });
+
+    await prisma.$transaction(
+      items.map((item) =>
+        prisma.protocol.update({
+          where: { id: item.id },
+          data: {
+            sortOrder: item.sortOrder,
+            ...(item.category && { category: item.category }),
+          },
+        })
+      )
+    );
+
+    const protocols = await prisma.protocol.findMany({
+      where: { isActive: true },
+      orderBy: [{ category: 'asc' }, { sortOrder: 'asc' }],
+    });
+    res.json(protocols);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/operations/protocols/categories — Llistar categories disponibles
+router.get('/protocols/categories', async (req, res, next) => {
+  try {
+    const result = await prisma.protocol.groupBy({
+      by: ['category'],
+      where: { isActive: true },
+      _count: true,
+      orderBy: { category: 'asc' },
+    });
+    res.json(result.map(r => ({ category: r.category, count: r._count })));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/operations/protocols/ask — Buscar informació als protocols amb IA
+router.post('/protocols/ask', async (req, res, next) => {
+  try {
+    const { question } = req.body;
+    if (!question?.trim()) return res.status(400).json({ error: 'La pregunta és obligatòria' });
+
+    // Carregar tots els protocols actius
+    const protocols = await prisma.protocol.findMany({
+      where: { isActive: true },
+      select: { title: true, category: true, content: true },
+    });
+
+    if (protocols.length === 0) {
+      return res.json({ answer: 'No hi ha protocols disponibles.', sources: [] });
+    }
+
+    // Construir context amb tots els protocols
+    const context = protocols.map(p =>
+      `## ${p.title} (${p.category})\n${p.content}`
+    ).join('\n\n---\n\n');
+
+    // Cridar Claude API
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: 'API d\'IA no configurada (ANTHROPIC_API_KEY)' });
+    }
+
+    const https = require('https');
+    const body = JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1024,
+      messages: [{
+        role: 'user',
+        content: `Ets l'assistent de protocols operatius de SeitoCamera, una empresa de lloguer d'equip audiovisual.
+
+Aquí tens tots els protocols de l'empresa:
+
+${context}
+
+---
+
+Respon la pregunta de l'usuari basant-te EXCLUSIVAMENT en la informació dels protocols anteriors. Si la resposta no es troba als protocols, digues-ho clarament. Respon en català i de forma concisa.
+
+Pregunta: ${question}`,
+      }],
+    });
+
+    const result = await new Promise((resolve, reject) => {
+      const req = https.request({
+        hostname: 'api.anthropic.com',
+        path: '/v1/messages',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+      }, (resp) => {
+        let data = '';
+        resp.on('data', chunk => data += chunk);
+        resp.on('end', () => {
+          try {
+            resolve(JSON.parse(data));
+          } catch (e) {
+            reject(new Error('Error parsejant resposta IA'));
+          }
+        });
+      });
+      req.on('error', reject);
+      req.write(body);
+      req.end();
+    });
+
+    const answer = result.content?.[0]?.text || 'No he pogut obtenir resposta.';
+
+    // Detectar quins protocols ha usat
+    const sources = protocols
+      .filter(p => answer.toLowerCase().includes(p.title.toLowerCase().slice(0, 20)))
+      .map(p => ({ title: p.title, category: p.category }));
+
+    res.json({ answer, sources });
+  } catch (err) {
+    logger.error(`Protocol ask error: ${err.message}`);
+    next(err);
+  }
+});
+
 // GET /api/operations/protocols/:slug — Detall protocol
 router.get('/protocols/:slug', async (req, res, next) => {
   try {
@@ -1451,8 +1582,19 @@ router.put('/protocols/:id', authorize('ADMIN'), async (req, res, next) => {
 // POST /api/operations/protocols — Crear protocol (només ADMIN)
 router.post('/protocols', authorize('ADMIN'), async (req, res, next) => {
   try {
-    const { title, category, content, sortOrder = 0 } = req.body;
+    const { title, category, content, sortOrder } = req.body;
     if (!title || !category) return res.status(400).json({ error: 'Títol i categoria són obligatoris' });
+
+    // Si no s'especifica sortOrder, posar al final de la categoria
+    let finalSortOrder = sortOrder;
+    if (finalSortOrder === undefined) {
+      const maxOrder = await prisma.protocol.findFirst({
+        where: { category },
+        orderBy: { sortOrder: 'desc' },
+        select: { sortOrder: true },
+      });
+      finalSortOrder = (maxOrder?.sortOrder ?? -1) + 1;
+    }
     // Generar slug automàticament a partir del títol
     const slug = title
       .toLowerCase()
@@ -1464,7 +1606,7 @@ router.post('/protocols', authorize('ADMIN'), async (req, res, next) => {
     const existing = await prisma.protocol.findUnique({ where: { slug } });
     const finalSlug = existing ? `${slug}-${Date.now()}` : slug;
     const protocol = await prisma.protocol.create({
-      data: { title, slug: finalSlug, category, content: content || '', sortOrder, lastEditedById: req.user.id },
+      data: { title, slug: finalSlug, category, content: content || '', sortOrder: finalSortOrder, lastEditedById: req.user.id },
     });
     res.json(protocol);
   } catch (err) {
