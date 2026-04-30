@@ -32,16 +32,32 @@ const KANBAN_STATUSES = ALL_STATUSES.filter(s => STATUS_CONFIG[s].kanban);
 
 // Estats natius de Rentman — es mostra com a badge addicional quan el projecte ve de RM
 const RENTMAN_STATUS_CONFIG = {
-  confirmed:    { label: 'Confirmado',          color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-  active:       { label: 'Activo',              color: 'bg-blue-50 text-blue-700 border-blue-200' },
-  prepared:     { label: 'Preparado',           color: 'bg-green-50 text-green-700 border-green-200' },
-  out:          { label: 'En localización',     color: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
-  on_location:  { label: 'En localización',     color: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
-  returned:     { label: 'Esperado de regreso', color: 'bg-purple-50 text-purple-700 border-purple-200' },
-  closed:       { label: 'Cerrado',             color: 'bg-gray-50 text-gray-500 border-gray-200' },
-  cancelled:    { label: 'Cancelado',           color: 'bg-red-50 text-red-600 border-red-200' },
-  option:       { label: 'Opción',              color: 'bg-yellow-50 text-yellow-700 border-yellow-200' },
-  quotation:    { label: 'Presupuesto',         color: 'bg-orange-50 text-orange-700 border-orange-200' },
+  // Estats en anglès (API Rentman)
+  confirmed:       { label: 'Confirmado',          color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  active:          { label: 'Activo',              color: 'bg-blue-50 text-blue-700 border-blue-200' },
+  prepared:        { label: 'Preparado',           color: 'bg-green-50 text-green-700 border-green-200' },
+  out:             { label: 'En localización',     color: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  on_location:     { label: 'En localización',     color: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  'on location':   { label: 'En localización',     color: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  delayed:         { label: 'Retrasado',           color: 'bg-rose-50 text-rose-700 border-rose-200' },
+  overdue:         { label: 'Retrasado',           color: 'bg-rose-50 text-rose-700 border-rose-200' },
+  'expected return': { label: 'Esperado de regreso', color: 'bg-purple-50 text-purple-700 border-purple-200' },
+  expected_return: { label: 'Esperado de regreso', color: 'bg-purple-50 text-purple-700 border-purple-200' },
+  'expected back': { label: 'Esperado de regreso', color: 'bg-purple-50 text-purple-700 border-purple-200' },
+  returned:        { label: 'Retornado',           color: 'bg-teal-50 text-teal-700 border-teal-200' },
+  closed:          { label: 'Cerrado',             color: 'bg-gray-50 text-gray-500 border-gray-200' },
+  cancelled:       { label: 'Cancelado',           color: 'bg-red-50 text-red-600 border-red-200' },
+  option:          { label: 'Opción',              color: 'bg-yellow-50 text-yellow-700 border-yellow-200' },
+  quotation:       { label: 'Presupuesto',         color: 'bg-orange-50 text-orange-700 border-orange-200' },
+  // Estats en castellà (Rentman configurat en ES)
+  confirmado:      { label: 'Confirmado',          color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  preparado:       { label: 'Preparado',           color: 'bg-green-50 text-green-700 border-green-200' },
+  'en localización': { label: 'En localización',   color: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  en_localizacion: { label: 'En localización',     color: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  retrasado:       { label: 'Retrasado',           color: 'bg-rose-50 text-rose-700 border-rose-200' },
+  'esperado de regreso': { label: 'Esperado de regreso', color: 'bg-purple-50 text-purple-700 border-purple-200' },
+  retornado:       { label: 'Retornado',           color: 'bg-teal-50 text-teal-700 border-teal-200' },
+  devuelto:        { label: 'Devuelto',            color: 'bg-teal-50 text-teal-700 border-teal-200' },
 };
 
 function getRentmanStatusBadge(rentmanStatus) {

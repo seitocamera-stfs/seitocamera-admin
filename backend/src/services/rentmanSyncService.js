@@ -289,7 +289,9 @@ function mapRentmanStatusToProjectStatus(rentmanStatus) {
   if (['confirmed', 'confirmado'].includes(s)) return 'IN_PREPARATION';
   if (['active', 'prepared', 'preparado'].includes(s)) return 'READY';
   if (['out', 'on_location', 'en localización', 'en_localizacion', 'on location'].includes(s)) return 'OUT';
-  if (['returned', 'esperado de regreso', 'expected_return', 'expected return'].includes(s)) return 'RETURNED';
+  if (['delayed', 'retrasado', 'overdue'].includes(s)) return 'OUT'; // Retardat = encara fora
+  if (['esperado de regreso', 'expected_return', 'expected return', 'expected back'].includes(s)) return 'OUT'; // Esperant retorn = encara fora
+  if (['returned', 'retornado', 'devuelto'].includes(s)) return 'RETURNED';
   if (['closed', 'cancelled', 'archived'].includes(s)) return 'CLOSED';
   return 'PENDING_PREP';
 }
@@ -439,8 +441,9 @@ async function syncOneProject(rmProject) {
     ];
     const currentIdx = internalStatusOrder.indexOf(existing.status);
     const newIdx = internalStatusOrder.indexOf(status);
-    // Només actualitzar si Rentman avança l'estat (OUT, RETURNED, CLOSED)
-    if (newIdx > currentIdx && ['OUT', 'RETURNED', 'CLOSED'].includes(status)) {
+    // Actualitzar si Rentman avança l'estat
+    // Permet avançar: PENDING_PREP→IN_PREPARATION, →READY, →OUT, →RETURNED, →CLOSED
+    if (newIdx > currentIdx) {
       updates.status = status;
     }
 
