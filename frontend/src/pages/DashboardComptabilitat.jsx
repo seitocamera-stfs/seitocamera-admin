@@ -64,6 +64,7 @@ function getRangePreset(months) {
 
 // Format intel·ligent per l'eix Y (adapta unitats: €, k€, M€)
 function formatYAxis(value) {
+  if (value == null || isNaN(value)) return '';
   if (value === 0) return '0';
   const abs = Math.abs(value);
   if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;

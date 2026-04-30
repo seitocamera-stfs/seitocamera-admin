@@ -840,7 +840,7 @@ export default function SharedInvoices() {
                               max={Math.abs(seitoBalance)}
                               value={compensateAmount}
                               onChange={(e) => setCompensateAmount(e.target.value)}
-                              placeholder={Math.abs(seitoBalance).toFixed(2)}
+                              placeholder={(Math.abs(seitoBalance) || 0).toFixed(2)}
                               className="w-full px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                             />
                             <span className="text-sm text-muted-foreground">€</span>

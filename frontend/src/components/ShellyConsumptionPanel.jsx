@@ -100,7 +100,7 @@ export default function ShellyConsumptionPanel({ year, month, onApplySplit }) {
           <span className="font-medium text-sm text-green-800">Consum elèctric (Shelly Pro 3EM)</span>
         </div>
         <div className="text-right">
-          <span className="text-lg font-bold text-green-700">{data.totalKwh.toFixed(1)} kWh</span>
+          <span className="text-lg font-bold text-green-700">{(data.totalKwh ?? 0).toFixed(1)} kWh</span>
           <span className="text-xs text-green-600 ml-1">/ {data.days} dies</span>
         </div>
       </div>
@@ -116,7 +116,7 @@ export default function ShellyConsumptionPanel({ year, month, onApplySplit }) {
                 <div
                   className="w-full bg-green-400 rounded-t-sm hover:bg-green-500 transition-colors cursor-default min-h-[1px]"
                   style={{ height: `${Math.max(height, 2)}%` }}
-                  title={`${dayNum}/${month}: ${day.totalKwh.toFixed(2)} kWh`}
+                  title={`${dayNum}/${month}: ${(day.totalKwh ?? 0).toFixed(2)} kWh`}
                 />
               </div>
             );
@@ -161,20 +161,20 @@ export default function ShellyConsumptionPanel({ year, month, onApplySplit }) {
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
                 <span className="text-xs text-gray-500">Consum Shelly (no-Seito)</span>
-                <div className="font-semibold text-green-700">{suggestion.shellyKwh.toFixed(1)} kWh</div>
+                <div className="font-semibold text-green-700">{(suggestion.shellyKwh ?? 0).toFixed(1)} kWh</div>
               </div>
               <div>
                 <span className="text-xs text-gray-500">Consum Seito (resta)</span>
-                <div className="font-semibold text-blue-700">{suggestion.seitoKwh.toFixed(1)} kWh</div>
+                <div className="font-semibold text-blue-700">{(suggestion.seitoKwh ?? 0).toFixed(1)} kWh</div>
               </div>
             </div>
             <div className="mt-3 flex items-center justify-between">
               <div className="flex gap-4">
                 <span className="text-sm">
-                  <span className="font-bold" style={{ color: '#00617F' }}>Seito {suggestion.seitoPercent.toFixed(1)}%</span>
+                  <span className="font-bold" style={{ color: '#00617F' }}>Seito {(suggestion.seitoPercent ?? 0).toFixed(1)}%</span>
                 </span>
                 <span className="text-sm">
-                  <span className="font-bold text-orange-600">Logistik {suggestion.logistikPercent.toFixed(1)}%</span>
+                  <span className="font-bold text-orange-600">Logistik {(suggestion.logistikPercent ?? 0).toFixed(1)}%</span>
                 </span>
               </div>
               {onApplySplit && (
