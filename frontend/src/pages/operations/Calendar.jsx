@@ -407,7 +407,7 @@ export default function Calendar() {
                               >
                                 <Truck size={7} className="shrink-0" />
                                 <span className="truncate">
-                                  {tr.horaRecollida ? `${tr.horaRecollida} ` : ''}{tr.projecte || tr.desti || 'Transport'}
+                                  {tr.horaRecollida ? `${tr.horaRecollida} ` : ''}{tr.conductor?.nom ? `${tr.conductor.nom} — ` : ''}{tr.projecte || tr.desti || 'Transport'}
                                 </span>
                               </div>
                             ))}

@@ -65,6 +65,7 @@ model User {
   approvedTimeEntries   TimeEntry[]       @relation("TimeEntryApprover")
   pushSubscriptions     PushSubscription[]
   transportsCreated     Transport[]        @relation("transportCreatedBy")
+  conductorProfile      Conductor?         @relation("ConductorUser")
 
   @@map("users")
 }
@@ -1348,6 +1349,7 @@ enum AbsenceType {
   VACANCES
   MALALTIA
   RODATGE
+  TRANSPORT
   PERMIS
   FORMACIO
   ALTRE
@@ -1367,6 +1369,10 @@ model StaffAbsence {
   endDate       DateTime      @db.Date
   type          AbsenceType
   status        AbsenceStatus @default(PENDENT)
+  isPartial     Boolean       @default(false)  // Absència parcial (només unes hores)
+  startTime     String?       // HH:MM — hora inici absència (si parcial)
+  endTime       String?       // HH:MM — hora fi absència (si parcial)
+  transportId   String?       // Referència al transport que ha generat l'absència
   notes         String?
   rejectReason  String?
   createdAt     DateTime      @default(now())
@@ -1378,6 +1384,7 @@ model StaffAbsence {
   @@index([userId])
   @@index([startDate, endDate])
   @@index([status])
+  @@index([transportId])
   @@map("staff_absences")
 }
 
@@ -1476,9 +1483,11 @@ model Conductor {
   nom         String
   telefon     String?
   empresaId   String?
+  userId      String?  @unique  // Vinculat a un usuari Seito (absències automàtiques)
   createdAt   DateTime @default(now())
 
   empresa     EmpresaLogistica? @relation(fields: [empresaId], references: [id], onDelete: SetNull)
+  user        User?             @relation("ConductorUser", fields: [userId], references: [id], onDelete: SetNull)
   transports  Transport[]
 
   @@map("conductors")

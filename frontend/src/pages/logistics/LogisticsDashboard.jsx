@@ -680,21 +680,30 @@ function NewTransportModal({ conductors, empreses, onClose, onCreate }) {
 
 function ConductorsPanel({ empreses, onClose, onRefresh }) {
   const [conductors, setConductors] = useState([]);
+  const [users, setUsers] = useState([]);
   const [nom, setNom] = useState('');
   const [telefon, setTelefon] = useState('');
   const [empresaId, setEmpresaId] = useState('');
+  const [userId, setUserId] = useState('');
 
   useEffect(() => {
     api.get('/logistics/conductors').then(r => setConductors(r.data));
+    api.get('/users').then(r => setUsers(r.data)).catch(() => {});
   }, []);
 
   const handleAdd = async () => {
     if (!nom.trim()) return;
-    await api.post('/logistics/conductors', { nom, telefon, empresaId: empresaId || null });
-    setNom(''); setTelefon(''); setEmpresaId('');
+    await api.post('/logistics/conductors', { nom, telefon, empresaId: empresaId || null, userId: userId || null });
+    setNom(''); setTelefon(''); setEmpresaId(''); setUserId('');
     const r = await api.get('/logistics/conductors');
     setConductors(r.data);
     onRefresh();
+  };
+
+  const handleLinkUser = async (conductorId, newUserId) => {
+    await api.put(`/logistics/conductors/${conductorId}`, { userId: newUserId || null });
+    const r = await api.get('/logistics/conductors');
+    setConductors(r.data);
   };
 
   const handleDelete = async (id) => {
@@ -704,33 +713,51 @@ function ConductorsPanel({ empreses, onClose, onRefresh }) {
     onRefresh();
   };
 
+  // Usuaris que ja estan vinculats (per excloure'ls del selector)
+  const linkedUserIds = new Set(conductors.filter(c => c.userId).map(c => c.userId));
+
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl w-full max-w-md max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-xl w-full max-w-lg max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b">
           <h2 className="text-sm font-semibold flex items-center gap-2"><Phone size={16} /> Conductors</h2>
           <button onClick={onClose} className="p-1 rounded hover:bg-gray-100"><X size={18} /></button>
         </div>
         <div className="px-5 py-4 space-y-3">
-          <div className="flex gap-2">
-            <input value={nom} onChange={e => setNom(e.target.value)} placeholder="Nom" className="input-field flex-1" />
+          <div className="flex gap-2 flex-wrap">
+            <input value={nom} onChange={e => setNom(e.target.value)} placeholder="Nom" className="input-field flex-1 min-w-[100px]" />
             <input value={telefon} onChange={e => setTelefon(e.target.value)} placeholder="Telèfon" className="input-field w-28" />
-            <select value={empresaId} onChange={e => setEmpresaId(e.target.value)} className="input-field w-32">
+            <select value={empresaId} onChange={e => setEmpresaId(e.target.value)} className="input-field w-28">
               <option value="">Empresa</option>
               {empreses.map(emp => <option key={emp.id} value={emp.id}>{emp.nom}</option>)}
+            </select>
+            <select value={userId} onChange={e => setUserId(e.target.value)} className="input-field w-32">
+              <option value="">Usuari Seito</option>
+              {users.filter(u => u.isActive).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
             </select>
             <button onClick={handleAdd} className="px-3 py-1.5 text-xs rounded-lg text-white" style={{ background: '#00617F' }}>
               <Plus size={14} />
             </button>
           </div>
+          <p className="text-[10px] text-gray-400">Si vincules un conductor a un usuari Seito, els seus transports crearan absències automàtiques.</p>
           <div className="space-y-1">
             {conductors.map(c => (
-              <div key={c.id} className="flex items-center justify-between px-3 py-2 rounded-lg border text-xs">
-                <div>
+              <div key={c.id} className="flex items-center justify-between px-3 py-2 rounded-lg border text-xs gap-2">
+                <div className="flex-1 min-w-0">
                   <span className="font-medium">{c.nom}</span>
                   {c.telefon && <span className="text-gray-400 ml-2">{c.telefon}</span>}
                   {c.empresa && <span className="text-gray-400 ml-2">({c.empresa.nom})</span>}
                 </div>
+                <select
+                  value={c.userId || ''}
+                  onChange={e => handleLinkUser(c.id, e.target.value)}
+                  className={`text-[11px] border rounded px-1.5 py-1 w-28 ${c.userId ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white'}`}
+                >
+                  <option value="">— No vinculat —</option>
+                  {users.filter(u => u.isActive && (!linkedUserIds.has(u.id) || u.id === c.userId)).map(u => (
+                    <option key={u.id} value={u.id}>{u.name}</option>
+                  ))}
+                </select>
                 <button onClick={() => handleDelete(c.id)} className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500">
                   <Trash2 size={13} />
                 </button>

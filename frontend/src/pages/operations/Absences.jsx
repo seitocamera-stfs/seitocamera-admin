@@ -22,6 +22,7 @@ const ABSENCE_TYPES = [
   { value: 'MALALTIA', label: 'Malaltia', color: '#ef4444', bg: '#fee2e2' },
   { value: 'RODATGE', label: 'Rodatge', color: '#8b5cf6', bg: '#ede9fe' },
   { value: 'PERMIS', label: 'Permís', color: '#f59e0b', bg: '#fef3c7' },
+  { value: 'TRANSPORT', label: 'Transport', color: '#0ea5e9', bg: '#e0f2fe' },
   { value: 'FORMACIO', label: 'Formació', color: '#06b6d4', bg: '#cffafe' },
   { value: 'ALTRE', label: 'Altre', color: '#6b7280', bg: '#f3f4f6' },
 ];
@@ -378,7 +379,7 @@ export default function Absences() {
                             color: a.status === 'APROVADA' ? typeInfo.color : statusInfo.color,
                             opacity: a.status === 'REBUTJADA' ? 0.4 : 1,
                           }}
-                          title={`${a.user?.name} — ${typeInfo.label} (${statusInfo.label})${a.notes ? ': ' + a.notes : ''}`}
+                          title={`${a.user?.name} — ${typeInfo.label}${a.isPartial && a.startTime ? ` ${a.startTime}${a.endTime ? '–' + a.endTime : ''}` : ''} (${statusInfo.label})${a.notes ? ': ' + a.notes : ''}`}
                         >
                           <span className="truncate font-medium">{a.user?.name?.split(' ')[0]}</span>
                           {a.status === 'PENDENT' && <span className="text-[9px]">?</span>}
@@ -440,8 +441,12 @@ export default function Absences() {
                       <div className="min-w-0">
                         <div className="text-xs font-medium text-gray-800 truncate">{a.user?.name}</div>
                         <div className="text-[11px] text-gray-400">
-                          {typeInfo.label} · {formatDate(a.startDate)} — {formatDate(a.endDate)}
+                          {typeInfo.label} · {formatDate(a.startDate)}{a.startDate !== a.endDate ? ` — ${formatDate(a.endDate)}` : ''}
+                          {a.isPartial && a.startTime && <span className="ml-1 text-sky-600 font-medium">({a.startTime}{a.endTime ? `–${a.endTime}` : ''})</span>}
                         </div>
+                        {a.type === 'TRANSPORT' && a.notes && (
+                          <div className="text-[10px] text-sky-500 truncate">{a.notes}</div>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0 ml-2">

@@ -29,6 +29,73 @@ function afegirHistorial(historial, accio, detall = '') {
   return [...(historial || []), { timestamp: new Date().toISOString(), accio, detall }];
 }
 
+/**
+ * Sincronitza l'absència automàtica per a un transport.
+ * Si el conductor és un usuari Seito, crea/actualitza/elimina l'absència corresponent.
+ */
+async function syncTransportAbsence(transportId) {
+  const transport = await prisma.transport.findUnique({
+    where: { id: transportId },
+    include: { conductor: { select: { userId: true } } },
+  });
+  if (!transport) return;
+
+  const userId = transport.conductor?.userId;
+
+  // Eliminar absència antiga si el conductor ja no és usuari Seito o transport cancel·lat
+  if (!userId || transport.estat === 'Cancel·lat') {
+    await prisma.staffAbsence.deleteMany({ where: { transportId } });
+    return;
+  }
+
+  // Calcular dates i hores
+  const startDate = transport.dataCarrega || transport.dataEntrega;
+  if (!startDate) {
+    await prisma.staffAbsence.deleteMany({ where: { transportId } });
+    return;
+  }
+
+  // Determinar si és parcial (entrega/recollida = parcial, tot el dia = complet)
+  const isPartial = transport.tipusServei !== 'Tot el dia' && !!(transport.horaRecollida || transport.horaEntregaEstimada);
+  const startTime = transport.horaRecollida || null;
+  const endTime = transport.horaEntregaEstimada || transport.horaFiPrevista || null;
+  const endDate = transport.dataEntrega || startDate;
+
+  const notes = `Transport automàtic: ${transport.projecte || 'Transport'}${transport.origen ? ` — ${transport.origen}` : ''}${transport.desti ? ` → ${transport.desti}` : ''}`;
+
+  const existing = await prisma.staffAbsence.findFirst({ where: { transportId } });
+
+  if (existing) {
+    await prisma.staffAbsence.update({
+      where: { id: existing.id },
+      data: {
+        userId,
+        startDate: new Date(startDate),
+        endDate: new Date(endDate),
+        isPartial,
+        startTime: isPartial ? startTime : null,
+        endTime: isPartial ? endTime : null,
+        notes,
+      },
+    });
+  } else {
+    await prisma.staffAbsence.create({
+      data: {
+        userId,
+        startDate: new Date(startDate),
+        endDate: new Date(endDate),
+        type: 'TRANSPORT',
+        status: 'APROVADA', // Aprovada automàticament
+        isPartial,
+        startTime: isPartial ? startTime : null,
+        endTime: isPartial ? endTime : null,
+        transportId,
+        notes,
+      },
+    });
+  }
+}
+
 // ===========================================
 // TRANSPORTS
 // ===========================================
@@ -60,7 +127,7 @@ router.get('/transports', async (req, res, next) => {
     const transports = await prisma.transport.findMany({
       where,
       include: {
-        conductor: { select: { id: true, nom: true, telefon: true } },
+        conductor: { select: { id: true, nom: true, telefon: true, userId: true, user: { select: { id: true, name: true, color: true } } } },
         empresa: { select: { id: true, nom: true } },
         createdBy: { select: { id: true, name: true } },
       },
@@ -79,7 +146,7 @@ router.get('/transports/:id', async (req, res, next) => {
     const transport = await prisma.transport.findUnique({
       where: { id: req.params.id },
       include: {
-        conductor: { select: { id: true, nom: true, telefon: true } },
+        conductor: { select: { id: true, nom: true, telefon: true, userId: true, user: { select: { id: true, name: true, color: true } } } },
         empresa: { select: { id: true, nom: true } },
         createdBy: { select: { id: true, name: true } },
       },
@@ -126,10 +193,13 @@ router.post('/transports', async (req, res, next) => {
         createdById: req.user.id,
       },
       include: {
-        conductor: { select: { id: true, nom: true, telefon: true } },
+        conductor: { select: { id: true, nom: true, telefon: true, userId: true, user: { select: { id: true, name: true, color: true } } } },
         empresa: { select: { id: true, nom: true } },
       },
     });
+
+    // Sincronitzar absència automàtica si conductor és usuari Seito
+    syncTransportAbsence(transport.id).catch(e => logger.error('Error sync absence (create):', e.message));
 
     res.status(201).json(transport);
   } catch (err) {
@@ -192,11 +262,14 @@ router.put('/transports/:id', async (req, res, next) => {
       where: { id: req.params.id },
       data,
       include: {
-        conductor: { select: { id: true, nom: true, telefon: true } },
+        conductor: { select: { id: true, nom: true, telefon: true, userId: true, user: { select: { id: true, name: true, color: true } } } },
         empresa: { select: { id: true, nom: true } },
         createdBy: { select: { id: true, name: true } },
       },
     });
+
+    // Sincronitzar absència automàtica
+    syncTransportAbsence(transport.id).catch(e => logger.error('Error sync absence (update):', e.message));
 
     res.json(transport);
   } catch (err) {
@@ -207,6 +280,8 @@ router.put('/transports/:id', async (req, res, next) => {
 // DELETE /api/logistics/transports/:id
 router.delete('/transports/:id', async (req, res, next) => {
   try {
+    // Eliminar absència associada primer
+    await prisma.staffAbsence.deleteMany({ where: { transportId: req.params.id } });
     await prisma.transport.delete({ where: { id: req.params.id } });
     res.json({ ok: true });
   } catch (err) {
@@ -225,7 +300,7 @@ router.post('/transports/:id/start', async (req, res, next) => {
     const transport = await prisma.transport.update({
       where: { id: req.params.id },
       data: { horaIniciReal: hora, estat: 'En Preparació', historial },
-      include: { conductor: { select: { id: true, nom: true, telefon: true } }, empresa: { select: { id: true, nom: true } } },
+      include: { conductor: { select: { id: true, nom: true, telefon: true, userId: true, user: { select: { id: true, name: true, color: true } } } }, empresa: { select: { id: true, nom: true } } },
     });
     res.json(transport);
   } catch (err) {
@@ -247,7 +322,7 @@ router.post('/transports/:id/end', async (req, res, next) => {
     const transport = await prisma.transport.update({
       where: { id: req.params.id },
       data: { horaFiReal: hora, minutsExtres, estat: 'Lliurat', historial },
-      include: { conductor: { select: { id: true, nom: true, telefon: true } }, empresa: { select: { id: true, nom: true } } },
+      include: { conductor: { select: { id: true, nom: true, telefon: true, userId: true, user: { select: { id: true, name: true, color: true } } } }, empresa: { select: { id: true, nom: true } } },
     });
     res.json(transport);
   } catch (err) {
@@ -291,7 +366,10 @@ router.get('/dashboard', async (req, res, next) => {
 router.get('/conductors', async (req, res, next) => {
   try {
     const conductors = await prisma.conductor.findMany({
-      include: { empresa: { select: { id: true, nom: true } } },
+      include: {
+        empresa: { select: { id: true, nom: true } },
+        user: { select: { id: true, name: true, color: true } },
+      },
       orderBy: { nom: 'asc' },
     });
     res.json(conductors);
@@ -302,11 +380,14 @@ router.get('/conductors', async (req, res, next) => {
 
 router.post('/conductors', async (req, res, next) => {
   try {
-    const { nom, telefon, empresaId } = req.body;
+    const { nom, telefon, empresaId, userId } = req.body;
     if (!nom?.trim()) return res.status(400).json({ error: 'Nom requerit' });
     const conductor = await prisma.conductor.create({
-      data: { nom: nom.trim(), telefon: telefon || null, empresaId: empresaId || null },
-      include: { empresa: { select: { id: true, nom: true } } },
+      data: { nom: nom.trim(), telefon: telefon || null, empresaId: empresaId || null, userId: userId || null },
+      include: {
+        empresa: { select: { id: true, nom: true } },
+        user: { select: { id: true, name: true, color: true } },
+      },
     });
     res.status(201).json(conductor);
   } catch (err) {
@@ -316,11 +397,14 @@ router.post('/conductors', async (req, res, next) => {
 
 router.put('/conductors/:id', async (req, res, next) => {
   try {
-    const { nom, telefon, empresaId } = req.body;
+    const { nom, telefon, empresaId, userId } = req.body;
     const conductor = await prisma.conductor.update({
       where: { id: req.params.id },
-      data: { nom: nom?.trim(), telefon, empresaId: empresaId || null },
-      include: { empresa: { select: { id: true, nom: true } } },
+      data: { nom: nom?.trim(), telefon, empresaId: empresaId || null, userId: userId !== undefined ? (userId || null) : undefined },
+      include: {
+        empresa: { select: { id: true, nom: true } },
+        user: { select: { id: true, name: true, color: true } },
+      },
     });
     res.json(conductor);
   } catch (err) {
