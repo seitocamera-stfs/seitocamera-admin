@@ -427,7 +427,7 @@ router.post('/:id/sync', authorize('ADMIN', 'EDITOR'), async (req, res, next) =>
         where: { id: req.params.id },
         data: { lastSyncError: error.message },
       });
-    } catch (e) { /* ignore */ }
+    } catch (e) { logger.warn('No s\'ha pogut guardar lastSyncError:', e.message); }
     next(error);
   }
 });

@@ -98,7 +98,7 @@ export default function NotificationBell() {
       await api.put(`/operations/notifications/${id}/read`);
       setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
       setUnreadCount(prev => Math.max(0, prev - 1));
-    } catch { /* */ }
+    } catch (err) { console.error('Error marcant notificació com llegida:', err); }
   };
 
   const handleMarkAllRead = async () => {
@@ -106,7 +106,7 @@ export default function NotificationBell() {
       await api.put('/operations/notifications/read-all');
       setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
       setUnreadCount(0);
-    } catch { /* */ }
+    } catch (err) { console.error('Error marcant totes com llegides:', err); }
   };
 
   const handleClickNotification = (notif) => {

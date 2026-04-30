@@ -284,10 +284,10 @@ export default function Conciliation() {
           reasons.push('Referència bancària coincident');
         } else if (commissionMatch && entityMatch) {
           score = 98;
-          reasons.push(`${entityLabel} + comissió ${commissionMatch.rule} (${commissionMatch.commission.toFixed(2)}€)`);
+          reasons.push(`${entityLabel} + comissió ${commissionMatch.rule} (${(commissionMatch.commission ?? 0).toFixed(2)}€)`);
         } else if (commissionMatch) {
           score = 55;
-          reasons.push(`Possible comissió ${commissionMatch.rule} (${commissionMatch.commission.toFixed(2)}€)`);
+          reasons.push(`Possible comissió ${commissionMatch.rule} (${(commissionMatch.commission ?? 0).toFixed(2)}€)`);
         } else if (amountMatch && entityMatch) {
           score = 100;
           reasons.push(`Import exacte + ${entityLabel}`);

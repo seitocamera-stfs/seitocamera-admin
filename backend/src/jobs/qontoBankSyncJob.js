@@ -20,25 +20,30 @@ const { prisma } = require('../config/database');
 // ===========================================
 
 const REDIS_LAST_SYNC_KEY = 'bank:lastSync';
-const MAX_RUN_MINUTES = 30;
-let isRunning = false;
-let runStartedAt = null;
+const REDIS_LOCK_KEY = 'bank:sync:lock';
+const MAX_RUN_SECONDS = 1800; // 30 min
 
 /**
  * Executa la sincronització de tots els comptes amb sync automàtic
  */
 async function runBankSync(options = {}) {
-  // Guard: evitar execucions concurrents
-  if (isRunning) {
-    const elapsed = (Date.now() - runStartedAt) / 60000;
-    if (elapsed < MAX_RUN_MINUTES) {
-      logger.info('Bank sync: ja en execució, saltant');
-      return { skipped: true };
+  // Guard: evitar execucions concurrents amb Redis lock (segur amb múltiples processos)
+  try {
+    const locked = await redis.set(REDIS_LOCK_KEY, Date.now().toString(), 'EX', MAX_RUN_SECONDS, 'NX');
+    if (!locked) {
+      const lockTime = await redis.get(REDIS_LOCK_KEY);
+      const elapsed = lockTime ? (Date.now() - parseInt(lockTime)) / 60000 : 0;
+      if (elapsed < MAX_RUN_SECONDS / 60) {
+        logger.info('Bank sync: ja en execució, saltant');
+        return { skipped: true };
+      }
+      logger.warn(`Bank sync: lock antic (${elapsed.toFixed(0)} min), forçant reset`);
+      await redis.del(REDIS_LOCK_KEY);
+      await redis.set(REDIS_LOCK_KEY, Date.now().toString(), 'EX', MAX_RUN_SECONDS, 'NX');
     }
-    logger.warn(`Bank sync: lock antic (${elapsed.toFixed(0)} min), forçant reset`);
+  } catch (lockErr) {
+    logger.warn('Bank sync: Redis lock no disponible, continuant amb precaució:', lockErr.message);
   }
-  isRunning = true;
-  runStartedAt = Date.now();
 
   const startTime = Date.now();
   const results = [];
@@ -170,8 +175,7 @@ async function runBankSync(options = {}) {
     logger.error(`Bank sync job: Error — ${err.message}`);
     return errorResult;
   } finally {
-    isRunning = false;
-    runStartedAt = null;
+    try { await redis.del(REDIS_LOCK_KEY); } catch {}
   }
 }
 

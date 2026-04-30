@@ -24,7 +24,10 @@ export default function usePushNotifications() {
       navigator.serviceWorker.ready.then((reg) => {
         reg.pushManager.getSubscription().then((sub) => {
           setIsSubscribed(!!sub);
-        });
+        }).catch(() => {});
+      }).catch((err) => {
+        console.warn('Service Worker no disponible:', err);
+        setIsSupported(false);
       });
     }
   }, []);
