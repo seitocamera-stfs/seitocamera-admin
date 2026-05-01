@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   Truck, Plus, Search, X, Filter, ChevronDown, ChevronRight,
   Package, PackageCheck, PackageOpen, Clock, Phone, MapPin,
@@ -61,12 +62,14 @@ function formatDataCurta(dateStr) {
 // ===========================================
 
 export default function LogisticsDashboard() {
+  const location = useLocation();
   const [transports, setTransports] = useState([]);
   const [conductors, setConductors] = useState([]);
   const [empreses, setEmpreses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [showConfig, setShowConfig] = useState(null); // 'conductors' | 'empreses' | null
+  const [highlightId, setHighlightId] = useState(null);
 
   // Filtres
   const [filterEstat, setFilterEstat] = useState('');
@@ -92,6 +95,21 @@ export default function LogisticsDashboard() {
   }, []);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // Scroll al transport destacat si ve del calendari
+  useEffect(() => {
+    if (location.state?.highlightTransportId && transports.length > 0) {
+      setHighlightId(location.state.highlightTransportId);
+      window.history.replaceState({}, '');
+      // Scroll al element
+      setTimeout(() => {
+        const el = document.getElementById(`transport-${location.state.highlightTransportId}`);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 200);
+      // Treure highlight després de 3s
+      setTimeout(() => setHighlightId(null), 3500);
+    }
+  }, [location.state, transports]);
 
   const responsables = useMemo(() => {
     const set = new Set(transports.map(t => t.responsableProduccio).filter(Boolean));
@@ -268,6 +286,7 @@ export default function LogisticsDashboard() {
                         empreses={empreses}
                         onUpdate={handleUpdate}
                         onDelete={handleDelete}
+                        isHighlighted={highlightId === t.id}
                       />
                     ))}
                   </tbody>
@@ -302,7 +321,7 @@ export default function LogisticsDashboard() {
 // Transport Row
 // ===========================================
 
-function TransportRow({ t, conductors, empreses, onUpdate, onDelete }) {
+function TransportRow({ t, conductors, empreses, onUpdate, onDelete, isHighlighted }) {
   const [expanded, setExpanded] = useState(false);
   const cancellat = t.estat === 'Cancel·lat';
   const minsExtres = t.minutsExtres;
@@ -313,7 +332,10 @@ function TransportRow({ t, conductors, empreses, onUpdate, onDelete }) {
 
   return (
     <>
-      <tr className={`border-b border-gray-100 hover:bg-gray-50/60 ${cancellat ? 'opacity-60 bg-rose-50/20' : ''}`}>
+      <tr
+        id={`transport-${t.id}`}
+        className={`border-b border-gray-100 hover:bg-gray-50/60 ${cancellat ? 'opacity-60 bg-rose-50/20' : ''} ${isHighlighted ? 'ring-2 ring-primary bg-primary/5 animate-pulse' : ''}`}
+      >
         <td className="px-3 py-2.5">
           <button onClick={() => setExpanded(!expanded)} className="p-1 rounded hover:bg-gray-200 text-gray-400">
             {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}

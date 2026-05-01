@@ -146,6 +146,36 @@ router.post('/qonto/sync', authorize('ADMIN'), async (req, res, next) => {
 });
 
 // ===========================================
+// QONTO DROPZONE — Justificants automàtics
+// ===========================================
+
+const { runDropzoneSync, getLastDropzoneResult } = require('../jobs/qontoDropzoneJob');
+
+/**
+ * GET /api/bank/qonto/dropzone/status — Últim resultat del job Dropzone
+ */
+router.get('/qonto/dropzone/status', authorize('ADMIN'), async (req, res, next) => {
+  try {
+    const lastRun = await getLastDropzoneResult();
+    res.json(lastRun || { success: null, timestamp: null });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /api/bank/qonto/dropzone/sync — Executar manualment el job Dropzone
+ */
+router.post('/qonto/dropzone/sync', authorize('ADMIN'), async (req, res, next) => {
+  try {
+    const result = await runDropzoneSync();
+    res.json({ message: 'Qonto Dropzone sync completat', ...result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ===========================================
 // RUTES ESTÀTIQUES (han d'anar ABANS de /:id)
 // ===========================================
 

@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   ListTodo, Plus, User, Clock, CheckCircle2, Circle, Ban,
   Loader2, Package, CalendarDays, Tag, Bell, Repeat, ChevronDown,
@@ -78,6 +79,7 @@ const ACTIVITY_LABELS = {
 // ===========================================
 
 export default function Tasks() {
+  const location = useLocation();
   const currentUser = useAuthStore((s) => s.user);
   const [view, setView] = useState('today');
   const [viewMode, setViewMode] = useState('list'); // 'list' o 'kanban'
@@ -98,6 +100,20 @@ export default function Tasks() {
   const tasks = data?.tasks || [];
   const counts = data?.counts || {};
   const isAdmin = data?.isAdmin || false;
+
+  // Obrir tasca automàticament si ve del calendari
+  useEffect(() => {
+    if (location.state?.highlightTaskId && tasks.length > 0) {
+      const task = tasks.find(t => t.id === location.state.highlightTaskId);
+      if (task) {
+        setSelectedTask(task);
+        window.history.replaceState({}, '');
+      } else {
+        // Si no és a la vista actual, canviar a 'all'
+        setView('all');
+      }
+    }
+  }, [location.state, tasks]);
 
   const filteredTasks = priorityFilter
     ? tasks.filter(t => t.priority === priorityFilter)

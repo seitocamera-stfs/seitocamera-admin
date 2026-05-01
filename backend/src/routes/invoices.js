@@ -1635,27 +1635,8 @@ router.patch('/received/:id/status', authorize('ADMIN', 'EDITOR'), validate(stat
       }
     }
 
-    // Si es marca com APPROVED, copiar fitxer al Dropzone de Qonto Connect
-    if (newStatus === 'APPROVED') {
-      const existing = await prisma.receivedInvoice.findUnique({
-        where: { id: req.params.id },
-        select: { gdriveFileId: true, invoiceNumber: true },
-      });
-      if (existing?.gdriveFileId) {
-        try {
-          const dropzoneFolderId = process.env.QONTO_DROPZONE_FOLDER_ID
-            || await gdrive.findFolderByName('Dropzone');
-          if (dropzoneFolderId) {
-            await gdrive.copyFile(existing.gdriveFileId, dropzoneFolderId);
-            logger.info(`Factura copiada al Dropzone Qonto Connect: ${existing.invoiceNumber || req.params.id}`);
-          } else {
-            logger.warn('Dropzone folder no trobada al Google Drive. Configura QONTO_DROPZONE_FOLDER_ID al .env');
-          }
-        } catch (driveErr) {
-          logger.warn(`No s'ha pogut copiar al Dropzone: ${driveErr.message}`);
-        }
-      }
-    }
+    // NOTA: La còpia a Qonto Dropzone ara es fa automàticament via qontoDropzoneJob
+    // quan el moviment bancari es concilia amb la factura (no depèn d'aprovació manual)
 
     const invoice = await prisma.receivedInvoice.update({
       where: { id: req.params.id },

@@ -1,7 +1,8 @@
 import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   CalendarDays, ChevronLeft, ChevronRight,
-  Loader2, Truck,
+  Loader2, Truck, Repeat,
 } from 'lucide-react';
 import { useApiGet } from '../../hooks/useApi';
 
@@ -96,6 +97,7 @@ function getProjectColor(project, fallbackIdx) {
 // ===========================================
 
 export default function Calendar() {
+  const navigate = useNavigate();
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
@@ -332,7 +334,8 @@ export default function Calendar() {
                       return (
                         <div
                           key={`${bar.id}-${rowIdx}`}
-                          className="absolute overflow-hidden cursor-default"
+                          className="absolute overflow-hidden cursor-pointer hover:opacity-100 transition-opacity"
+                          onClick={() => navigate('/operations/projects', { state: { highlightProjectId: bar.id } })}
                           style={{
                             left: `calc(${leftPct}% + 2px)`,
                             width: `calc(${widthPct}% - 4px)`,
@@ -345,7 +348,7 @@ export default function Calendar() {
                               : '0',
                             opacity: 0.9,
                           }}
-                          title={`${bar.name}${bar.clientName ? ` — ${bar.clientName}` : ''}${bar.leadUser?.name ? ` (${bar.leadUser.name})` : ''}`}
+                          title={`${bar.name}${bar.clientName ? ` — ${bar.clientName}` : ''}${bar.leadUser?.name ? ` (${bar.leadUser.name})` : ''} — Clic per obrir`}
                         >
                           <span
                             className="text-[9px] text-white font-medium px-1.5 whitespace-nowrap block truncate drop-shadow-sm"
@@ -372,14 +375,16 @@ export default function Calendar() {
                             {tasks.map((t) => (
                               <div
                                 key={t.id}
-                                className={`text-[8px] leading-tight px-1 py-0.5 rounded truncate border mb-0.5 ${
+                                className={`text-[8px] leading-tight px-1 py-0.5 rounded truncate border mb-0.5 cursor-pointer hover:ring-1 hover:ring-amber-400 transition-shadow flex items-center gap-0.5 ${
                                   t.status === 'OP_DONE'
                                     ? 'bg-green-50 border-green-200 text-green-700 line-through'
                                     : 'bg-amber-50 border-amber-200 text-amber-800'
                                 }`}
-                                title={`Tasca: ${t.title}${t.assignedTo ? ` — ${t.assignedTo.name}` : ''}`}
+                                onClick={() => navigate('/operations/tasks', { state: { highlightTaskId: t.originalTaskId || t.id } })}
+                                title={`Tasca: ${t.title}${t.assignedTo ? ` — ${t.assignedTo.name}` : ''}${t.isRecurringInstance ? ' (recurrent)' : ''} — Clic per obrir`}
                               >
-                                {t.title}
+                                {t.isRecurringInstance && <Repeat size={6} className="shrink-0 text-amber-500" />}
+                                <span className="truncate">{t.title}</span>
                               </div>
                             ))}
                           </div>
@@ -402,8 +407,9 @@ export default function Calendar() {
                             {transports.map((tr, i) => (
                               <div
                                 key={`${tr.id}-${tr.displayType}-${i}`}
-                                className="text-[8px] leading-tight px-1 py-0.5 rounded truncate border mb-0.5 bg-sky-50 border-sky-200 text-sky-800 flex items-center gap-0.5"
-                                title={`${tr.displayType === 'entrega' ? 'Entrega' : 'Càrrega'}: ${tr.projecte || 'Transport'}${tr.origen ? ` — ${tr.origen}` : ''}${tr.desti ? ` → ${tr.desti}` : ''}${tr.horaRecollida ? ` (${tr.horaRecollida})` : ''}`}
+                                className="text-[8px] leading-tight px-1 py-0.5 rounded truncate border mb-0.5 bg-sky-50 border-sky-200 text-sky-800 flex items-center gap-0.5 cursor-pointer hover:ring-1 hover:ring-sky-400 transition-shadow"
+                                onClick={() => navigate('/logistics', { state: { highlightTransportId: tr.id } })}
+                                title={`${tr.displayType === 'entrega' ? 'Entrega' : 'Càrrega'}: ${tr.projecte || 'Transport'}${tr.origen ? ` — ${tr.origen}` : ''}${tr.desti ? ` → ${tr.desti}` : ''}${tr.horaRecollida ? ` (${tr.horaRecollida})` : ''} — Clic per obrir`}
                               >
                                 <Truck size={7} className="shrink-0" />
                                 <span className="truncate">
@@ -433,7 +439,11 @@ export default function Calendar() {
             {projectBars.length > 0 && (
               <div className="flex items-center gap-3 flex-wrap">
                 {projectBars.map((bar) => (
-                  <span key={bar.id} className="flex items-center gap-1.5">
+                  <span
+                    key={bar.id}
+                    className="flex items-center gap-1.5 cursor-pointer hover:underline"
+                    onClick={() => navigate('/operations/projects', { state: { highlightProjectId: bar.id } })}
+                  >
                     <span className="w-3 h-3 rounded" style={{ backgroundColor: bar.color }} />
                     {bar.name}
                     {bar.leadUser?.name && <span className="text-muted-foreground/60">({bar.leadUser.name})</span>}

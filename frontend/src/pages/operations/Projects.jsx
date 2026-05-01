@@ -1,4 +1,5 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   Package, Plus, Search, Filter, Clock, User, Users, AlertTriangle,
   CheckCircle2, XCircle, ChevronDown, X, Loader2, ArrowRight,
@@ -70,6 +71,7 @@ const PRIORITY_LABELS = { 0: 'Normal', 1: 'Alta', 2: 'Urgent' };
 // ===========================================
 
 export default function Projects() {
+  const location = useLocation();
   const [viewMode, setViewMode] = useState('list'); // 'list' | 'kanban'
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch] = useState('');
@@ -80,6 +82,15 @@ export default function Projects() {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkStatus, setBulkStatus] = useState('');
   const [bulkChanging, setBulkChanging] = useState(false);
+
+  // Obrir projecte automàticament si ve del calendari
+  useEffect(() => {
+    if (location.state?.highlightProjectId) {
+      setSelectedProject(location.state.highlightProjectId);
+      // Netejar l'state per evitar reobrir al navegar enrere
+      window.history.replaceState({}, '');
+    }
+  }, [location.state]);
 
   const activeStatuses = statusFilter || ALL_STATUSES.filter(s => s !== 'CLOSED').join(',');
 

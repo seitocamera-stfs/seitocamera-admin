@@ -1283,6 +1283,27 @@ router.put('/daily/:date', async (req, res, next) => {
 // CALENDARI MENSUAL
 // ===========================================
 
+/**
+ * Avança una data segons el tipus de recurrència.
+ * Retorna una nova Date o null si el tipus no és reconegut.
+ */
+function advanceRecurrence(date, recurrence) {
+  const d = new Date(date);
+  switch (recurrence) {
+    case 'DAILY':
+      d.setDate(d.getDate() + 1);
+      return d;
+    case 'WEEKLY':
+      d.setDate(d.getDate() + 7);
+      return d;
+    case 'MONTHLY':
+      d.setMonth(d.getMonth() + 1);
+      return d;
+    default:
+      return null; // CUSTOM no es pot expandir automàticament
+  }
+}
+
 // GET /api/operations/calendar/:year/:month — Dades del calendari mensual
 router.get('/calendar/:year/:month', async (req, res, next) => {
   try {
@@ -1338,6 +1359,60 @@ router.get('/calendar/:year/:month', async (req, res, next) => {
       orderBy: { dueAt: 'asc' },
     });
 
+    // Tasques recurrents: buscar tasques amb recurrence != NONE que podrien generar ocurrències dins del mes
+    const recurringTasks = await prisma.projectTask.findMany({
+      where: {
+        recurrence: { not: 'NONE' },
+        status: { not: 'OP_CANCELLED' },
+        dueAt: { not: null, lt: endDate }, // Tenen dueAt anterior al final del mes
+        OR: [
+          { recurrenceEndAt: null },           // Sense data final
+          { recurrenceEndAt: { gte: startDate } }, // Data final dins o després del mes
+        ],
+      },
+      include: {
+        project: { select: { id: true, name: true } },
+        assignedTo: { select: { id: true, name: true, color: true } },
+        createdBy: { select: { id: true, name: true } },
+      },
+    });
+
+    // Generar ocurrències futures de tasques recurrents dins del mes
+    const recurringOccurrences = [];
+    const existingTaskDates = new Set(tasks.map(t => `${t.id}-${t.dueAt?.toISOString()?.slice(0,10)}`));
+
+    for (const task of recurringTasks) {
+      const baseDue = new Date(task.dueAt);
+      const endLimit = task.recurrenceEndAt ? new Date(Math.min(task.recurrenceEndAt.getTime(), endDate.getTime())) : endDate;
+
+      let current = new Date(baseDue);
+      // Avançar fins arribar al rang del mes
+      while (current < startDate) {
+        current = advanceRecurrence(current, task.recurrence);
+        if (!current) break;
+      }
+
+      // Generar ocurrències dins del mes (màx 31 per seguretat)
+      let count = 0;
+      while (current && current < endLimit && count < 31) {
+        const dateKey = `${task.id}-${current.toISOString().slice(0,10)}`;
+        if (!existingTaskDates.has(dateKey)) {
+          recurringOccurrences.push({
+            ...task,
+            id: `${task.id}_recur_${current.toISOString().slice(0,10)}`,
+            originalTaskId: task.id,
+            dueAt: new Date(current),
+            isRecurringInstance: true,
+          });
+        }
+        current = advanceRecurrence(current, task.recurrence);
+        count++;
+      }
+    }
+
+    // Combinar tasques reals + ocurrències recurrents
+    const allTasks = [...tasks, ...recurringOccurrences].sort((a, b) => new Date(a.dueAt) - new Date(b.dueAt));
+
     // Transports del mes (logística)
     const transports = await prisma.transport.findMany({
       where: {
@@ -1364,7 +1439,7 @@ router.get('/calendar/:year/:month', async (req, res, next) => {
       orderBy: { dataCarrega: 'asc' },
     });
 
-    res.json({ projects, tasks, transports, year, month: month + 1 });
+    res.json({ projects, tasks: allTasks, transports, year, month: month + 1 });
   } catch (err) {
     next(err);
   }

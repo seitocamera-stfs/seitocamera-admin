@@ -439,6 +439,7 @@ model BankMovement {
   rawData         Json?
   isConciliated   Boolean      @default(false)
   isDismissed     Boolean      @default(false)   // Descartat manualment (no cal conciliar)
+  dropzoneSentAt  DateTime?    // Data en què s'ha copiat el justificant a la Dropzone de Qonto
   dismissReason   String?                         // Motiu: "transferència interna", "impost", etc.
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
