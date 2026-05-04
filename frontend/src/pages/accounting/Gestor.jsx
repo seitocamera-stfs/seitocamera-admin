@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Bot, Send, RefreshCw, AlertCircle, AlertTriangle, Info, CheckCircle2, ChevronRight, Sparkles } from 'lucide-react';
+import { Bot, Send, RefreshCw, AlertCircle, AlertTriangle, Info, CheckCircle2, ChevronRight, Sparkles, Brain, Check, X as XIcon } from 'lucide-react';
 import { useApiGet } from '../../hooks/useApi';
 import api from '../../lib/api';
 
@@ -13,12 +13,30 @@ const SEVERITY = {
 
 export default function Gestor() {
   const { data: scan, loading: scanLoading, refetch: refetchScan } = useApiGet('/gestor/scan');
+  const { data: suggestionsData, refetch: refetchSuggestions } = useApiGet('/agent/suggestions', { status: 'PENDING', limit: 50 });
+  const [tab, setTab] = useState('observations');
   const [messages, setMessages] = useState([]);
   const [history, setHistory] = useState([]);  // historial Anthropic per al tool-use loop
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [executing, setExecuting] = useState(null);
+  const [suggestionAction, setSuggestionAction] = useState(null);
   const scrollRef = useRef(null);
+
+  const pendingSuggestions = suggestionsData?.data || [];
+
+  const handleSuggestionAction = async (id, action) => {
+    setSuggestionAction(id);
+    try {
+      await api.patch(`/agent/suggestions/${id}`, { action });
+      refetchSuggestions();
+      refetchScan();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error');
+    } finally {
+      setSuggestionAction(null);
+    }
+  };
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -81,58 +99,130 @@ export default function Gestor() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* TAULER PROACTIU */}
+        {/* TAULER ESQUERRE: tabs entre Observacions i Suggeriments de l'agent */}
         <div>
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-2">Què cal mirar ara</h2>
-          {scanLoading && <div className="text-sm text-muted-foreground">Escanejant...</div>}
-          {scan && scan.items.length === 0 && (
-            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 text-emerald-800 text-sm flex items-center gap-2">
-              <CheckCircle2 size={18} /> Tot al dia. No hi ha res pendent que requereixi la teva atenció.
-            </div>
-          )}
-          {scan && scan.items.length > 0 && (
-            <div className="space-y-2">
-              {scan.items.map((it) => {
-                const sev = SEVERITY[it.severity] || SEVERITY.normal;
-                const Icon = sev.icon;
-                return (
-                  <div key={it.id} className={`${sev.bg} border rounded-lg p-3`}>
-                    <div className="flex items-start gap-2">
-                      <Icon size={18} className={`${sev.color} mt-0.5 shrink-0`} />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className={`text-xs font-medium ${sev.color} uppercase`}>{sev.label}</span>
-                          <span className="text-xs text-muted-foreground">·</span>
-                          <span className="text-xs text-muted-foreground">{it.category}</span>
+          <div className="flex gap-1 border-b mb-3">
+            <TabButton active={tab === 'observations'} onClick={() => setTab('observations')}>
+              <AlertCircle size={14} /> Què cal mirar ara
+              {scan?.items?.length > 0 && <span className="ml-1 text-xs bg-primary text-primary-foreground rounded-full px-1.5">{scan.items.length}</span>}
+            </TabButton>
+            <TabButton active={tab === 'suggestions'} onClick={() => setTab('suggestions')}>
+              <Brain size={14} /> Suggeriments de l'agent
+              {pendingSuggestions.length > 0 && <span className="ml-1 text-xs bg-violet-600 text-white rounded-full px-1.5">{pendingSuggestions.length}</span>}
+            </TabButton>
+          </div>
+
+          {tab === 'observations' && (
+            <>
+              {scanLoading && <div className="text-sm text-muted-foreground">Escanejant...</div>}
+              {scan && scan.items.length === 0 && (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 text-emerald-800 text-sm flex items-center gap-2">
+                  <CheckCircle2 size={18} /> Tot al dia. No hi ha res pendent que requereixi la teva atenció.
+                </div>
+              )}
+              {scan && scan.items.length > 0 && (
+                <div className="space-y-2">
+                  {scan.items.map((it) => {
+                    const sev = SEVERITY[it.severity] || SEVERITY.normal;
+                    const Icon = sev.icon;
+                    return (
+                      <div key={it.id} className={`${sev.bg} border rounded-lg p-3`}>
+                        <div className="flex items-start gap-2">
+                          <Icon size={18} className={`${sev.color} mt-0.5 shrink-0`} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-xs font-medium ${sev.color} uppercase`}>{sev.label}</span>
+                              <span className="text-xs text-muted-foreground">·</span>
+                              <span className="text-xs text-muted-foreground">{it.category}</span>
+                            </div>
+                            <h3 className="font-medium text-sm mt-0.5">{it.title}</h3>
+                            <p className="text-xs text-muted-foreground mt-1">{it.description}</p>
+                            {it.details && it.details.length > 0 && (
+                              <ul className="mt-2 space-y-0.5 text-xs">
+                                {it.details.map((d, i) => (
+                                  <li key={i} className="text-muted-foreground">· {d.text}</li>
+                                ))}
+                              </ul>
+                            )}
+                            <div className="flex gap-2 mt-2">
+                              {it.actionUrl && (
+                                <Link to={it.actionUrl} className="text-xs inline-flex items-center gap-1 px-2 py-1 rounded border hover:bg-white/60">
+                                  {it.actionLabel} <ChevronRight size={12} />
+                                </Link>
+                              )}
+                              <button
+                                onClick={() => send(`Ajuda'm amb això: "${it.title}"`)}
+                                className="text-xs inline-flex items-center gap-1 px-2 py-1 rounded bg-primary text-primary-foreground hover:opacity-90"
+                              >
+                                <Sparkles size={11} /> Encarrega-li al gestor
+                              </button>
+                            </div>
+                          </div>
                         </div>
-                        <h3 className="font-medium text-sm mt-0.5">{it.title}</h3>
-                        <p className="text-xs text-muted-foreground mt-1">{it.description}</p>
-                        {it.details && it.details.length > 0 && (
-                          <ul className="mt-2 space-y-0.5 text-xs">
-                            {it.details.map((d, i) => (
-                              <li key={i} className="text-muted-foreground">· {d.text}</li>
-                            ))}
-                          </ul>
-                        )}
-                        <div className="flex gap-2 mt-2">
-                          {it.actionUrl && (
-                            <Link to={it.actionUrl} className="text-xs inline-flex items-center gap-1 px-2 py-1 rounded border hover:bg-white/60">
-                              {it.actionLabel} <ChevronRight size={12} />
-                            </Link>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+
+          {tab === 'suggestions' && (
+            <>
+              {pendingSuggestions.length === 0 && (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 text-emerald-800 text-sm flex items-center gap-2">
+                  <CheckCircle2 size={18} /> No hi ha suggeriments pendents. L'agent generarà nous quan classifiqui factures noves.
+                </div>
+              )}
+              {pendingSuggestions.length > 0 && (
+                <div className="space-y-2">
+                  {pendingSuggestions.map((s) => (
+                    <div key={s.id} className="bg-violet-50 border border-violet-200 rounded-lg p-3">
+                      <div className="flex items-start gap-2">
+                        <Brain size={18} className="text-violet-700 mt-0.5 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-medium text-violet-700 uppercase">{s.type}</span>
+                            {s.confidence != null && (
+                              <span className="text-xs text-muted-foreground">· {(s.confidence * 100).toFixed(0)}% confiança</span>
+                            )}
+                          </div>
+                          <h3 className="font-medium text-sm mt-0.5">{s.title}</h3>
+                          {s.description && <p className="text-xs text-muted-foreground mt-1">{s.description}</p>}
+                          {s.receivedInvoice && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Factura: <strong>{s.receivedInvoice.invoiceNumber}</strong> — {s.receivedInvoice.supplier?.name || '?'} ({Number(s.receivedInvoice.totalAmount).toFixed(2)} €)
+                            </p>
                           )}
-                          <button
-                            onClick={() => send(`Ajuda'm amb això: "${it.title}"`)}
-                            className="text-xs inline-flex items-center gap-1 px-2 py-1 rounded bg-primary text-primary-foreground hover:opacity-90"
-                          >
-                            <Sparkles size={11} /> Encarrega-li al gestor
-                          </button>
+                          {s.reasoning && (
+                            <details className="mt-1 text-xs text-muted-foreground">
+                              <summary className="cursor-pointer">Per què?</summary>
+                              <p className="mt-1 italic">{s.reasoning}</p>
+                            </details>
+                          )}
+                          <div className="flex gap-2 mt-2">
+                            <button
+                              onClick={() => handleSuggestionAction(s.id, 'accept')}
+                              disabled={suggestionAction === s.id}
+                              className="text-xs inline-flex items-center gap-1 px-3 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                            >
+                              <Check size={11} /> Acceptar
+                            </button>
+                            <button
+                              onClick={() => handleSuggestionAction(s.id, 'reject')}
+                              disabled={suggestionAction === s.id}
+                              className="text-xs inline-flex items-center gap-1 px-3 py-1 rounded border hover:bg-muted disabled:opacity-50"
+                            >
+                              <XIcon size={11} /> Rebutjar
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -173,6 +263,17 @@ export default function Gestor() {
         </div>
       </div>
     </div>
+  );
+}
+
+function TabButton({ active, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors inline-flex items-center gap-1.5 ${active ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+    >
+      {children}
+    </button>
   );
 }
 

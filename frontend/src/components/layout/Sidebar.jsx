@@ -127,10 +127,7 @@ const sections = [
     key: 'agent',
     label: 'Agent IA',
     items: [
-      { to: '/gestor', icon: Sparkles, label: 'Gestor IA (autònom)', section: 'agent' },
-      { to: '/agent', icon: Bot, label: 'Chat clàssic', section: 'agent' },
-      { to: '/agent/supervisor', icon: Activity, label: 'Supervisor', section: 'agent' },
-      { to: '/agent/rules', icon: Brain, label: 'Regles', section: 'agent' },
+      { to: '/gestor', icon: Sparkles, label: 'Gestor IA', section: 'agent' },
     ],
   },
   {
@@ -157,6 +154,8 @@ const sections = [
     label: 'Administració',
     items: [
       { to: '/users', icon: UserCog, label: 'Usuaris', section: 'users' },
+      { to: '/agent/supervisor', icon: Activity, label: 'Supervisor jobs IA', section: 'agent' },
+      { to: '/agent/rules', icon: Brain, label: 'Regles agent', section: 'agent' },
       { to: '/settings/connections', icon: Plug, label: 'Connexions', section: null, adminOnly: true },
       { to: '/ai-costs', icon: BrainCircuit, label: 'Costos IA', section: null, adminOnly: true },
       { to: '/audit-log', icon: History, label: 'Auditoria', section: 'audit' },

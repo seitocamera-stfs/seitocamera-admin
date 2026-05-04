@@ -14,7 +14,6 @@ import BankMovements from './pages/BankMovements';
 import Conciliation from './pages/Conciliation';
 import Reminders from './pages/Reminders';
 import Users from './pages/Users';
-import AccountingAgent from './pages/AccountingAgent';
 import AgentRules from './pages/AgentRules';
 import AgentSupervisor from './pages/AgentSupervisor';
 import Equipment from './pages/Equipment';
@@ -84,7 +83,6 @@ function App() {
         <Route path="users" element={<RoleGuard section="users"><Users /></RoleGuard>} />
         <Route path="invoices/shared" element={<RoleGuard section="sharedInvoices"><SharedInvoices /></RoleGuard>} />
         <Route path="fiscal" element={<RoleGuard section="fiscal"><Fiscal /></RoleGuard>} />
-        <Route path="agent" element={<RoleGuard section="agent"><AccountingAgent /></RoleGuard>} />
         <Route path="agent/rules" element={<RoleGuard section="agent"><AgentRules /></RoleGuard>} />
         <Route path="agent/supervisor" element={<RoleGuard section="agent"><AgentSupervisor /></RoleGuard>} />
         <Route path="equipment" element={<RoleGuard section="equipment"><Equipment /></RoleGuard>} />
