@@ -31,6 +31,12 @@ import {
   X,
   ClipboardList,
   Timer,
+  Building2,
+  BookText,
+  History,
+  ClipboardEdit,
+  ScrollText,
+  Scale,
 } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
 import useCompanyStore from '../../stores/companyStore';
@@ -42,15 +48,22 @@ import { canAccessSection } from '../../lib/permissions';
 
 const sections = [
   {
+    key: 'home',
+    label: 'Inici',
+    items: [
+      { to: '/', icon: LayoutDashboard, label: 'Dashboard', section: 'dashboard' },
+    ],
+  },
+  {
     key: 'operations',
     label: 'Operacions',
     items: [
-      { to: '/', icon: LayoutDashboard, label: 'Dashboard', section: 'dashboard' },
       { to: '/operations/calendar', icon: Calendar, label: 'Calendari', section: 'operations' },
       { to: '/operations/projects', icon: Package, label: 'Projectes', section: 'operations' },
       { to: '/operations/tasks', icon: ListTodo, label: 'Tasques', section: 'operations' },
       { to: '/operations/incidents', icon: AlertTriangle, label: 'Incidències', section: 'operations' },
       { to: '/operations/protocols', icon: BookOpen, label: 'Protocols', section: 'operations' },
+      { to: '/operations/roles', icon: ShieldCheck, label: 'Rols i personal', section: 'operations' },
     ],
   },
   {
@@ -70,30 +83,59 @@ const sections = [
     ],
   },
   {
+    key: 'invoicing',
+    label: 'Facturació i Banc',
+    items: [
+      { to: '/invoices/received', icon: FileInput, label: 'Factures rebudes', section: 'receivedInvoices' },
+      { to: '/invoices/issued', icon: FileOutput, label: 'Factures emeses', section: 'issuedInvoices' },
+      { to: '/invoices/shared', icon: Split, label: 'Compartides Seito↔Logistik', section: 'sharedInvoices' },
+      { to: '/bank', icon: Landmark, label: 'Moviments bancaris', section: 'bank' },
+      { to: '/conciliation', icon: GitCompare, label: 'Conciliació', section: 'conciliation' },
+      { to: '/reminders', icon: Bell, label: 'Recordatoris cobrament', section: 'reminders' },
+    ],
+  },
+  {
     key: 'accounting',
     label: 'Comptabilitat',
     items: [
       { to: '/accounting', icon: Coins, label: 'Resum comptable', section: 'fiscal' },
-      { to: '/invoices/received', icon: FileInput, label: 'Factures rebudes', section: 'receivedInvoices' },
-      { to: '/invoices/issued', icon: FileOutput, label: 'Factures emeses', section: 'issuedInvoices' },
-      { to: '/invoices/shared', icon: Split, label: 'Compartides', section: 'sharedInvoices' },
-      { to: '/bank', icon: Landmark, label: 'Moviments bancaris', section: 'bank' },
-      { to: '/conciliation', icon: GitCompare, label: 'Conciliació', section: 'conciliation' },
-      { to: '/fiscal', icon: Calculator, label: 'Fiscal', section: 'fiscal' },
-      { to: '/reminders', icon: Bell, label: 'Recordatoris', section: 'reminders' },
-      { to: '/agent', icon: Bot, label: 'Agent comptable', section: 'agent' },
-      { to: '/agent/rules', icon: Brain, label: 'Regles agent', section: 'agent' },
-      { to: '/agent/supervisor', icon: Activity, label: 'Supervisor agent', section: 'agent' },
+      { to: '/journal', icon: ClipboardEdit, label: 'Llibre diari', section: 'accounting' },
+      { to: '/ledger', icon: ScrollText, label: 'Llibre major', section: 'accounting' },
+      { to: '/trial-balance', icon: Scale, label: 'Sumes i saldos', section: 'accounting' },
     ],
   },
   {
-    key: 'management',
-    label: 'Gestió',
+    key: 'fiscal',
+    label: 'Fiscal',
+    items: [
+      { to: '/fiscal', icon: Calculator, label: 'Models AEAT', section: 'fiscal' },
+    ],
+  },
+  {
+    key: 'agent',
+    label: 'Agent IA',
+    items: [
+      { to: '/agent', icon: Bot, label: 'Chat', section: 'agent' },
+      { to: '/agent/supervisor', icon: Activity, label: 'Supervisor', section: 'agent' },
+      { to: '/agent/rules', icon: Brain, label: 'Regles', section: 'agent' },
+    ],
+  },
+  {
+    key: 'partners',
+    label: 'Tercers i Inventari',
     items: [
       { to: '/suppliers', icon: Truck, label: 'Proveïdors', section: 'suppliers' },
       { to: '/clients', icon: Users, label: 'Clients', section: 'clients' },
       { to: '/equipment', icon: Camera, label: 'Inventari equips', section: 'equipment' },
-      { to: '/operations/roles', icon: ShieldCheck, label: 'Rols i personal', section: 'operations' },
+    ],
+  },
+  {
+    key: 'company',
+    label: 'Empresa',
+    items: [
+      { to: '/company/settings', icon: Building2, label: 'Dades fiscals', section: 'accounting' },
+      { to: '/company/fiscal-years', icon: Calendar, label: 'Exercicis comptables', section: 'accounting' },
+      { to: '/company/chart-of-accounts', icon: BookText, label: 'Pla de comptes', section: 'accounting' },
     ],
   },
   {
@@ -103,6 +145,7 @@ const sections = [
       { to: '/users', icon: UserCog, label: 'Usuaris', section: 'users' },
       { to: '/settings/connections', icon: Plug, label: 'Connexions', section: null, adminOnly: true },
       { to: '/ai-costs', icon: BrainCircuit, label: 'Costos IA', section: null, adminOnly: true },
+      { to: '/audit-log', icon: History, label: 'Auditoria', section: 'audit' },
     ],
   },
 ];

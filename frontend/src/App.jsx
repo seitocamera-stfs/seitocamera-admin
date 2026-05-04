@@ -33,6 +33,15 @@ import TeamTimeClock from './pages/team/TimeClock';
 import TeamTimeEntries from './pages/team/TimeEntries';
 import LogisticsDashboard from './pages/logistics/LogisticsDashboard';
 import DriverView from './pages/logistics/DriverView';
+import CompanySettings from './pages/accounting/CompanySettings';
+import FiscalYears from './pages/accounting/FiscalYears';
+import ChartOfAccounts from './pages/accounting/ChartOfAccounts';
+import AuditLog from './pages/accounting/AuditLog';
+import Journal from './pages/accounting/Journal';
+import JournalEntryForm from './pages/accounting/JournalEntryForm';
+import JournalEntryDetail from './pages/accounting/JournalEntryDetail';
+import Ledger from './pages/accounting/Ledger';
+import TrialBalance from './pages/accounting/TrialBalance';
 import useAuthStore from './stores/authStore';
 
 function App() {
@@ -87,6 +96,18 @@ function App() {
         <Route path="team/absences" element={<RoleGuard section="operations"><OperationsAbsences /></RoleGuard>} />
         {/* Mòdul Logística */}
         <Route path="logistics" element={<RoleGuard section="logistics"><LogisticsDashboard /></RoleGuard>} />
+        {/* Mòdul Comptabilitat formal — Sprint 1 */}
+        <Route path="company/settings" element={<RoleGuard section="accounting"><CompanySettings /></RoleGuard>} />
+        <Route path="company/fiscal-years" element={<RoleGuard section="accounting"><FiscalYears /></RoleGuard>} />
+        <Route path="company/chart-of-accounts" element={<RoleGuard section="accounting"><ChartOfAccounts /></RoleGuard>} />
+        <Route path="audit-log" element={<RoleGuard section="audit"><AuditLog /></RoleGuard>} />
+        {/* Llibre Diari — Sprint 2 */}
+        <Route path="journal" element={<RoleGuard section="accounting"><Journal /></RoleGuard>} />
+        <Route path="journal/new" element={<RoleGuard section="accounting"><JournalEntryForm /></RoleGuard>} />
+        <Route path="journal/:id" element={<RoleGuard section="accounting"><JournalEntryDetail /></RoleGuard>} />
+        <Route path="journal/:id/edit" element={<RoleGuard section="accounting"><JournalEntryForm /></RoleGuard>} />
+        <Route path="ledger" element={<RoleGuard section="accounting"><Ledger /></RoleGuard>} />
+        <Route path="trial-balance" element={<RoleGuard section="accounting"><TrialBalance /></RoleGuard>} />
       </Route>
     </Routes>
   );

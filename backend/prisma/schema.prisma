@@ -71,6 +71,12 @@ model User {
   transportsCreated     Transport[]        @relation("transportCreatedBy")
   conductorProfile      Conductor?         @relation("ConductorUser")
 
+  // Mòdul Comptabilitat formal
+  fiscalYearsLocked     FiscalYear[]       @relation("fiscalYearLocked")
+  auditLogs             AuditLog[]
+  journalEntriesCreated JournalEntry[]     @relation("journalCreated")
+  journalEntriesPosted  JournalEntry[]     @relation("journalPosted")
+
   @@map("users")
 }
 
@@ -95,6 +101,7 @@ model Supplier {
   isSharedDefault       Boolean  @default(false)  // Si les factures d'aquest proveïdor són compartides per defecte
   sharedPercentSeito    Decimal  @default(50) @db.Decimal(5, 2)  // % Seito per defecte
   sharedPercentLogistik Decimal  @default(50) @db.Decimal(5, 2)  // % Logistik per defecte
+  isPublicAdmin         Boolean  @default(false)  // Administració Pública (AEAT, SS, Generalitat...) — apareix a "Comptes públics"
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -104,6 +111,7 @@ model Supplier {
   equipment         Equipment[]
   counterpartyMaps  CounterpartyMap[]
 
+  @@index([isPublicAdmin])
   @@map("suppliers")
 }
 
@@ -1027,6 +1035,7 @@ model RentalProject {
   tasks               ProjectTask[]
   equipmentItems      ProjectEquipment[]
   communications      ProjectCommunication[]
+  journalLines        JournalLine[]      @relation("JournalLineProject")
 
   @@index([departureDate])
   @@index([returnDate])
@@ -1672,4 +1681,270 @@ model Transport {
   @@index([conductorId])
   @@index([empresaId])
   @@map("transports")
+}
+
+// ===========================================
+// Comptabilitat formal (Sprint 1 — Fonaments)
+// ===========================================
+
+enum AccountType {
+  ASSET           // Actiu (grups 1, 2, 3, 4 deutor, 5 deutor)
+  LIABILITY       // Passiu (grups 1, 4 creditor, 5 creditor)
+  EQUITY          // Patrimoni net (grup 1, 12)
+  INCOME          // Ingressos (grup 7)
+  EXPENSE         // Despeses (grup 6)
+}
+
+enum FiscalYearStatus {
+  OPEN            // Es poden crear/editar assentaments
+  CLOSING         // En procés de tancament (regularització)
+  CLOSED          // Tancat, només lectura
+}
+
+model Company {
+  id                   String    @id @default(cuid())
+  legalName            String
+  commercialName       String?
+  nif                  String    @unique
+  address              String?
+  postalCode           String?
+  city                 String?
+  province             String?
+  country              String    @default("ES")
+  phone                String?
+  email                String?
+  website              String?
+
+  // Configuració comptable
+  fiscalYearStartMonth Int       @default(1)
+  defaultCurrency      String    @default("EUR")
+  defaultVatRate       Decimal   @default(21) @db.Decimal(5, 2)
+  defaultIrpfRate      Decimal   @default(15) @db.Decimal(5, 2)
+  corporateTaxRate     Decimal   @default(25) @db.Decimal(5, 2)
+
+  // Configuració AEAT
+  aeatRegime           String    @default("GENERAL")
+  is347Threshold       Decimal   @default(3005.06) @db.Decimal(12, 2)
+  vatPeriod            String    @default("QUARTERLY")
+
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  // Relacions
+  fiscalYears          FiscalYear[]
+  chartOfAccounts      ChartOfAccount[]
+  journalEntries       JournalEntry[]
+
+  @@map("companies")
+}
+
+model FiscalYear {
+  id              String           @id @default(cuid())
+  companyId       String
+  year            Int
+  startDate       DateTime
+  endDate         DateTime
+  status          FiscalYearStatus @default(OPEN)
+  locked          Boolean          @default(false)
+  lockedAt        DateTime?
+  lockedById      String?
+
+  // Resultats del tancament (omplerts en CLOSED)
+  totalRevenue    Decimal?         @db.Decimal(14, 2)
+  totalExpenses   Decimal?         @db.Decimal(14, 2)
+  netResult       Decimal?         @db.Decimal(14, 2)
+  corporateTax    Decimal?         @db.Decimal(14, 2)
+
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  // Relacions
+  company         Company          @relation(fields: [companyId], references: [id])
+  lockedBy        User?            @relation("fiscalYearLocked", fields: [lockedById], references: [id])
+  journalEntries  JournalEntry[]
+
+  @@unique([companyId, year])
+  @@index([status])
+  @@map("fiscal_years")
+}
+
+model ChartOfAccount {
+  id              String           @id @default(cuid())
+  companyId       String
+  code            String                                 // "629000", "430001"
+  name            String
+  description     String?
+
+  // Jerarquia
+  parentId        String?
+  level           Int              @default(0)           // 0=grup, 1=subgrup, 2=compte, 3=subcompte
+  isLeaf          Boolean          @default(true)        // Si es pot usar a apunts
+
+  // Classificació
+  type            AccountType
+  subtype         String?                                // "CURRENT_ASSET", "FIXED_ASSET", "VAT_INPUT", etc.
+
+  // Configuració
+  isActive        Boolean          @default(true)
+  isSystem        Boolean          @default(false)       // Compte del sistema (no editable)
+  defaultVatRate  Decimal?         @db.Decimal(5, 2)
+  taxBookType     String?                                // "VAT_INPUT", "VAT_OUTPUT", "IRPF"
+
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  // Relacions
+  company         Company          @relation(fields: [companyId], references: [id])
+  parent          ChartOfAccount?  @relation("AccountHierarchy", fields: [parentId], references: [id])
+  children        ChartOfAccount[] @relation("AccountHierarchy")
+  journalLines    JournalLine[]
+
+  @@unique([companyId, code])
+  @@index([type])
+  @@index([parentId])
+  @@map("chart_of_accounts")
+}
+
+model AuditLog {
+  id              String    @id @default(cuid())
+  companyId       String?
+
+  // Què ha passat
+  entityType      String                                 // "JournalEntry", "ReceivedInvoice", etc.
+  entityId        String
+  action          String                                 // "CREATE", "UPDATE", "DELETE", "POST", "REVERSE", "LOCK"
+
+  // Diferències (snapshot abans/després)
+  beforeData      Json?
+  afterData       Json?
+  changedFields   String[]  @default([])
+
+  // Qui i quan
+  userId          String
+  userEmail       String?                                // Snapshot per si l'usuari es desactiva
+  ipAddress       String?
+  userAgent       String?
+  createdAt       DateTime  @default(now())
+
+  // Relacions
+  user            User      @relation(fields: [userId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ===========================================
+// Llibre Diari (Sprint 2)
+// ===========================================
+
+enum JournalEntryType {
+  RECEIVED_INVOICE
+  ISSUED_INVOICE
+  PAYMENT
+  COLLECTION
+  BANK_TRANSFER
+  BANK_FEE
+  AMORTIZATION
+  PAYROLL
+  TAX_PAYMENT
+  TAX_ACCRUAL
+  YEAR_CLOSING
+  YEAR_OPENING
+  ADJUSTMENT
+  OTHER
+}
+
+enum JournalEntrySource {
+  MANUAL
+  AUTO_INVOICE
+  AUTO_BANK
+  AUTO_AMORTIZATION
+  AUTO_CLOSING
+  AGENT
+}
+
+enum JournalEntryStatus {
+  DRAFT
+  POSTED
+  REVERSED
+}
+
+model JournalEntry {
+  id              String              @id @default(cuid())
+  companyId       String
+  fiscalYearId    String
+  entryNumber     Int                                          // Correlatiu dins de l'exercici
+
+  date            DateTime
+  description     String
+
+  type            JournalEntryType    @default(OTHER)
+  source          JournalEntrySource  @default(MANUAL)
+  sourceRef       String?                                      // Polimòrfic — fins que afegim FK explícites a sprints futurs
+
+  status          JournalEntryStatus  @default(DRAFT)
+  reversedById    String?                                      // Si REVERSED: FK a l'assentament d'inversió que el corregeix
+  reversesId      String?                                      // Si és correu d'inversió: FK al que anul·la
+
+  createdById     String
+  createdAt       DateTime            @default(now())
+  postedById      String?
+  postedAt        DateTime?
+  updatedAt       DateTime            @updatedAt
+
+  // Relacions
+  company         Company             @relation(fields: [companyId], references: [id])
+  fiscalYear      FiscalYear          @relation(fields: [fiscalYearId], references: [id])
+  createdBy       User                @relation("journalCreated", fields: [createdById], references: [id])
+  postedBy        User?               @relation("journalPosted", fields: [postedById], references: [id])
+  reversedBy      JournalEntry?       @relation("JournalEntryReversal", fields: [reversedById], references: [id])
+  reverses        JournalEntry?       @relation("JournalEntryReverses", fields: [reversesId], references: [id])
+  reversalOf      JournalEntry[]      @relation("JournalEntryReversal")
+  reversedBys     JournalEntry[]      @relation("JournalEntryReverses")
+  lines           JournalLine[]
+
+  @@unique([companyId, fiscalYearId, entryNumber])
+  @@index([date])
+  @@index([type])
+  @@index([status])
+  @@index([fiscalYearId, date])
+  @@index([sourceRef])
+  @@map("journal_entries")
+}
+
+model JournalLine {
+  id                String          @id @default(cuid())
+  journalEntryId    String
+  accountId         String
+
+  debit             Decimal         @default(0) @db.Decimal(14, 2)
+  credit            Decimal         @default(0) @db.Decimal(14, 2)
+
+  description       String?
+  counterpartyId    String?                                   // FK lliure a Supplier o Client (sense relació explícita per polimorfisme)
+  counterpartyType  String?                                   // "SUPPLIER" o "CLIENT"
+
+  projectId         String?                                   // Analítica per projecte (camp present, UI post-MVP)
+
+  // Camps fiscals (per al càlcul del 303/390 sense haver de recórrer a la factura)
+  vatRate           Decimal?        @db.Decimal(5, 2)
+  vatBase           Decimal?        @db.Decimal(14, 2)
+  irpfRate          Decimal?        @db.Decimal(5, 2)
+  irpfBase          Decimal?        @db.Decimal(14, 2)
+
+  sortOrder         Int             @default(0)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  // Relacions
+  journalEntry      JournalEntry    @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  account           ChartOfAccount  @relation(fields: [accountId], references: [id])
+  project           RentalProject?  @relation("JournalLineProject", fields: [projectId], references: [id])
+
+  @@index([journalEntryId])
+  @@index([accountId])
+  @@index([projectId])
+  @@map("journal_lines")
 }

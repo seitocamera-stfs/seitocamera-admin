@@ -147,6 +147,16 @@ app.use('/api/push', require('./routes/push'));
 app.use('/api/logistics', require('./routes/logistics'));
 app.use('/api/team', require('./routes/team'));
 
+// Mòdul Comptabilitat formal (Sprint 1)
+app.use('/api/companies', require('./routes/companies'));
+app.use('/api/fiscal-years', require('./routes/fiscalYears'));
+app.use('/api/chart-of-accounts', require('./routes/chartOfAccounts'));
+app.use('/api/audit-logs', require('./routes/auditLogs'));
+
+// Llibre Diari + Major (Sprint 2)
+app.use('/api/journal', require('./routes/journal'));
+app.use('/api/ledger', require('./routes/ledger'));
+
 // Ruta pública per al conductor (sense autenticació, accés per token)
 app.get('/api/logistics/public/:token', async (req, res) => {
   try {
