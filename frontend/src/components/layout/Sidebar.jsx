@@ -40,6 +40,7 @@ import {
   Receipt,
   Boxes,
   CalendarClock,
+  FileLock,
 } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
 import useCompanyStore from '../../stores/companyStore';
@@ -142,6 +143,7 @@ const sections = [
       { to: '/company/settings', icon: Building2, label: 'Dades fiscals', section: 'accounting' },
       { to: '/company/fiscal-years', icon: Calendar, label: 'Exercicis comptables', section: 'accounting' },
       { to: '/company/chart-of-accounts', icon: BookText, label: 'Pla de comptes', section: 'accounting' },
+      { to: '/year-closing', icon: FileLock, label: 'Tancament d\'exercici', section: 'accounting' },
     ],
   },
   {

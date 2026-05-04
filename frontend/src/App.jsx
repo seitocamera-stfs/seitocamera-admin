@@ -46,6 +46,7 @@ import VatBooks from './pages/accounting/VatBooks';
 import FixedAssets from './pages/accounting/FixedAssets';
 import FixedAssetDetail from './pages/accounting/FixedAssetDetail';
 import AmortizationCalendar from './pages/accounting/AmortizationCalendar';
+import YearClosing from './pages/accounting/YearClosing';
 import useAuthStore from './stores/authStore';
 
 function App() {
@@ -117,6 +118,7 @@ function App() {
         <Route path="fixed-assets" element={<RoleGuard section="accounting"><FixedAssets /></RoleGuard>} />
         <Route path="fixed-assets/:id" element={<RoleGuard section="accounting"><FixedAssetDetail /></RoleGuard>} />
         <Route path="amortization-calendar" element={<RoleGuard section="accounting"><AmortizationCalendar /></RoleGuard>} />
+        <Route path="year-closing" element={<RoleGuard section="accounting"><YearClosing /></RoleGuard>} />
       </Route>
     </Routes>
   );
