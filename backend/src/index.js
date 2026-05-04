@@ -172,6 +172,9 @@ app.use('/api/closing', require('./routes/closing'));
 // Informes financers (Sprint 8)
 app.use('/api/reports', require('./routes/reports'));
 
+// Gestor IA (Sprint Agent IA)
+app.use('/api/gestor', require('./routes/gestor'));
+
 // Ruta pública per al conductor (sense autenticació, accés per token)
 app.get('/api/logistics/public/:token', async (req, res) => {
   try {

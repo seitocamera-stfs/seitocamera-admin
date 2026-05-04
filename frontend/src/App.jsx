@@ -49,6 +49,7 @@ import AmortizationCalendar from './pages/accounting/AmortizationCalendar';
 import YearClosing from './pages/accounting/YearClosing';
 import BalanceSheet from './pages/accounting/BalanceSheet';
 import ProfitAndLoss from './pages/accounting/ProfitAndLoss';
+import Gestor from './pages/accounting/Gestor';
 import useAuthStore from './stores/authStore';
 
 function App() {
@@ -124,6 +125,8 @@ function App() {
         {/* Informes financers — Sprint 8 */}
         <Route path="balance-sheet" element={<RoleGuard section="accounting"><BalanceSheet /></RoleGuard>} />
         <Route path="profit-loss" element={<RoleGuard section="accounting"><ProfitAndLoss /></RoleGuard>} />
+        {/* Gestor IA — Sprint Agent IA */}
+        <Route path="gestor" element={<RoleGuard section="agent"><Gestor /></RoleGuard>} />
       </Route>
     </Routes>
   );

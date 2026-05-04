@@ -43,6 +43,7 @@ import {
   FileLock,
   Layers,
   TrendingUp,
+  Sparkles,
 } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
 import useCompanyStore from '../../stores/companyStore';
@@ -126,7 +127,8 @@ const sections = [
     key: 'agent',
     label: 'Agent IA',
     items: [
-      { to: '/agent', icon: Bot, label: 'Chat', section: 'agent' },
+      { to: '/gestor', icon: Sparkles, label: 'Gestor IA (autònom)', section: 'agent' },
+      { to: '/agent', icon: Bot, label: 'Chat clàssic', section: 'agent' },
       { to: '/agent/supervisor', icon: Activity, label: 'Supervisor', section: 'agent' },
       { to: '/agent/rules', icon: Brain, label: 'Regles', section: 'agent' },
     ],
