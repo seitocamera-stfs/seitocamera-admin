@@ -42,6 +42,7 @@ import JournalEntryForm from './pages/accounting/JournalEntryForm';
 import JournalEntryDetail from './pages/accounting/JournalEntryDetail';
 import Ledger from './pages/accounting/Ledger';
 import TrialBalance from './pages/accounting/TrialBalance';
+import VatBooks from './pages/accounting/VatBooks';
 import useAuthStore from './stores/authStore';
 
 function App() {
@@ -108,6 +109,7 @@ function App() {
         <Route path="journal/:id/edit" element={<RoleGuard section="accounting"><JournalEntryForm /></RoleGuard>} />
         <Route path="ledger" element={<RoleGuard section="accounting"><Ledger /></RoleGuard>} />
         <Route path="trial-balance" element={<RoleGuard section="accounting"><TrialBalance /></RoleGuard>} />
+        <Route path="vat-books" element={<RoleGuard section="fiscal"><VatBooks /></RoleGuard>} />
       </Route>
     </Routes>
   );

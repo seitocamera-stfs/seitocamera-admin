@@ -37,6 +37,7 @@ import {
   ClipboardEdit,
   ScrollText,
   Scale,
+  Receipt,
 } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
 import useCompanyStore from '../../stores/companyStore';
@@ -109,6 +110,7 @@ const sections = [
     label: 'Fiscal',
     items: [
       { to: '/fiscal', icon: Calculator, label: 'Models AEAT', section: 'fiscal' },
+      { to: '/vat-books', icon: Receipt, label: 'Llibres IVA i IRPF', section: 'fiscal' },
     ],
   },
   {
