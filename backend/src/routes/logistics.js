@@ -103,13 +103,14 @@ async function syncTransportAbsence(transportId) {
 // GET /api/logistics/transports
 router.get('/transports', async (req, res, next) => {
   try {
-    const { estat, tipusServei, responsable, cerca, dataFrom, dataTo, empresaId, conductorId } = req.query;
+    const { estat, tipusServei, responsable, cerca, dataFrom, dataTo, empresaId, conductorId, rentalProjectId } = req.query;
     const where = {};
     if (estat) where.estat = estat;
     if (tipusServei) where.tipusServei = tipusServei;
     if (responsable) where.responsableProduccio = responsable;
     if (empresaId) where.empresaId = empresaId;
     if (conductorId) where.conductorId = conductorId;
+    if (rentalProjectId) where.rentalProjectId = rentalProjectId;
     if (dataFrom || dataTo) {
       where.dataCarrega = {};
       if (dataFrom) where.dataCarrega.gte = new Date(dataFrom);
@@ -121,6 +122,7 @@ router.get('/transports', async (req, res, next) => {
         { origen: { contains: cerca, mode: 'insensitive' } },
         { desti: { contains: cerca, mode: 'insensitive' } },
         { responsableProduccio: { contains: cerca, mode: 'insensitive' } },
+        { rentalProject: { name: { contains: cerca, mode: 'insensitive' } } },
       ];
     }
 
@@ -130,6 +132,7 @@ router.get('/transports', async (req, res, next) => {
         conductor: { select: { id: true, nom: true, telefon: true, userId: true, user: { select: { id: true, name: true, color: true } } } },
         empresa: { select: { id: true, nom: true } },
         createdBy: { select: { id: true, name: true } },
+        rentalProject: { select: { id: true, name: true, status: true, departureDate: true } },
       },
       orderBy: [{ dataCarrega: 'asc' }, { horaRecollida: 'asc' }],
     });
@@ -149,6 +152,7 @@ router.get('/transports/:id', async (req, res, next) => {
         conductor: { select: { id: true, nom: true, telefon: true, userId: true, user: { select: { id: true, name: true, color: true } } } },
         empresa: { select: { id: true, nom: true } },
         createdBy: { select: { id: true, name: true } },
+        rentalProject: { select: { id: true, name: true, status: true, departureDate: true } },
       },
     });
     if (!transport) return res.status(404).json({ error: 'Transport no trobat' });
@@ -162,17 +166,25 @@ router.get('/transports/:id', async (req, res, next) => {
 router.post('/transports', async (req, res, next) => {
   try {
     const {
-      projecte, tipusServei, origen, notesOrigen, desti, notesDesti,
+      projecte, rentalProjectId, tipusServei, origen, notesOrigen, desti, notesDesti,
       dataCarrega, dataEntrega, horaRecollida, horaEntregaEstimada, horaFiPrevista,
       responsableProduccio, telefonResponsable, conductorId, empresaId,
       estat, notes,
     } = req.body;
 
+    // Si vinculem a un projecte real, sincronitzem el camp text amb el nom
+    let projecteText = projecte || null;
+    if (rentalProjectId) {
+      const rp = await prisma.rentalProject.findUnique({ where: { id: rentalProjectId }, select: { name: true } });
+      if (rp) projecteText = rp.name;
+    }
+
     const historial = afegirHistorial([], 'creat', `Transport creat per ${req.user.name || 'admin'}`);
 
     const transport = await prisma.transport.create({
       data: {
-        projecte: projecte || null,
+        projecte: projecteText,
+        rentalProjectId: rentalProjectId || null,
         tipusServei: tipusServei || 'Entrega',
         origen: origen || null,
         notesOrigen: notesOrigen || null,
@@ -195,6 +207,7 @@ router.post('/transports', async (req, res, next) => {
       include: {
         conductor: { select: { id: true, nom: true, telefon: true, userId: true, user: { select: { id: true, name: true, color: true } } } },
         empresa: { select: { id: true, nom: true } },
+        rentalProject: { select: { id: true, name: true, status: true, departureDate: true } },
       },
     });
 
@@ -215,7 +228,7 @@ router.put('/transports/:id', async (req, res, next) => {
 
     const data = {};
     const fields = [
-      'projecte', 'tipusServei', 'origen', 'notesOrigen', 'desti', 'notesDesti',
+      'projecte', 'rentalProjectId', 'tipusServei', 'origen', 'notesOrigen', 'desti', 'notesDesti',
       'horaRecollida', 'horaEntregaEstimada', 'horaFiPrevista',
       'horaIniciReal', 'horaFiReal', 'responsableProduccio', 'telefonResponsable',
       'conductorId', 'empresaId', 'estat', 'motiuCancellacio', 'notes',
@@ -225,6 +238,14 @@ router.put('/transports/:id', async (req, res, next) => {
     }
     if (req.body.dataCarrega !== undefined) data.dataCarrega = req.body.dataCarrega ? new Date(req.body.dataCarrega) : null;
     if (req.body.dataEntrega !== undefined) data.dataEntrega = req.body.dataEntrega ? new Date(req.body.dataEntrega) : null;
+
+    // Si canvia el rentalProjectId, sincronitzem `projecte` text amb el nom del projecte
+    if (req.body.rentalProjectId !== undefined) {
+      if (req.body.rentalProjectId) {
+        const rp = await prisma.rentalProject.findUnique({ where: { id: req.body.rentalProjectId }, select: { name: true } });
+        if (rp) data.projecte = rp.name;
+      }
+    }
 
     // Calcular hores extres
     if (req.body.horaFiReal !== undefined) {
@@ -265,6 +286,7 @@ router.put('/transports/:id', async (req, res, next) => {
         conductor: { select: { id: true, nom: true, telefon: true, userId: true, user: { select: { id: true, name: true, color: true } } } },
         empresa: { select: { id: true, nom: true } },
         createdBy: { select: { id: true, name: true } },
+        rentalProject: { select: { id: true, name: true, status: true, departureDate: true } },
       },
     });
 
@@ -330,7 +352,7 @@ router.post('/transports/:id/end', async (req, res, next) => {
   }
 });
 
-// GET /api/logistics/dashboard — KPIs
+// GET /api/logistics/dashboard — KPIs + transports avui/demà
 router.get('/dashboard', async (req, res, next) => {
   try {
     const [total, pendents, confirmats, enPreparacio, lliurats, cancellats] = await Promise.all([
@@ -349,10 +371,70 @@ router.get('/dashboard', async (req, res, next) => {
     });
     const totalExtresMin = ambExtres.reduce((sum, t) => sum + (t.minutsExtres || 0), 0);
 
+    // Transports avui i demà
+    // dataCarrega/dataEntrega són DATE. Prisma trunca el Date object a YYYY-MM-DD
+    // UTC per a columnes DATE — si construïm `tomorrow` com a midnight local Madrid
+    // (= 22:00 UTC del dia anterior), el truncament dóna el dia equivocat.
+    // Solució: construir les dates a partir del dia local i ancorar-les a 12:00 UTC
+    // perquè el truncament sigui sempre el dia correcte.
+    const localToday = new Date();
+    const off = localToday.getTimezoneOffset() * 60000;
+    const localISO = (date) => new Date(date.getTime() - off).toISOString().slice(0, 10);
+    const todayStr = localISO(localToday);
+    const tomorrowStr = localISO(new Date(localToday.getTime() + 86400000));
+    const dayAfterStr = localISO(new Date(localToday.getTime() + 2 * 86400000));
+    const today = new Date(`${todayStr}T12:00:00Z`);
+    const tomorrow = new Date(`${tomorrowStr}T12:00:00Z`);
+    const dayAfter = new Date(`${dayAfterStr}T12:00:00Z`);
+
+    const baseSelect = {
+      id: true,
+      tipusServei: true,
+      projecte: true,
+      estat: true,
+      dataCarrega: true,
+      dataEntrega: true,
+      origen: true,
+      desti: true,
+      horaRecollida: true,
+      horaEntregaEstimada: true,
+      conductor: { select: { nom: true } },
+      empresa: { select: { nom: true } },
+      rentalProject: { select: { id: true, name: true } },
+    };
+
+    // Filtre exacte d'un dia: dataCarrega o dataEntrega == dayDate
+    const dayWhere = (dayDate) => ({
+      estat: { not: 'Cancel·lat' },
+      OR: [
+        { dataCarrega: dayDate },
+        { dataEntrega: dayDate },
+      ],
+    });
+
+    const [transportsAvui, transportsDema] = await Promise.all([
+      prisma.transport.findMany({
+        where: dayWhere(today),
+        select: baseSelect,
+        orderBy: [{ dataCarrega: 'asc' }, { horaRecollida: 'asc' }],
+        take: 10,
+      }),
+      prisma.transport.findMany({
+        where: dayWhere(tomorrow),
+        select: baseSelect,
+        orderBy: [{ dataCarrega: 'asc' }, { horaRecollida: 'asc' }],
+        take: 10,
+      }),
+    ]);
+
     res.json({
       total, pendents, confirmats, enPreparacio, lliurats, cancellats,
       ambExtres: ambExtres.length,
       totalExtresH: (totalExtresMin / 60).toFixed(1),
+      transportsAvui,
+      transportsAvuiCount: transportsAvui.length,
+      transportsDema,
+      transportsDemaCount: transportsDema.length,
     });
   } catch (err) {
     next(err);

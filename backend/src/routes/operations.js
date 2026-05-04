@@ -79,33 +79,46 @@ async function createTasksFromTemplates(projectId, projectType, departureDate, c
 
     const refDate = departureDate ? new Date(departureDate) : new Date();
 
+    // Una sola ProjectTask per cada plantilla, amb checklist aplanat jeràrquic.
+    // Els TaskTemplateItems es converteixen en seccions ("▸ títol") amb els seus
+    // subitems sota ("• subtítol"), evitant generar desenes de tasques per projecte.
     for (const template of templates) {
-      for (const item of template.items) {
-        const dueAt = new Date(refDate);
-        dueAt.setDate(dueAt.getDate() + item.daysOffset);
+      if (!template.items.length) continue;
 
-        await prisma.projectTask.create({
-          data: {
-            projectId,
-            title: item.title,
-            description: item.description,
-            category: item.category,
-            priority: item.priority,
-            templateId: template.id,
-            createdById,
-            dueAt,
-            status: 'OP_PENDING',
-            ...(item.checklistItems ? {
-              checklistItems: {
-                create: (item.checklistItems || []).map((cl, i) => ({
-                  title: typeof cl === 'string' ? cl : cl.title,
-                  sortOrder: i,
-                })),
-              },
-            } : {}),
-          },
-        });
+      // dueAt = offset més primerenc del template (perquè la primera comença abans)
+      const minOffset = template.items.reduce((m, it) => Math.min(m, it.daysOffset || 0), 0);
+      const dueAt = new Date(refDate);
+      dueAt.setDate(dueAt.getDate() + minOffset);
+
+      // Construir checklist aplanat
+      const checklist = [];
+      let order = 0;
+      for (const item of template.items) {
+        checklist.push({ title: `▸ ${item.title}`, sortOrder: order++ });
+        const subs = Array.isArray(item.checklistItems) ? item.checklistItems : [];
+        for (const sub of subs) {
+          const subTitle = typeof sub === 'string' ? sub : sub.title;
+          if (subTitle) checklist.push({ title: `   • ${subTitle}`, sortOrder: order++ });
+        }
       }
+
+      // Categoria/prioritat: dominant del template (la del primer item)
+      const firstItem = template.items[0];
+
+      await prisma.projectTask.create({
+        data: {
+          projectId,
+          title: template.name,
+          description: template.description || null,
+          category: firstItem.category,
+          priority: firstItem.priority,
+          templateId: template.id,
+          createdById,
+          dueAt,
+          status: 'OP_PENDING',
+          checklistItems: { create: checklist },
+        },
+      });
     }
   } catch (err) {
     logger.error('Error creant tasques des de plantilles:', err.message);
@@ -697,28 +710,38 @@ router.post('/projects/:id/default-tasks', async (req, res, next) => {
     if (!project) return res.status(404).json({ error: 'Projecte no trobat' });
 
     if (templateId) {
-      // Aplicar plantilla específica
+      // Aplicar plantilla específica: una sola ProjectTask amb checklist aplanat
       const template = await prisma.taskTemplate.findUnique({
         where: { id: templateId },
         include: { items: { orderBy: { sortOrder: 'asc' } } },
       });
       if (!template) return res.status(404).json({ error: 'Plantilla no trobada' });
+      if (!template.items.length) return res.status(400).json({ error: 'Plantilla sense items' });
 
       const refDate = project.departureDate || new Date();
+      const minOffset = template.items.reduce((m, it) => Math.min(m, it.daysOffset || 0), 0);
+      const dueAt = new Date(refDate);
+      dueAt.setDate(dueAt.getDate() + minOffset);
+
+      const checklist = [];
+      let order = 0;
       for (const item of template.items) {
-        const dueAt = new Date(refDate);
-        dueAt.setDate(dueAt.getDate() + item.daysOffset);
-        await prisma.projectTask.create({
-          data: {
-            projectId: id, title: item.title, description: item.description,
-            category: item.category, priority: item.priority, templateId: template.id,
-            createdById: req.user.id, dueAt, status: 'OP_PENDING',
-            ...(item.checklistItems ? {
-              checklistItems: { create: (item.checklistItems || []).map((cl, i) => ({ title: typeof cl === 'string' ? cl : cl.title, sortOrder: i })) },
-            } : {}),
-          },
-        });
+        checklist.push({ title: `▸ ${item.title}`, sortOrder: order++ });
+        const subs = Array.isArray(item.checklistItems) ? item.checklistItems : [];
+        for (const sub of subs) {
+          const subTitle = typeof sub === 'string' ? sub : sub.title;
+          if (subTitle) checklist.push({ title: `   • ${subTitle}`, sortOrder: order++ });
+        }
       }
+      const firstItem = template.items[0];
+      await prisma.projectTask.create({
+        data: {
+          projectId: id, title: template.name, description: template.description || null,
+          category: firstItem.category, priority: firstItem.priority, templateId: template.id,
+          createdById: req.user.id, dueAt, status: 'OP_PENDING',
+          checklistItems: { create: checklist },
+        },
+      });
     } else {
       // Usar plantilles per defecte basades en el tipus de projecte
       await createTasksFromTemplates(id, project.projectType, project.departureDate, req.user.id);
@@ -2356,6 +2379,8 @@ router.get('/dashboard', async (req, res, next) => {
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
     const weekEnd = new Date(today);
@@ -2479,11 +2504,12 @@ router.get('/dashboard', async (req, res, next) => {
         },
         orderBy: { role: { sortOrder: 'asc' } },
       }),
-      // Absències aprovades per avui (safe: taula pot no existir encara)
+      // Absències aprovades que se solapen amb avui (rang dia complet local
+      // per evitar offset de timezone entre Date local i Postgres DATE).
       prisma.staffAbsence.findMany({
         where: {
           status: 'APROVADA',
-          startDate: { lte: today },
+          startDate: { lte: todayEnd },
           endDate: { gte: today },
         },
         include: {
@@ -2650,11 +2676,13 @@ router.get('/absences/today', async (req, res, next) => {
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
 
     const absences = await prisma.staffAbsence.findMany({
       where: {
         status: 'APROVADA',
-        startDate: { lte: today },
+        startDate: { lte: todayEnd },
         endDate: { gte: today },
       },
       include: {

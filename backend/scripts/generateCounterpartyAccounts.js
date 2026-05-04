@@ -113,23 +113,36 @@ async function main() {
   console.log(`Clients: ${clients.length} totals, ${cliCreated} subcomptes 430xxxx creats`);
 
   // ───────── Bank accounts ─────────
-  const banks = await prisma.bankAccount.findMany({
-    orderBy: { name: 'asc' },
+  // Cada BankAccount necessita el seu subcompte 572 ÚNIC (no es comparteix)
+  // perquè BankAccount.accountId és @unique. Si dos comptes tenen el mateix
+  // nom, els distingim amb el id.
+  const banks = await prisma.bankAccount.findMany({ orderBy: { name: 'asc' } });
+  const parent572 = await prisma.chartOfAccount.findUnique({
+    where: { companyId_code: { companyId: company.id, code: '572' } },
   });
+  if (!parent572) throw new Error('Falta el compte 572 al pla. Executa seedAccounting.js');
+
   let bnkCreated = 0;
   let bnkLinked = 0;
   for (const b of banks) {
-    const { account, created } = await ensureSubaccount({
-      companyId: company.id,
-      parentCode: '572',
-      prefix: '572',
-      type: 'ASSET',
-      subtype: 'BANK',
-      name: b.name || b.iban || `Banc ${b.id.slice(0, 6)}`,
-    });
-    if (created) bnkCreated++;
-    // Vincle BankAccount.accountId per a Sprint 4 (banc → assentaments)
-    if (!b.accountId) {
+    let account;
+    if (b.accountId) {
+      // Ja vinculat — només refrescar
+      account = await prisma.chartOfAccount.findUnique({ where: { id: b.accountId } });
+    } else {
+      const baseName = b.name || b.iban || `Banc ${b.id.slice(0, 6)}`;
+      const accountName = baseName.length > 180 ? baseName.slice(0, 180) : baseName;
+      const code = await nextCode(company.id, '572', 4);
+      account = await prisma.chartOfAccount.create({
+        data: {
+          companyId: company.id, code,
+          name: `${accountName} (${b.id.slice(-6)})`,
+          type: 'ASSET', subtype: 'BANK',
+          level: 3, isLeaf: true,
+          parentId: parent572.id, isSystem: false,
+        },
+      });
+      bnkCreated++;
       await prisma.bankAccount.update({ where: { id: b.id }, data: { accountId: account.id } });
       bnkLinked++;
     }

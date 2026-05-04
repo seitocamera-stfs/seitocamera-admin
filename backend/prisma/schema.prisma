@@ -1100,6 +1100,7 @@ model RentalProject {
   equipmentItems      ProjectEquipment[]
   communications      ProjectCommunication[]
   journalLines        JournalLine[]      @relation("JournalLineProject")
+  transports          Transport[]        @relation("ProjectTransports")
 
   @@index([departureDate])
   @@index([returnDate])
@@ -1708,7 +1709,8 @@ model Conductor {
 
 model Transport {
   id                   String    @id @default(cuid())
-  projecte             String?
+  projecte             String?                                // Text lliure (legacy) — quan rentalProjectId existeix s'omple amb el nom del projecte
+  rentalProjectId      String?                                // Vincle real al projecte Rentman/operacions
   tipusServei          String    @default("Entrega")
   origen               String?
   notesOrigen          String?
@@ -1739,11 +1741,13 @@ model Transport {
   conductor            Conductor?         @relation(fields: [conductorId], references: [id], onDelete: SetNull)
   empresa              EmpresaLogistica?  @relation(fields: [empresaId], references: [id], onDelete: SetNull)
   createdBy            User?              @relation("transportCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  rentalProject        RentalProject?     @relation("ProjectTransports", fields: [rentalProjectId], references: [id], onDelete: SetNull)
 
   @@index([estat])
   @@index([dataCarrega])
   @@index([conductorId])
   @@index([empresaId])
+  @@index([rentalProjectId])
   @@map("transports")
 }
 

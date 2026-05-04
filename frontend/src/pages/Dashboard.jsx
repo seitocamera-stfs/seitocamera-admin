@@ -47,7 +47,8 @@ const ROLE_ICONS = {
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { data, loading, refetch } = useApiGet('/operations/dashboard');
+  const { data, loading, refetch } = useApiGet('/operations/dashboard', {}, { refetchOnFocus: true, refetchOnVisible: true });
+  const { data: logistics, refetch: refetchLogistics } = useApiGet('/logistics/dashboard', {}, { refetchOnFocus: true, refetchOnVisible: true });
   const [syncing, setSyncing] = useState(false);
 
   const handleSync = async () => {
@@ -90,6 +91,15 @@ export default function Dashboard() {
         </div>
         <div className="flex items-center gap-1.5 md:gap-2 flex-shrink-0">
           <button
+            onClick={() => { refetch(); refetchLogistics(); }}
+            disabled={loading}
+            className="flex items-center gap-1 px-2 md:px-3 py-1.5 md:py-2 text-[11px] md:text-xs border rounded-lg text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+            title="Recarregar dades del dashboard"
+          >
+            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+            <span className="hidden sm:inline">Actualitzar</span>
+          </button>
+          <button
             onClick={handleSync}
             disabled={syncing}
             className="flex items-center gap-1 px-2 md:px-3 py-1.5 md:py-2 text-[11px] md:text-xs border rounded-lg text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors"
@@ -114,11 +124,12 @@ export default function Dashboard() {
       ) : (
         <div className="px-3 md:px-6 py-3 md:py-5 max-w-7xl mx-auto space-y-3 md:space-y-5">
           {/* Mètriques */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-2 md:gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-2 md:gap-3">
             <StatCard label="Projectes actius" value={stats.activeProjects || 0} sub={`${stats.readyProjects || 0} preparats`} color="#00617F" icon={Package} onClick={() => navigate('/operations/projects')} />
             <StatCard label="Preparats" value={stats.readyProjects || 0} sub="Llestos per sortir" color="#059669" icon={CheckCircle2} onClick={() => navigate('/operations/projects?status=READY')} />
             <StatCard label="Tasques pendents" value={stats.pendingTasks || 0} sub={`${stats.todayTasks || 0} per avui`} color="#d97706" icon={ListTodo} onClick={() => navigate('/operations/tasks')} />
             <StatCard label="Devolucions avui" value={stats.returnsToday || 0} sub="Projectes que tornen" color="#7c3aed" icon={Truck} onClick={() => navigate('/operations/projects?view=returns')} />
+            <StatCard label="Transports avui" value={logistics?.transportsAvuiCount || 0} sub={`${logistics?.transportsDemaCount || 0} demà`} color="#0ea5e9" icon={Truck} onClick={() => navigate('/logistics')} />
             <div className="col-span-2 md:col-span-1">
               <StatCard label="Incidències" value={stats.openIncidents || 0} sub={stats.criticalIncidents > 0 ? `${stats.criticalIncidents} crítica` : 'Cap crítica'} color={stats.openIncidents > 0 ? '#dc2626' : '#059669'} icon={AlertTriangle} onClick={() => navigate('/operations/incidents')} />
             </div>
@@ -190,6 +201,24 @@ export default function Dashboard() {
               </div>
             );
           })()}
+
+          {/* Transports avui i demà */}
+          {logistics && (logistics.transportsAvuiCount > 0 || logistics.transportsDemaCount > 0) && (
+            <div className="bg-white rounded-xl border p-3 md:p-4">
+              <div className="flex items-center justify-between mb-2 md:mb-3">
+                <h3 className="text-[11px] md:text-xs font-medium text-gray-900 flex items-center gap-1.5">
+                  <Truck size={13} className="text-sky-600" /> Transports
+                </h3>
+                <button onClick={() => navigate('/logistics')} className="text-[10px] md:text-[11px] text-sky-700 hover:underline inline-flex items-center gap-1">
+                  Veure tots <ArrowRight size={10} />
+                </button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <TransportColumn title="Avui" items={logistics.transportsAvui || []} emptyText="Cap transport avui" navigate={navigate} />
+                <TransportColumn title="Demà" items={logistics.transportsDema || []} emptyText="Cap transport demà" navigate={navigate} />
+              </div>
+            </div>
+          )}
 
           {/* Grid principal: 3 columnes */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 md:gap-4">
@@ -388,6 +417,52 @@ export default function Dashboard() {
             )}
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ===========================================
+// Transport column (transports avui / demà)
+// ===========================================
+
+const TRANSPORT_ESTAT_COLOR = {
+  'Pendent':       'bg-gray-100 text-gray-600',
+  'Confirmat':     'bg-sky-50 text-sky-700',
+  'En Preparació': 'bg-amber-50 text-amber-700',
+  'Lliurat':       'bg-emerald-50 text-emerald-700',
+};
+
+function TransportColumn({ title, items, emptyText, navigate }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wide">{title}</span>
+        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600">{items.length}</span>
+      </div>
+      {items.length === 0 ? (
+        <p className="text-[11px] text-gray-400 italic">{emptyText}</p>
+      ) : (
+        <ul className="space-y-1">
+          {items.map((t) => {
+            const ruta = [t.origen, t.desti].filter(Boolean).join(' → ');
+            const hora = t.horaRecollida || t.horaEntregaEstimada || '—';
+            return (
+              <li key={t.id} onClick={() => navigate('/logistics')} className="flex items-center gap-2 px-2 py-1.5 rounded border bg-gray-50/50 hover:bg-gray-100 cursor-pointer text-[11px]">
+                <span className="font-mono text-gray-500 w-12 shrink-0">{hora}</span>
+                <span className="flex-1 min-w-0">
+                  <span className="font-medium text-gray-800">{t.tipusServei || 'Transport'}</span>
+                  {(t.rentalProject?.name || t.projecte) && <span className="text-gray-500"> · {t.rentalProject?.name || t.projecte}</span>}
+                  {ruta && <div className="text-[10px] text-gray-500 truncate">{ruta}</div>}
+                </span>
+                {t.conductor?.nom && <span className="text-[10px] text-gray-500 truncate max-w-[80px] shrink-0">{t.conductor.nom}</span>}
+                <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium shrink-0 ${TRANSPORT_ESTAT_COLOR[t.estat] || 'bg-gray-100 text-gray-600'}`}>
+                  {t.estat}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
       )}
     </div>
   );

@@ -7,6 +7,7 @@ import {
   User, Ban, MessageCircle, Link2,
 } from 'lucide-react';
 import api from '../../lib/api';
+import { useApiGet } from '../../hooks/useApi';
 import { enviarViaWhatsapp, enviarViaWhatsappEmpresa, copyDriverLink } from '../../services/whatsappService';
 
 // ===========================================
@@ -70,6 +71,18 @@ export default function LogisticsDashboard() {
   const [showModal, setShowModal] = useState(false);
   const [showConfig, setShowConfig] = useState(null); // 'conductors' | 'empreses' | null
   const [highlightId, setHighlightId] = useState(null);
+  const [preselectedProject, setPreselectedProject] = useState({ id: null, name: '' });
+
+  // Si arribem amb ?newWithProject=...&projectName=..., obrim modal preseleccionat
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const id = params.get('newWithProject');
+    const name = params.get('projectName') || '';
+    if (id) {
+      setPreselectedProject({ id, name });
+      setShowModal(true);
+    }
+  }, [location.search]);
 
   // Filtres
   const [filterEstat, setFilterEstat] = useState('');
@@ -302,8 +315,10 @@ export default function LogisticsDashboard() {
         <NewTransportModal
           conductors={conductors}
           empreses={empreses}
-          onClose={() => setShowModal(false)}
-          onCreate={handleCreate}
+          defaultRentalProjectId={preselectedProject.id}
+          defaultRentalProjectName={preselectedProject.name}
+          onClose={() => { setShowModal(false); setPreselectedProject({ id: null, name: '' }); }}
+          onCreate={(form) => { handleCreate(form); setPreselectedProject({ id: null, name: '' }); }}
         />
       )}
 
@@ -342,7 +357,11 @@ function TransportRow({ t, conductors, empreses, onUpdate, onDelete, isHighlight
           </button>
         </td>
         <td className="px-3 py-2.5 min-w-[160px]">
-          <InlineEdit value={t.projecte} onSave={v => onUpdate(t.id, { projecte: v })} placeholder="Projecte" className="font-medium text-gray-900" />
+          <ProjectSelectEdit
+            value={t.rentalProject?.name || t.projecte}
+            rentalProjectId={t.rentalProjectId}
+            onSave={(payload) => onUpdate(t.id, payload)}
+          />
         </td>
         <td className="px-3 py-2.5">
           <select value={t.tipusServei} onChange={e => onUpdate(t.id, { tipusServei: e.target.value })} className={`text-[11px] font-medium px-2 py-0.5 rounded-full cursor-pointer border-0 ${TIPUS_STYLES[t.tipusServei] || 'bg-gray-100'}`}>
@@ -557,6 +576,86 @@ function TransportRow({ t, conductors, empreses, onUpdate, onDelete, isHighlight
 // Inline Edit
 // ===========================================
 
+// Selector de projecte (vincle a RentalProject) per fila/detall transport.
+// Click → dropdown amb llista de projectes (departureDate >= ahir) + opció text lliure + desvincular.
+function ProjectSelectEdit({ value, rentalProjectId, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [freeText, setFreeText] = useState(value || '');
+  const { data: rentalProjects } = useApiGet(editing ? '/operations/projects' : null, { limit: 200 });
+  const all = Array.isArray(rentalProjects) ? rentalProjects : (rentalProjects?.data || []);
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1); yesterday.setHours(0, 0, 0, 0);
+  const list = all
+    .filter((p) => !p.departureDate || new Date(p.departureDate) >= yesterday)
+    .sort((a, b) => new Date(a.departureDate || 0) - new Date(b.departureDate || 0));
+
+  useEffect(() => { setFreeText(value || ''); }, [value]);
+
+  const pick = (id, name) => {
+    onSave({ rentalProjectId: id, projecte: name });
+    setEditing(false);
+  };
+  const unlink = () => {
+    onSave({ rentalProjectId: null });
+    setEditing(false);
+  };
+  const saveFreeText = () => {
+    if (freeText !== (value || '')) onSave({ rentalProjectId: null, projecte: freeText });
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div className="relative">
+        <input
+          autoFocus value={freeText} onChange={(e) => setFreeText(e.target.value)}
+          onBlur={() => setTimeout(() => setEditing(false), 200)}
+          onKeyDown={(e) => { if (e.key === 'Enter') saveFreeText(); if (e.key === 'Escape') setEditing(false); }}
+          placeholder="Cerca o escriu projecte..."
+          className="w-full text-xs border rounded px-2 py-1"
+        />
+        <div className="absolute z-50 mt-1 w-72 max-h-64 overflow-y-auto bg-white border rounded shadow-lg text-xs">
+          {rentalProjectId && (
+            <button type="button" onMouseDown={(e) => { e.preventDefault(); unlink(); }}
+              className="w-full text-left px-3 py-1.5 text-rose-600 hover:bg-rose-50 border-b">
+              ✗ Desvincular projecte actual
+            </button>
+          )}
+          {list
+            .filter((p) => !freeText || p.name.toLowerCase().includes(freeText.toLowerCase()))
+            .slice(0, 30)
+            .map((p) => (
+              <button
+                key={p.id} type="button"
+                onMouseDown={(e) => { e.preventDefault(); pick(p.id, p.name); }}
+                className={`w-full text-left px-3 py-1.5 hover:bg-blue-50 ${rentalProjectId === p.id ? 'bg-blue-50 font-medium' : ''}`}
+              >
+                {p.name}
+                {p.departureDate && <span className="text-gray-400 ml-2">{new Date(p.departureDate).toLocaleDateString('ca-ES')}</span>}
+              </button>
+            ))}
+          {freeText && !list.some((p) => p.name.toLowerCase() === freeText.toLowerCase()) && (
+            <button type="button" onMouseDown={(e) => { e.preventDefault(); saveFreeText(); }}
+              className="w-full text-left px-3 py-1.5 text-gray-700 hover:bg-gray-50 border-t italic">
+              Guardar com a text lliure: "{freeText}"
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <span
+      onClick={() => setEditing(true)}
+      className={`cursor-pointer hover:bg-blue-50 rounded px-1 py-0.5 inline-flex items-center gap-1 text-xs font-medium ${value ? 'text-gray-900' : 'text-gray-300 italic'}`}
+      title={rentalProjectId ? 'Vinculat a un projecte. Clic per canviar.' : 'Sense projecte vinculat. Clic per triar-ne un.'}
+    >
+      {rentalProjectId && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />}
+      {value || 'Projecte'}
+    </span>
+  );
+}
+
 function InlineEdit({ value, onSave, placeholder, type = 'text', className = '', multiline = false }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(value || '');
@@ -589,12 +688,19 @@ function InlineEdit({ value, onSave, placeholder, type = 'text', className = '',
     );
   }
 
+  // Format de visualització: per dates, mostrar DD/MM/YYYY en català
+  let display = value || placeholder;
+  if (value && type === 'date') {
+    const m = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) display = `${m[3]}/${m[2]}/${m[1]}`;
+  }
+
   return (
     <span
       onClick={() => setEditing(true)}
       className={`cursor-pointer hover:bg-blue-50 rounded px-1 py-0.5 inline-block text-xs ${value ? className : 'text-gray-300 italic'}`}
     >
-      {value || placeholder}
+      {display}
     </span>
   );
 }
@@ -603,13 +709,21 @@ function InlineEdit({ value, onSave, placeholder, type = 'text', className = '',
 // New Transport Modal
 // ===========================================
 
-function NewTransportModal({ conductors, empreses, onClose, onCreate }) {
+function NewTransportModal({ conductors, empreses, onClose, onCreate, defaultRentalProjectId = null, defaultRentalProjectName = '' }) {
   const [form, setForm] = useState({
-    projecte: '', tipusServei: 'Entrega', origen: '', desti: '',
+    projecte: defaultRentalProjectName, rentalProjectId: defaultRentalProjectId || '',
+    tipusServei: 'Entrega', origen: '', desti: '',
     dataCarrega: '', dataEntrega: '', horaRecollida: '', horaFiPrevista: '',
     horaEntregaEstimada: '', responsableProduccio: '', telefonResponsable: '',
     conductorId: '', empresaId: '', notes: '',
   });
+  const { data: rentalProjects } = useApiGet('/operations/projects', { limit: 200 });
+  const allProjects = Array.isArray(rentalProjects) ? rentalProjects : (rentalProjects?.data || rentalProjects?.projects || []);
+  // Mostrar només projectes amb sortida >= ahir (no té sentit vincular transports a projectes ja passats)
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1); yesterday.setHours(0, 0, 0, 0);
+  const projectList = allProjects
+    .filter((p) => !p.departureDate || new Date(p.departureDate) >= yesterday)
+    .sort((a, b) => new Date(a.departureDate || 0) - new Date(b.departureDate || 0));
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -625,8 +739,26 @@ function NewTransportModal({ conductors, empreses, onClose, onCreate }) {
         </div>
         <form onSubmit={handleSubmit} className="px-5 py-4 space-y-3">
           <Field label="Projecte">
-            <input value={form.projecte} onChange={e => setForm({ ...form, projecte: e.target.value })} className="input-field" placeholder="Nom del projecte" />
+            <select
+              value={form.rentalProjectId}
+              onChange={(e) => {
+                const id = e.target.value;
+                const p = projectList.find((x) => x.id === id);
+                setForm({ ...form, rentalProjectId: id, projecte: p?.name || form.projecte });
+              }}
+              className="input-field"
+            >
+              <option value="">— Sense projecte vinculat (text lliure a sota) —</option>
+              {projectList.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}{p.departureDate ? ` · ${new Date(p.departureDate).toLocaleDateString('ca-ES')}` : ''}</option>
+              ))}
+            </select>
           </Field>
+          {!form.rentalProjectId && (
+            <Field label="Nom de projecte (text lliure)">
+              <input value={form.projecte} onChange={(e) => setForm({ ...form, projecte: e.target.value })} className="input-field" placeholder="Si no està a la llista" />
+            </Field>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <Field label="Tipus servei">
               <select value={form.tipusServei} onChange={e => setForm({ ...form, tipusServei: e.target.value })} className="input-field">

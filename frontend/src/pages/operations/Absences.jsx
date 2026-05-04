@@ -353,7 +353,7 @@ export default function Absences() {
               return (
                 <div
                   key={i}
-                  className={`min-h-[60px] md:min-h-[90px] border-b border-r p-0.5 md:p-1 ${
+                  className={`min-h-[80px] md:min-h-[120px] border-b border-r p-0.5 md:p-1 ${
                     !currentMonth ? 'bg-gray-50/50' : isWeekend ? 'bg-gray-50/30' : ''
                   }`}
                 >
@@ -367,7 +367,7 @@ export default function Absences() {
                     {date.getDate()}
                   </div>
                   <div className="space-y-0.5">
-                    {dayAbsences.slice(0, 2).map((a) => {
+                    {dayAbsences.map((a) => {
                       const typeInfo = ABSENCE_TYPES.find(t => t.value === a.type) || ABSENCE_TYPES[5];
                       const statusInfo = STATUS_CONFIG[a.status];
                       return (
@@ -395,9 +395,6 @@ export default function Absences() {
                         </div>
                       );
                     })}
-                    {dayAbsences.length > 2 && (
-                      <div className="text-[9px] md:text-[10px] text-gray-400 px-1">+{dayAbsences.length - 2}</div>
-                    )}
                   </div>
                 </div>
               );

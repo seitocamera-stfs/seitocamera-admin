@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, Link } from 'react-router-dom';
 import {
   Package, Plus, Search, Filter, Clock, User, Users, AlertTriangle,
   CheckCircle2, XCircle, ChevronDown, X, Loader2, ArrowRight,
@@ -186,12 +186,6 @@ export default function Projects() {
           >
             <RefreshCw size={16} className={syncing ? 'animate-spin' : ''} />
             {syncing ? 'Sincronitzant...' : 'Sync Rentman'}
-          </button>
-          <button
-            onClick={() => setShowCreate(true)}
-            className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm hover:bg-primary/90"
-          >
-            <Plus size={16} /> Nou projecte
           </button>
         </div>
       </div>
@@ -739,6 +733,7 @@ function ProjectDetailModal({ projectId, onClose, onUpdate }) {
     { id: 'general', label: 'General', icon: Package },
     { id: 'equipment', label: `Material (${project.equipmentItems?.length || 0})`, icon: Package },
     { id: 'tasks', label: `Tasques (${project.tasks?.length || 0})`, icon: CheckCircle2 },
+    { id: 'transports', label: 'Transports', icon: Truck },
     { id: 'incidents', label: `Incidències (${project.incidents?.length || 0})`, icon: AlertTriangle },
     { id: 'comms', label: `Comunicacions (${project.communications?.length || 0})`, icon: MessageSquare },
     { id: 'history', label: 'Historial', icon: Clock },
@@ -810,6 +805,10 @@ function ProjectDetailModal({ projectId, onClose, onUpdate }) {
 
           {activeTab === 'tasks' && (
             <TasksTab project={project} refetch={refetch} />
+          )}
+
+          {activeTab === 'transports' && (
+            <TransportsTab projectId={projectId} projectName={project.name} />
           )}
 
           {activeTab === 'incidents' && (
@@ -1439,6 +1438,93 @@ function CommunicationsTab({ project, projectId, refetch }) {
           className="bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm disabled:opacity-50">
           Enviar
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ===========================================
+// Transports Tab — transports vinculats al projecte
+// ===========================================
+const TRANSPORT_ESTAT_COLORS = {
+  'Pendent':       'bg-gray-100 text-gray-600',
+  'Confirmat':     'bg-sky-50 text-sky-700',
+  'En Preparació': 'bg-amber-50 text-amber-700',
+  'Lliurat':       'bg-emerald-50 text-emerald-700',
+  'Cancel·lat':    'bg-rose-50 text-rose-700',
+};
+
+function TransportsTab({ projectId, projectName }) {
+  const { data, loading } = useApiGet('/logistics/transports', { rentalProjectId: projectId });
+  const transports = Array.isArray(data) ? data : [];
+
+  const newUrl = `/logistics?newWithProject=${encodeURIComponent(projectId)}&projectName=${encodeURIComponent(projectName)}`;
+
+  const fmtDate = (d) => {
+    if (!d) return '—';
+    const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? `${m[3]}/${m[2]}/${m[1]}` : d;
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-muted-foreground">{transports.length} transports vinculats</p>
+        <Link
+          to={newUrl}
+          className="inline-flex items-center gap-1.5 bg-primary text-primary-foreground px-3 py-1.5 rounded-md text-xs hover:opacity-90"
+        >
+          <Truck size={12} /> Nou transport
+        </Link>
+      </div>
+
+      {loading && <p className="text-xs text-muted-foreground">Carregant...</p>}
+
+      {!loading && transports.length === 0 && (
+        <div className="text-center py-8 text-sm text-muted-foreground">
+          Cap transport vinculat a aquest projecte. Pots crear-ne un de nou o vincular-ne un d'existent des de Logística.
+        </div>
+      )}
+
+      {transports.length > 0 && (
+        <div className="border rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/30 text-xs uppercase text-muted-foreground">
+              <tr>
+                <th className="text-left px-3 py-2">Tipus</th>
+                <th className="text-left px-3 py-2">Càrrega</th>
+                <th className="text-left px-3 py-2">Hora</th>
+                <th className="text-left px-3 py-2">Origen → Destí</th>
+                <th className="text-left px-3 py-2">Conductor</th>
+                <th className="text-center px-3 py-2">Estat</th>
+              </tr>
+            </thead>
+            <tbody>
+              {transports.map((t) => (
+                <tr key={t.id} className="border-t hover:bg-muted/30">
+                  <td className="px-3 py-2">{t.tipusServei}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{fmtDate(t.dataCarrega)}</td>
+                  <td className="px-3 py-2 font-mono text-xs">{t.horaRecollida || '—'}</td>
+                  <td className="px-3 py-2 text-xs">
+                    <span className="text-gray-700">{t.origen || '—'}</span>
+                    <span className="text-gray-400"> → </span>
+                    <span className="text-gray-700">{t.desti || '—'}</span>
+                  </td>
+                  <td className="px-3 py-2 text-xs">{t.conductor?.nom || t.empresa?.nom || '—'}</td>
+                  <td className="px-3 py-2 text-center">
+                    <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${TRANSPORT_ESTAT_COLORS[t.estat] || 'bg-gray-100 text-gray-600'}`}>
+                      {t.estat}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="text-xs text-muted-foreground text-right pt-1">
+        <Link to="/logistics" className="hover:underline">Veure tots els transports →</Link>
       </div>
     </div>
   );
