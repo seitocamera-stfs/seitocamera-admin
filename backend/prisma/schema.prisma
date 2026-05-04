@@ -465,8 +465,12 @@ model BankAccount {
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
+  // Vincle comptabilitat formal (Sprint 4)
+  accountId     String?       @unique           // Subcompte 572xxxx representant aquest compte bancari
+
   // Relacions
   movements     BankMovement[]
+  account       ChartOfAccount? @relation("BankAccountAccount", fields: [accountId], references: [id])
 
   @@map("bank_accounts")
 }
@@ -493,17 +497,29 @@ model BankMovement {
   isDismissed     Boolean      @default(false)   // Descartat manualment (no cal conciliar)
   dropzoneSentAt  DateTime?    // Data en què s'ha copiat el justificant a la Dropzone de Qonto
   dismissReason   String?                         // Motiu: "transferència interna", "impost", etc.
+
+  // Vincle comptabilitat formal (Sprint 4)
+  companyId       String?
+  accountId       String?                         // Subcompte 572xxxx del banc d'aquest moviment
+  journalEntryId  String?  @unique
+  postedAt        DateTime?
+
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
 
   // Relacions
   conciliations  Conciliation[]
+  company        Company?         @relation(fields: [companyId], references: [id])
+  account        ChartOfAccount?  @relation("BankMovementAccount", fields: [accountId], references: [id])
+  journalEntry   JournalEntry?    @relation("BankMovementJournal", fields: [journalEntryId], references: [id])
 
   @@index([date])
   @@index([isConciliated])
   @@index([isDismissed])
   @@index([accountName])
   @@index([bankAccountId])
+  @@index([companyId])
+  @@index([postedAt])
   @@map("bank_movements")
 }
 
@@ -1780,6 +1796,7 @@ model Company {
   journalEntries       JournalEntry[]
   receivedInvoices     ReceivedInvoice[]
   issuedInvoices       IssuedInvoice[]
+  bankMovements        BankMovement[]
 
   @@map("companies")
 }
@@ -1852,6 +1869,8 @@ model ChartOfAccount {
   suppliersCounterparty           Supplier[]          @relation("SupplierCounterparty")
   clientsDefaultRevenue           Client[]            @relation("ClientDefaultRevenue")
   clientsCounterparty             Client[]            @relation("ClientCounterparty")
+  bankAccounts                    BankAccount[]       @relation("BankAccountAccount")
+  bankMovements                   BankMovement[]      @relation("BankMovementAccount")
 
   @@unique([companyId, code])
   @@index([type])
@@ -1960,6 +1979,7 @@ model JournalEntry {
   lines           JournalLine[]
   receivedInvoice ReceivedInvoice?    @relation("ReceivedInvoiceJournal")
   issuedInvoice   IssuedInvoice?      @relation("IssuedInvoiceJournal")
+  bankMovement    BankMovement?       @relation("BankMovementJournal")
 
   @@unique([companyId, fiscalYearId, entryNumber])
   @@index([date])

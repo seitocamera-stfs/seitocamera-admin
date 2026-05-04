@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Search, ArrowUpCircle, ArrowDownCircle, Trash2, RefreshCw, CheckCircle2, AlertCircle, MessageSquare, Send, X, Settings, Upload, Building2, Wifi, WifiOff, Link, Unlink, ExternalLink, Eye, EyeOff } from 'lucide-react';
+import { Plus, Search, ArrowUpCircle, ArrowDownCircle, Trash2, RefreshCw, CheckCircle2, AlertCircle, MessageSquare, Send, X, Settings, Upload, Building2, Wifi, WifiOff, Link, Unlink, ExternalLink, Eye, EyeOff, BookText } from 'lucide-react';
+import { Link as RouterLink } from 'react-router-dom';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import Modal from '../components/shared/Modal';
 import { formatCurrency, formatDate } from '../lib/utils';
@@ -756,15 +757,16 @@ export default function BankMovements() {
               <th className="text-left p-3 font-medium">Referència</th>
               <th className="text-right p-3 font-medium">Import</th>
               <th className="text-center p-3 font-medium">Conciliat</th>
+              <th className="text-center p-3 font-medium">Comptabilitat</th>
               <th className="text-center p-3 font-medium">Notes</th>
               <th className="text-right p-3 font-medium">Accions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={bankAccounts.length > 1 ? 8 : 7} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
+              <tr><td colSpan={bankAccounts.length > 1 ? 9 : 8} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
             ) : data?.data?.length === 0 ? (
-              <tr><td colSpan={bankAccounts.length > 1 ? 8 : 7} className="p-8 text-center text-muted-foreground">Cap moviment trobat</td></tr>
+              <tr><td colSpan={bankAccounts.length > 1 ? 9 : 8} className="p-8 text-center text-muted-foreground">Cap moviment trobat</td></tr>
             ) : (
               data?.data?.map((m) => (
                 <React.Fragment key={m.id}>
@@ -801,6 +803,31 @@ export default function BankMovements() {
                     </span>
                   </td>
                   <td className="p-3 text-center">
+                    {m.journalEntryId ? (
+                      <RouterLink to={`/journal/${m.journalEntryId}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-700 hover:bg-emerald-200" title="Veure assentament">
+                        <BookText size={11} /> Comptabilitzat
+                      </RouterLink>
+                    ) : m.isConciliated ? (
+                      <button
+                        onClick={async () => {
+                          try {
+                            const r = await api.post(`/bank-posting/movement/${m.id}/post`);
+                            alert(`Assentament #${r.data.journalEntry.entryNumber} creat`);
+                            refetch();
+                          } catch (err) {
+                            alert(err.response?.data?.error || 'Error');
+                          }
+                        }}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-indigo-100 text-indigo-700 hover:bg-indigo-200"
+                        title="Generar assentament"
+                      >
+                        <Send size={11} /> Comptabilitzar
+                      </button>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </td>
+                  <td className="p-3 text-center">
                     <button
                       onClick={() => openNotes(m.id)}
                       className={`p-1.5 rounded hover:bg-muted ${notesOpen === m.id ? 'bg-muted text-primary' : 'text-muted-foreground'}`}
@@ -810,12 +837,31 @@ export default function BankMovements() {
                     </button>
                   </td>
                   <td className="p-3 text-right">
-                    <button onClick={() => handleDelete(m.id)} className="p-1.5 rounded hover:bg-destructive/10 text-destructive"><Trash2 size={14} /></button>
+                    <div className="flex items-center justify-end gap-1">
+                      {m.journalEntryId && (
+                        <button
+                          onClick={async () => {
+                            if (!confirm('Anul·lar la comptabilització?')) return;
+                            try {
+                              await api.post(`/bank-posting/movement/${m.id}/unpost`);
+                              refetch();
+                            } catch (err) {
+                              alert(err.response?.data?.error || 'Error');
+                            }
+                          }}
+                          className="p-1.5 rounded hover:bg-amber-50 text-amber-700"
+                          title="Anul·lar comptabilització"
+                        >
+                          <RefreshCw size={14} />
+                        </button>
+                      )}
+                      <button onClick={() => handleDelete(m.id)} className="p-1.5 rounded hover:bg-destructive/10 text-destructive"><Trash2 size={14} /></button>
+                    </div>
                   </td>
                 </tr>
                 {notesOpen === m.id && (
                   <tr className="bg-muted/20">
-                    <td colSpan={bankAccounts.length > 1 ? 8 : 7} className="p-3">
+                    <td colSpan={bankAccounts.length > 1 ? 9 : 8} className="p-3">
                       <div className="max-w-2xl">
                         <div className="flex items-center gap-2 mb-2">
                           <input

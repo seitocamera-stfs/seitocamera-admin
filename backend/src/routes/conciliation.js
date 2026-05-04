@@ -6,6 +6,7 @@ const { validate } = require('../middleware/validate');
 const { requireSection, requireLevel } = require('../middleware/sectionAccess');
 const { logger } = require('../config/logger');
 const { runAIConciliation } = require('../services/aiConciliationService');
+const bankPostingService = require('../services/bankPostingService');
 const company = require('../config/company');
 
 const router = express.Router();
@@ -946,6 +947,10 @@ router.patch('/:id/confirm', authorize('ADMIN', 'EDITOR'), async (req, res, next
 
       return conc;
     });
+
+    // Auto-post comptable (Sprint 4): genera l'assentament del banc si totes
+    // les factures conciliades ja estan comptabilitzades. Si falla, no bloqueja.
+    await bankPostingService.tryPostFromConciliation(conciliation.id, req.user.id, logger);
 
     res.json(conciliation);
   } catch (error) {

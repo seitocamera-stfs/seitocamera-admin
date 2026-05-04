@@ -117,8 +117,9 @@ async function main() {
     orderBy: { name: 'asc' },
   });
   let bnkCreated = 0;
+  let bnkLinked = 0;
   for (const b of banks) {
-    const { created } = await ensureSubaccount({
+    const { account, created } = await ensureSubaccount({
       companyId: company.id,
       parentCode: '572',
       prefix: '572',
@@ -127,8 +128,13 @@ async function main() {
       name: b.name || b.iban || `Banc ${b.id.slice(0, 6)}`,
     });
     if (created) bnkCreated++;
+    // Vincle BankAccount.accountId per a Sprint 4 (banc → assentaments)
+    if (!b.accountId) {
+      await prisma.bankAccount.update({ where: { id: b.id }, data: { accountId: account.id } });
+      bnkLinked++;
+    }
   }
-  console.log(`Bank accounts: ${banks.length} totals, ${bnkCreated} subcomptes 572xxxx creats`);
+  console.log(`Bank accounts: ${banks.length} totals, ${bnkCreated} subcomptes 572xxxx creats, ${bnkLinked} vinculats`);
 
   console.log('\nFet.\n');
 }

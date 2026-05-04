@@ -160,6 +160,9 @@ app.use('/api/ledger', require('./routes/ledger'));
 // Comptabilització de factures (Sprint 3)
 app.use('/api/invoice-posting', require('./routes/invoicePosting'));
 
+// Comptabilització de moviments bancaris (Sprint 4)
+app.use('/api/bank-posting', require('./routes/bankPosting'));
+
 // Ruta pública per al conductor (sense autenticació, accés per token)
 app.get('/api/logistics/public/:token', async (req, res) => {
   try {
