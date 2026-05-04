@@ -157,6 +157,9 @@ app.use('/api/audit-logs', require('./routes/auditLogs'));
 app.use('/api/journal', require('./routes/journal'));
 app.use('/api/ledger', require('./routes/ledger'));
 
+// Comptabilització de factures (Sprint 3)
+app.use('/api/invoice-posting', require('./routes/invoicePosting'));
+
 // Ruta pública per al conductor (sense autenticació, accés per token)
 app.get('/api/logistics/public/:token', async (req, res) => {
   try {

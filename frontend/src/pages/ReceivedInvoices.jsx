@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import {
   Plus, Search, Trash2, Check, X as XIcon, CheckCircle,
   FileText, Upload, Eye, Link2, AlertTriangle, Ban, Package, Sparkles, CreditCard,
-  ChevronRight, Paperclip, Pencil, RefreshCw, GitMerge, Split,
+  ChevronRight, Paperclip, Pencil, RefreshCw, GitMerge, Split, Send, BookText,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import { StatusBadge } from '../components/shared/StatusBadge';
 import Modal from '../components/shared/Modal';
@@ -662,6 +663,54 @@ export default function ReceivedInvoices() {
 
   // Extreure equips de múltiples factures
   const [bulkExtractRunning, setBulkExtractRunning] = useState(false);
+  const [bulkPostRunning, setBulkPostRunning] = useState(false);
+  const [bulkPostResult, setBulkPostResult] = useState(null);
+  const [postingId, setPostingId] = useState(null);
+
+  const handlePost = async (id, invoiceNumber) => {
+    setPostingId(id);
+    try {
+      const { data } = await api.post(`/invoice-posting/received/${id}/post`);
+      const note = data.resolvedByAgent
+        ? `${invoiceNumber} comptabilitzada amb subcompte suggerit per l'agent (revisa al Supervisor)`
+        : `${invoiceNumber} comptabilitzada (assentament #${data.journalEntry.entryNumber})`;
+      alert(note);
+      refetch();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error en comptabilitzar');
+    } finally {
+      setPostingId(null);
+    }
+  };
+
+  const handleUnpost = async (id) => {
+    if (!confirm('Anul·lar la comptabilització? Es generarà un assentament d\'inversió.')) return;
+    setPostingId(id);
+    try {
+      await api.post(`/invoice-posting/received/${id}/unpost`);
+      refetch();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error');
+    } finally {
+      setPostingId(null);
+    }
+  };
+
+  const handleBulkPost = async () => {
+    if (!confirm(`Comptabilitzar ${selectedIds.length} factures? Pot trigar uns minuts si l'agent ha de classificar-ne algunes.`)) return;
+    setBulkPostRunning(true);
+    setBulkPostResult(null);
+    try {
+      const { data } = await api.post('/invoice-posting/received/post-bulk', { ids: selectedIds });
+      setBulkPostResult(data);
+      refetch();
+      clearSelection();
+    } catch (err) {
+      setBulkPostResult({ error: err.response?.data?.error || 'Error' });
+    } finally {
+      setBulkPostRunning(false);
+    }
+  };
   const handleBulkExtractEquipment = async () => {
     if (!confirm(`Extreure equips de ${selectedIds.length} factures amb IA? Pot trigar uns segons per factura.`)) return;
     setBulkExtractRunning(true);
@@ -857,6 +906,15 @@ export default function ReceivedInvoices() {
                   <CreditCard size={13} /> Marcar pagada
                 </button>
                 <button
+                  onClick={handleBulkPost}
+                  disabled={bulkPostRunning}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700 disabled:opacity-50"
+                  title="Generar l'assentament comptable per cada factura seleccionada"
+                >
+                  <Send size={13} className={bulkPostRunning ? 'animate-pulse' : ''} />
+                  {bulkPostRunning ? 'Comptabilitzant...' : 'Comptabilitzar'}
+                </button>
+                <button
                   onClick={handleBulkDelete}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-destructive text-destructive-foreground text-xs font-medium hover:opacity-90"
                 >
@@ -871,6 +929,42 @@ export default function ReceivedInvoices() {
               Netejar selecció
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Resultat del bulk post */}
+      {bulkPostResult && (
+        <div className={`mb-3 rounded-lg border p-3 ${bulkPostResult.error ? 'bg-red-50 border-red-200' : 'bg-indigo-50 border-indigo-200'}`}>
+          {bulkPostResult.error ? (
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-red-700">Error: {bulkPostResult.error}</span>
+              <button onClick={() => setBulkPostResult(null)} className="text-red-500 hover:text-red-700"><XIcon size={16} /></button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-indigo-800">
+                  Comptabilització: {bulkPostResult.ok?.length || 0} OK · {bulkPostResult.failed?.length || 0} fallades · {bulkPostResult.total} totals
+                </span>
+                <button onClick={() => setBulkPostResult(null)} className="text-indigo-600 hover:text-indigo-800"><XIcon size={16} /></button>
+              </div>
+              {bulkPostResult.failed?.length > 0 && (
+                <details className="text-xs text-red-600">
+                  <summary className="cursor-pointer font-medium">{bulkPostResult.failed.length} errors</summary>
+                  <ul className="mt-1 space-y-0.5 ml-4">
+                    {bulkPostResult.failed.map((d) => (
+                      <li key={d.invoiceId}><strong>{d.invoiceNumber}</strong>: {d.error}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+              {bulkPostResult.ok?.filter((o) => o.resolvedByAgent).length > 0 && (
+                <p className="text-xs text-indigo-700">
+                  {bulkPostResult.ok.filter((o) => o.resolvedByAgent).length} factures classificades per l'agent — revisa-ho a Agent IA → Supervisor.
+                </p>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1024,8 +1118,16 @@ export default function ReceivedInvoices() {
                       )}
                     </td>
                     <td className="p-3 text-center">
-                      {inv.pgcAccount ? (
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs ${inv.accountingType === 'INVESTMENT' ? 'bg-purple-100 text-purple-700' : 'bg-sky-100 text-sky-700'}`} title={`${inv.pgcAccount} ${inv.pgcAccountName || ''}`}>
+                      {inv.journalEntryId ? (
+                        <Link to={`/journal/${inv.journalEntryId}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-700 hover:bg-emerald-200" title="Veure assentament">
+                          <BookText size={11} /> Comptabilitzada
+                        </Link>
+                      ) : inv.account ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-sky-100 text-sky-700" title={`${inv.account.code} ${inv.account.name}`}>
+                          {inv.account.code}
+                        </span>
+                      ) : inv.pgcAccount ? (
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs ${inv.accountingType === 'INVESTMENT' ? 'bg-purple-100 text-purple-700' : 'bg-sky-100 text-sky-700'}`} title={`${inv.pgcAccount} ${inv.pgcAccountName || ''} (legacy)`}>
                           {inv.pgcAccount}
                         </span>
                       ) : (
@@ -1048,6 +1150,27 @@ export default function ReceivedInvoices() {
                     </td>
                     <td className="p-3 text-right">
                       <div className="flex items-center justify-end gap-1">
+                        {!showTrash && (
+                          inv.journalEntryId ? (
+                            <button
+                              onClick={() => handleUnpost(inv.id)}
+                              disabled={postingId === inv.id}
+                              className="p-1.5 rounded hover:bg-amber-50 text-amber-700 disabled:opacity-50"
+                              title="Anul·lar comptabilització"
+                            >
+                              <RefreshCw size={14} className={postingId === inv.id ? 'animate-spin' : ''} />
+                            </button>
+                          ) : (inv.status === 'REVIEWED' || inv.status === 'APPROVED' || inv.status === 'PAID') && inv.origin !== 'LOGISTIK' && (
+                            <button
+                              onClick={() => handlePost(inv.id, inv.invoiceNumber)}
+                              disabled={postingId === inv.id}
+                              className="p-1.5 rounded hover:bg-indigo-50 text-indigo-700 disabled:opacity-50"
+                              title="Comptabilitzar (genera assentament)"
+                            >
+                              <Send size={14} className={postingId === inv.id ? 'animate-pulse' : ''} />
+                            </button>
+                          )
+                        )}
                         <button onClick={() => openEditModal(inv)} className="p-1.5 rounded hover:bg-blue-50 text-blue-600" title="Editar"><Pencil size={14} /></button>
                         {/* PDF_PENDING o AMOUNT_PENDING: cal revisar → marcar com a Pendent (revisada) */}
                         {(inv.status === 'PDF_PENDING' || inv.status === 'AMOUNT_PENDING') && (

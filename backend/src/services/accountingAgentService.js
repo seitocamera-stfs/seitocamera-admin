@@ -1229,8 +1229,74 @@ async function applySuggestion(suggestionId) {
   return { applied: updateData };
 }
 
+/**
+ * classifyForAccount(invoiceId) — wrapper sobre classifyInvoice que també
+ * resol el subcompte real (FK a ChartOfAccount), guarda el resultat a la
+ * factura i crea un AgentSuggestion (perquè quedi registrat per repassar).
+ *
+ * Usat per invoicePostingService quan la factura no porta accountId resolt
+ * però l'usuari ha clicat "Comptabilitzar" (decisió 1: opció B amb registre).
+ *
+ * Retorna { accountId, suggestionId } o null si no s'ha pogut resoldre.
+ */
+async function classifyForAccount(invoiceId) {
+  const company = await prisma.company.findFirst();
+  if (!company) return null;
+
+  const result = await classifyInvoice(invoiceId);
+  if (!result?.pgcAccount) return null;
+
+  // Provar codi exacte i +"000" per resoldre el subcompte real
+  const candidates = [String(result.pgcAccount).trim(), String(result.pgcAccount).trim() + '000'];
+  let account = null;
+  for (const code of candidates) {
+    const found = await prisma.chartOfAccount.findUnique({
+      where: { companyId_code: { companyId: company.id, code } },
+    });
+    if (found?.isLeaf) { account = found; break; }
+  }
+  if (!account) return null;
+
+  // Guardar a la factura (FK + camps legacy per compatibilitat)
+  await prisma.receivedInvoice.update({
+    where: { id: invoiceId },
+    data: {
+      accountId: account.id,
+      pgcAccount: result.pgcAccount,
+      pgcAccountName: result.pgcAccountName,
+      accountingType: result.accountingType,
+      classifiedBy: 'AGENT_AUTO',
+      classifiedAt: new Date(),
+    },
+  });
+
+  // Registrar suggeriment perquè l'usuari el pugui repassar al supervisor
+  const suggestion = await prisma.agentSuggestion.create({
+    data: {
+      receivedInvoiceId: invoiceId,
+      type: 'PGC_ACCOUNT',
+      status: 'PENDING',
+      title: `Compte assignat per agent: ${account.code} ${account.name}`,
+      description: `L'agent ha resolt el subcompte ${account.code} (${account.name}) automàticament al moment de comptabilitzar la factura. Confiança: ${(result.confidence * 100).toFixed(0)}%.`,
+      suggestedValue: {
+        accountId: account.id,
+        accountCode: account.code,
+        accountName: account.name,
+        accountingType: result.accountingType,
+        pgcAccount: result.pgcAccount,
+        pgcAccountName: result.pgcAccountName,
+      },
+      confidence: result.confidence,
+      reasoning: result.reasoning,
+    },
+  });
+
+  return { accountId: account.id, suggestionId: suggestion.id };
+}
+
 module.exports = {
   classifyInvoice,
+  classifyForAccount,
   analyzeAnomalies,
   chat,
   batchClassify,

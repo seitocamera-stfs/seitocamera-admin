@@ -102,6 +102,11 @@ model Supplier {
   sharedPercentSeito    Decimal  @default(50) @db.Decimal(5, 2)  // % Seito per defecte
   sharedPercentLogistik Decimal  @default(50) @db.Decimal(5, 2)  // % Logistik per defecte
   isPublicAdmin         Boolean  @default(false)  // Administració Pública (AEAT, SS, Generalitat...) — apareix a "Comptes públics"
+
+  // Vincle comptabilitat formal (Sprint 3)
+  defaultExpenseAccountId String?              // Subcompte despesa habitual (629, 623, etc.)
+  counterpartyAccountId   String?  @unique     // Subcompte 410xxxx propi
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -110,8 +115,11 @@ model Supplier {
   template          SupplierTemplate?
   equipment         Equipment[]
   counterpartyMaps  CounterpartyMap[]
+  defaultExpenseAccount ChartOfAccount? @relation("SupplierDefaultExpense", fields: [defaultExpenseAccountId], references: [id])
+  counterpartyAccount   ChartOfAccount? @relation("SupplierCounterparty", fields: [counterpartyAccountId], references: [id])
 
   @@index([isPublicAdmin])
+  @@index([defaultExpenseAccountId])
   @@map("suppliers")
 }
 
@@ -171,6 +179,11 @@ model Client {
   country     String   @default("ES")
   notes       String?
   isActive    Boolean  @default(true)
+
+  // Vincle comptabilitat formal (Sprint 3)
+  defaultRevenueAccountId String?              // Subcompte ingrés habitual (705, 700, etc.)
+  counterpartyAccountId   String?  @unique     // Subcompte 430xxxx propi
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -178,7 +191,10 @@ model Client {
   issuedInvoices    IssuedInvoice[]
   counterpartyMaps  CounterpartyMap[]
   rentalProjects    RentalProject[]
+  defaultRevenueAccount ChartOfAccount? @relation("ClientDefaultRevenue", fields: [defaultRevenueAccountId], references: [id])
+  counterpartyAccount   ChartOfAccount? @relation("ClientCounterparty", fields: [counterpartyAccountId], references: [id])
 
+  @@index([defaultRevenueAccountId])
   @@map("clients")
 }
 
@@ -258,11 +274,22 @@ model ReceivedInvoice {
   // Pagaments parcials
   paidAmount            Decimal  @default(0) @db.Decimal(12, 2) // Import ja cobrat (per pagaments parcials)
 
+  // Vincle comptabilitat formal (Sprint 3)
+  companyId               String?
+  accountId               String?   // Subcompte de despesa o immobilitzat (substitueix pgcAccount text)
+  counterpartyAccountId   String?   // Subcompte 410xxxx del proveïdor
+  journalEntryId          String?   @unique
+  postedAt                DateTime?
+
   // Relacions
   supplier         Supplier?          @relation(fields: [supplierId], references: [id])
   conciliations    Conciliation[]
   agentSuggestions AgentSuggestion[]
   equipment        Equipment[]
+  company             Company?         @relation(fields: [companyId], references: [id])
+  account             ChartOfAccount?  @relation("ReceivedInvoiceAccount", fields: [accountId], references: [id])
+  counterpartyAccount ChartOfAccount?  @relation("ReceivedInvoiceCounterparty", fields: [counterpartyAccountId], references: [id])
+  journalEntry        JournalEntry?    @relation("ReceivedInvoiceJournal", fields: [journalEntryId], references: [id])
 
   @@unique([invoiceNumber, supplierId])  // Permet nulls: dues factures amb supplierId=null i diferent invoiceNumber no xoquen
   @@index([status])
@@ -273,6 +300,9 @@ model ReceivedInvoice {
   @@index([origin])
   @@index([deletedAt])
   @@index([isShared])
+  @@index([companyId])
+  @@index([accountId])
+  @@index([postedAt])
   @@map("received_invoices")
 }
 
@@ -303,14 +333,28 @@ model IssuedInvoice {
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 
+  // Vincle comptabilitat formal (Sprint 3)
+  companyId               String?
+  accountId               String?    // Subcompte d'ingrés (705, 700, etc.)
+  counterpartyAccountId   String?    // Subcompte 430xxxx del client
+  journalEntryId          String?    @unique
+  postedAt                DateTime?
+
   // Relacions
   client              Client                @relation(fields: [clientId], references: [id])
   conciliations       Conciliation[]
   paymentReminders    PaymentReminderLog[]
+  company             Company?              @relation(fields: [companyId], references: [id])
+  account             ChartOfAccount?       @relation("IssuedInvoiceAccount", fields: [accountId], references: [id])
+  counterpartyAccount ChartOfAccount?       @relation("IssuedInvoiceCounterparty", fields: [counterpartyAccountId], references: [id])
+  journalEntry        JournalEntry?         @relation("IssuedInvoiceJournal", fields: [journalEntryId], references: [id])
 
   @@index([status])
   @@index([issueDate])
   @@index([clientId])
+  @@index([companyId])
+  @@index([accountId])
+  @@index([postedAt])
   @@index([rentmanInvoiceId])
   @@map("issued_invoices")
 }
@@ -1734,6 +1778,8 @@ model Company {
   fiscalYears          FiscalYear[]
   chartOfAccounts      ChartOfAccount[]
   journalEntries       JournalEntry[]
+  receivedInvoices     ReceivedInvoice[]
+  issuedInvoices       IssuedInvoice[]
 
   @@map("companies")
 }
@@ -1798,6 +1844,14 @@ model ChartOfAccount {
   parent          ChartOfAccount?  @relation("AccountHierarchy", fields: [parentId], references: [id])
   children        ChartOfAccount[] @relation("AccountHierarchy")
   journalLines    JournalLine[]
+  receivedInvoicesAsAccount       ReceivedInvoice[]   @relation("ReceivedInvoiceAccount")
+  receivedInvoicesAsCounterparty  ReceivedInvoice[]   @relation("ReceivedInvoiceCounterparty")
+  issuedInvoicesAsAccount         IssuedInvoice[]     @relation("IssuedInvoiceAccount")
+  issuedInvoicesAsCounterparty    IssuedInvoice[]     @relation("IssuedInvoiceCounterparty")
+  suppliersDefaultExpense         Supplier[]          @relation("SupplierDefaultExpense")
+  suppliersCounterparty           Supplier[]          @relation("SupplierCounterparty")
+  clientsDefaultRevenue           Client[]            @relation("ClientDefaultRevenue")
+  clientsCounterparty             Client[]            @relation("ClientCounterparty")
 
   @@unique([companyId, code])
   @@index([type])
@@ -1904,6 +1958,8 @@ model JournalEntry {
   reversalOf      JournalEntry[]      @relation("JournalEntryReversal")
   reversedBys     JournalEntry[]      @relation("JournalEntryReverses")
   lines           JournalLine[]
+  receivedInvoice ReceivedInvoice?    @relation("ReceivedInvoiceJournal")
+  issuedInvoice   IssuedInvoice?      @relation("IssuedInvoiceJournal")
 
   @@unique([companyId, fiscalYearId, entryNumber])
   @@index([date])

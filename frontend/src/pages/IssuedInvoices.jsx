@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Plus, Search, Check, X as XIcon, Trash2, Eye, RefreshCw, Download as DownloadIcon, CircleDollarSign, Mail } from 'lucide-react';
+import { Plus, Search, Check, X as XIcon, Trash2, Eye, RefreshCw, Download as DownloadIcon, CircleDollarSign, Mail, Send, BookText } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import api from '../lib/api';
 import { StatusBadge } from '../components/shared/StatusBadge';
@@ -154,6 +155,52 @@ export default function IssuedInvoices() {
     }
   };
 
+  const [postingId, setPostingId] = useState(null);
+  const [bulkPostRunning, setBulkPostRunning] = useState(false);
+  const [bulkPostResult, setBulkPostResult] = useState(null);
+
+  const handlePost = async (id, invoiceNumber) => {
+    setPostingId(id);
+    try {
+      const { data } = await api.post(`/invoice-posting/issued/${id}/post`);
+      alert(`${invoiceNumber} comptabilitzada (assentament #${data.journalEntry.entryNumber})`);
+      refetch();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error en comptabilitzar');
+    } finally {
+      setPostingId(null);
+    }
+  };
+
+  const handleUnpost = async (id) => {
+    if (!confirm('Anul·lar la comptabilització? Es generarà un assentament d\'inversió.')) return;
+    setPostingId(id);
+    try {
+      await api.post(`/invoice-posting/issued/${id}/unpost`);
+      refetch();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Error');
+    } finally {
+      setPostingId(null);
+    }
+  };
+
+  const handleBulkPost = async () => {
+    if (!confirm(`Comptabilitzar ${selectedIds.length} factures emeses?`)) return;
+    setBulkPostRunning(true);
+    setBulkPostResult(null);
+    try {
+      const { data } = await api.post('/invoice-posting/issued/post-bulk', { ids: selectedIds });
+      setBulkPostResult(data);
+      refetch();
+      clearSelection();
+    } catch (err) {
+      setBulkPostResult({ error: err.response?.data?.error || 'Error' });
+    } finally {
+      setBulkPostRunning(false);
+    }
+  };
+
   const handleViewDetails = async (id) => {
     try {
       const { data: invoice } = await api.get(`/invoices/issued/${id}`);
@@ -288,12 +335,47 @@ export default function IssuedInvoices() {
               Aprovar
             </button>
             <button
+              onClick={handleBulkPost}
+              disabled={bulkPostRunning}
+              className="flex items-center gap-1.5 bg-indigo-600 text-white px-3 py-1.5 rounded-md text-xs font-medium hover:bg-indigo-700 disabled:opacity-50"
+              title="Generar l'assentament comptable per cada factura seleccionada"
+            >
+              <Send size={13} className={bulkPostRunning ? 'animate-pulse' : ''} />
+              {bulkPostRunning ? 'Comptabilitzant...' : 'Comptabilitzar'}
+            </button>
+            <button
               onClick={clearSelection}
               className="text-xs text-teal-700 hover:text-teal-900 underline ml-2"
             >
               Netejar selecció
             </button>
           </div>
+        </div>
+      )}
+
+      {bulkPostResult && (
+        <div className={`mb-3 rounded-lg border p-3 ${bulkPostResult.error ? 'bg-red-50 border-red-200' : 'bg-indigo-50 border-indigo-200'}`}>
+          {bulkPostResult.error ? (
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-red-700">Error: {bulkPostResult.error}</span>
+              <button onClick={() => setBulkPostResult(null)} className="text-red-500 hover:text-red-700"><XIcon size={16} /></button>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium text-indigo-800">
+                Comptabilització: {bulkPostResult.ok?.length || 0} OK · {bulkPostResult.failed?.length || 0} fallades · {bulkPostResult.total} totals
+              </span>
+              <button onClick={() => setBulkPostResult(null)} className="text-indigo-600 hover:text-indigo-800"><XIcon size={16} /></button>
+            </div>
+          )}
+          {bulkPostResult.failed?.length > 0 && (
+            <details className="mt-2 text-xs text-red-600">
+              <summary className="cursor-pointer font-medium">{bulkPostResult.failed.length} errors</summary>
+              <ul className="mt-1 space-y-0.5 ml-4">
+                {bulkPostResult.failed.map((d) => <li key={d.invoiceId}><strong>{d.invoiceNumber}</strong>: {d.error}</li>)}
+              </ul>
+            </details>
+          )}
         </div>
       )}
 
@@ -316,15 +398,16 @@ export default function IssuedInvoices() {
               <SortableHeader label="Venciment" field="dueDate" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <SortableHeader label="Import" field="totalAmount" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
               <SortableHeader label="Estat" field="status" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
+              <th className="text-center p-3 font-medium text-xs text-muted-foreground uppercase">Comptabilitat</th>
               <th className="text-center p-3 font-medium text-xs text-muted-foreground uppercase">Últim rec.</th>
               <th className="text-right p-3 font-medium text-xs text-muted-foreground uppercase">Accions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
+              <tr><td colSpan={10} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
             ) : data?.data?.length === 0 ? (
-              <tr><td colSpan={9} className="p-8 text-center text-muted-foreground">Cap factura trobada</td></tr>
+              <tr><td colSpan={10} className="p-8 text-center text-muted-foreground">Cap factura trobada</td></tr>
             ) : (
               sortedData.map((inv) => (
                 <tr
@@ -353,6 +436,15 @@ export default function IssuedInvoices() {
                   <td className="p-3 text-right font-medium">{formatCurrency(inv.totalAmount)}</td>
                   <td className="p-3 text-center"><StatusBadge status={inv.status} /></td>
                   <td className="p-3 text-center">
+                    {inv.journalEntryId ? (
+                      <Link to={`/journal/${inv.journalEntryId}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-emerald-100 text-emerald-700 hover:bg-emerald-200" title="Veure assentament">
+                        <BookText size={11} /> Comptabilitzada
+                      </Link>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </td>
+                  <td className="p-3 text-center">
                     {inv.paymentReminders?.[0] ? (
                       <span className="text-xs text-muted-foreground" title={`Enviat a ${inv.paymentReminders[0].sentTo}`}>
                         {formatDate(inv.paymentReminders[0].createdAt)}
@@ -363,6 +455,25 @@ export default function IssuedInvoices() {
                   </td>
                   <td className="p-3 text-right">
                     <div className="flex items-center justify-end gap-1">
+                      {inv.journalEntryId ? (
+                        <button
+                          onClick={() => handleUnpost(inv.id)}
+                          disabled={postingId === inv.id}
+                          className="p-1.5 rounded hover:bg-amber-50 text-amber-700 disabled:opacity-50"
+                          title="Anul·lar comptabilització"
+                        >
+                          <RefreshCw size={14} className={postingId === inv.id ? 'animate-spin' : ''} />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handlePost(inv.id, inv.invoiceNumber)}
+                          disabled={postingId === inv.id}
+                          className="p-1.5 rounded hover:bg-indigo-50 text-indigo-700 disabled:opacity-50"
+                          title="Comptabilitzar (genera assentament)"
+                        >
+                          <Send size={14} className={postingId === inv.id ? 'animate-pulse' : ''} />
+                        </button>
+                      )}
                       <button
                         onClick={() => handleViewDetails(inv.id)}
                         className="p-1.5 rounded hover:bg-blue-50 text-blue-600"
