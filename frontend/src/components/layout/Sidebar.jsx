@@ -44,6 +44,7 @@ import {
   Layers,
   TrendingUp,
   Sparkles,
+  Crown,
 } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
 import useCompanyStore from '../../stores/companyStore';
@@ -127,6 +128,7 @@ const sections = [
     key: 'agent',
     label: 'Agent IA',
     items: [
+      { to: '/ceo', icon: Crown, label: 'CEO IA', section: 'agent' },
       { to: '/gestor', icon: Sparkles, label: 'Gestor IA', section: 'agent' },
     ],
   },

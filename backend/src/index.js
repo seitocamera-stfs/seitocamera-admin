@@ -175,6 +175,9 @@ app.use('/api/reports', require('./routes/reports'));
 // Gestor IA (Sprint Agent IA)
 app.use('/api/gestor', require('./routes/gestor'));
 
+// CEO IA estratègic (Sprint CEO IA)
+app.use('/api/ceo', require('./routes/ceo'));
+
 // Ruta pública per al conductor (sense autenticació, accés per token)
 app.get('/api/logistics/public/:token', async (req, res) => {
   try {
