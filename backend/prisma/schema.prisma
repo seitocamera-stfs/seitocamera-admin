@@ -290,6 +290,7 @@ model ReceivedInvoice {
   account             ChartOfAccount?  @relation("ReceivedInvoiceAccount", fields: [accountId], references: [id])
   counterpartyAccount ChartOfAccount?  @relation("ReceivedInvoiceCounterparty", fields: [counterpartyAccountId], references: [id])
   journalEntry        JournalEntry?    @relation("ReceivedInvoiceJournal", fields: [journalEntryId], references: [id])
+  fixedAssets         FixedAsset[]     @relation("FixedAssetInvoice")
 
   @@unique([invoiceNumber, supplierId])  // Permet nulls: dues factures amb supplierId=null i diferent invoiceNumber no xoquen
   @@index([status])
@@ -806,6 +807,9 @@ model Equipment {
   // Mòdul Operacions
   projectEquipment    ProjectEquipment[]
   incidents           Incident[]
+
+  // Mòdul Comptabilitat (Sprint 6)
+  fixedAssets         FixedAsset[]
 
   @@index([parentId])
   @@index([receivedInvoiceId])
@@ -1797,6 +1801,7 @@ model Company {
   receivedInvoices     ReceivedInvoice[]
   issuedInvoices       IssuedInvoice[]
   bankMovements        BankMovement[]
+  fixedAssets          FixedAsset[]
 
   @@map("companies")
 }
@@ -1871,6 +1876,9 @@ model ChartOfAccount {
   clientsCounterparty             Client[]            @relation("ClientCounterparty")
   bankAccounts                    BankAccount[]       @relation("BankAccountAccount")
   bankMovements                   BankMovement[]      @relation("BankMovementAccount")
+  fixedAssetsAsAccount            FixedAsset[]        @relation("FixedAssetAccount")
+  fixedAssetsAsAmortAccount       FixedAsset[]        @relation("FixedAssetAmortAccount")
+  fixedAssetsAsExpenseAccount     FixedAsset[]        @relation("FixedAssetExpenseAccount")
 
   @@unique([companyId, code])
   @@index([type])
@@ -1980,6 +1988,7 @@ model JournalEntry {
   receivedInvoice ReceivedInvoice?    @relation("ReceivedInvoiceJournal")
   issuedInvoice   IssuedInvoice?      @relation("IssuedInvoiceJournal")
   bankMovement    BankMovement?       @relation("BankMovementJournal")
+  amortizationEntry AmortizationEntry? @relation("AmortizationJournal")
 
   @@unique([companyId, fiscalYearId, entryNumber])
   @@index([date])
@@ -1988,6 +1997,92 @@ model JournalEntry {
   @@index([fiscalYearId, date])
   @@index([sourceRef])
   @@map("journal_entries")
+}
+
+// ===========================================
+// Immobilitzat i amortitzacions (Sprint 6)
+// ===========================================
+
+enum FixedAssetStatus {
+  ACTIVE
+  FULLY_AMORTIZED
+  DISPOSED            // Donat de baixa (venda, baixa, robatori)
+}
+
+model FixedAsset {
+  id                    String           @id @default(cuid())
+  companyId             String
+  code                  String                                    // "FA-2026-001"
+  name                  String
+  description           String?
+
+  // Vincles opcionals
+  equipmentId           String?                                   // FK opcional a Equipment del rental
+  receivedInvoiceId     String?                                   // Factura d'origen
+
+  // Comptes vinculats
+  accountId             String                                    // 213/216/217/218/219 (immobilitzat)
+  amortizationAccountId String                                    // 281x (amortització acumulada)
+  expenseAccountId      String                                    // 681x (despesa amortització)
+
+  // Dades de l'actiu
+  acquisitionDate       DateTime
+  acquisitionValue      Decimal          @db.Decimal(14, 2)
+  residualValue         Decimal          @default(0) @db.Decimal(14, 2)
+
+  // Amortització
+  usefulLifeYears       Decimal          @db.Decimal(5, 2)
+  amortizationMethod    String           @default("LINEAR")
+  monthlyAmortization   Decimal          @db.Decimal(14, 2)       // (val.adq - val.res) / vida_anys / 12
+
+  // Estat
+  status                FixedAssetStatus @default(ACTIVE)
+  disposalDate          DateTime?
+  disposalNotes         String?
+
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  // Relacions
+  company             Company           @relation(fields: [companyId], references: [id])
+  equipment           Equipment?        @relation(fields: [equipmentId], references: [id])
+  receivedInvoice     ReceivedInvoice?  @relation("FixedAssetInvoice", fields: [receivedInvoiceId], references: [id])
+  account             ChartOfAccount    @relation("FixedAssetAccount", fields: [accountId], references: [id])
+  amortizationAccount ChartOfAccount    @relation("FixedAssetAmortAccount", fields: [amortizationAccountId], references: [id])
+  expenseAccount      ChartOfAccount    @relation("FixedAssetExpenseAccount", fields: [expenseAccountId], references: [id])
+  amortizationEntries AmortizationEntry[]
+
+  @@unique([companyId, code])
+  @@index([equipmentId])
+  @@index([status])
+  @@index([acquisitionDate])
+  @@map("fixed_assets")
+}
+
+model AmortizationEntry {
+  id              String        @id @default(cuid())
+  fixedAssetId    String
+
+  year            Int
+  month           Int                                              // 1-12
+  amount          Decimal       @db.Decimal(14, 2)                 // Quota del mes
+  accumulated     Decimal       @db.Decimal(14, 2)                 // Acumulada al final del mes
+  netValue        Decimal       @db.Decimal(14, 2)                 // Valor net comptable resultant
+
+  // Comptabilització
+  status          String        @default("PENDING")                // PENDING | POSTED
+  journalEntryId  String?       @unique
+  postedAt        DateTime?
+
+  createdAt       DateTime      @default(now())
+
+  // Relacions
+  fixedAsset      FixedAsset    @relation(fields: [fixedAssetId], references: [id], onDelete: Cascade)
+  journalEntry    JournalEntry? @relation("AmortizationJournal", fields: [journalEntryId], references: [id])
+
+  @@unique([fixedAssetId, year, month])
+  @@index([year, month, status])
+  @@map("amortization_entries")
 }
 
 model JournalLine {

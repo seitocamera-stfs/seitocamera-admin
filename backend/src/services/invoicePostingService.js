@@ -17,6 +17,7 @@
  */
 const { prisma } = require('../config/database');
 const journalService = require('./journalService');
+const fixedAssetService = require('./fixedAssetService');
 
 const TOLERANCE = 0.01;
 
@@ -314,7 +315,21 @@ async function postReceivedInvoice(invoiceId, { userId, agent } = {}) {
     include: { account: true, counterpartyAccount: true, journalEntry: { include: { lines: true } } },
   });
 
-  return { invoice: updated, journalEntry: posted, resolvedByAgent, agentSuggestionId };
+  // 7. Si el compte és d'immobilitzat (grup 2), crear FixedAsset + calendari
+  let fixedAsset = null;
+  if (updated.account?.type === 'ASSET' && /^21[3-9]/.test(updated.account.code)) {
+    try {
+      fixedAsset = await fixedAssetService.createFromInvoice({
+        invoiceId: updated.id,
+        accountCode: updated.account.code,
+      });
+    } catch (e) {
+      // No bloqueja la comptabilització si la generació de FA falla
+      // (només es queda sense calendari, l'usuari ho pot crear manualment després)
+    }
+  }
+
+  return { invoice: updated, journalEntry: posted, resolvedByAgent, agentSuggestionId, fixedAsset };
 }
 
 // ====================================================================

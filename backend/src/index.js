@@ -163,6 +163,9 @@ app.use('/api/invoice-posting', require('./routes/invoicePosting'));
 // Comptabilització de moviments bancaris (Sprint 4)
 app.use('/api/bank-posting', require('./routes/bankPosting'));
 
+// Immobilitzat i amortitzacions (Sprint 6)
+app.use('/api/fixed-assets', require('./routes/fixedAssets'));
+
 // Ruta pública per al conductor (sense autenticació, accés per token)
 app.get('/api/logistics/public/:token', async (req, res) => {
   try {

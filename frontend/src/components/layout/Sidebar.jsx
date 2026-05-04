@@ -38,6 +38,8 @@ import {
   ScrollText,
   Scale,
   Receipt,
+  Boxes,
+  CalendarClock,
 } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
 import useCompanyStore from '../../stores/companyStore';
@@ -103,6 +105,8 @@ const sections = [
       { to: '/journal', icon: ClipboardEdit, label: 'Llibre diari', section: 'accounting' },
       { to: '/ledger', icon: ScrollText, label: 'Llibre major', section: 'accounting' },
       { to: '/trial-balance', icon: Scale, label: 'Sumes i saldos', section: 'accounting' },
+      { to: '/fixed-assets', icon: Boxes, label: 'Immobilitzat', section: 'accounting' },
+      { to: '/amortization-calendar', icon: CalendarClock, label: 'Amortitzacions', section: 'accounting' },
     ],
   },
   {

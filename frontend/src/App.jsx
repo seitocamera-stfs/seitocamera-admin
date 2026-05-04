@@ -43,6 +43,9 @@ import JournalEntryDetail from './pages/accounting/JournalEntryDetail';
 import Ledger from './pages/accounting/Ledger';
 import TrialBalance from './pages/accounting/TrialBalance';
 import VatBooks from './pages/accounting/VatBooks';
+import FixedAssets from './pages/accounting/FixedAssets';
+import FixedAssetDetail from './pages/accounting/FixedAssetDetail';
+import AmortizationCalendar from './pages/accounting/AmortizationCalendar';
 import useAuthStore from './stores/authStore';
 
 function App() {
@@ -110,6 +113,10 @@ function App() {
         <Route path="ledger" element={<RoleGuard section="accounting"><Ledger /></RoleGuard>} />
         <Route path="trial-balance" element={<RoleGuard section="accounting"><TrialBalance /></RoleGuard>} />
         <Route path="vat-books" element={<RoleGuard section="fiscal"><VatBooks /></RoleGuard>} />
+        {/* Immobilitzat — Sprint 6 */}
+        <Route path="fixed-assets" element={<RoleGuard section="accounting"><FixedAssets /></RoleGuard>} />
+        <Route path="fixed-assets/:id" element={<RoleGuard section="accounting"><FixedAssetDetail /></RoleGuard>} />
+        <Route path="amortization-calendar" element={<RoleGuard section="accounting"><AmortizationCalendar /></RoleGuard>} />
       </Route>
     </Routes>
   );
