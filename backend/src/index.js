@@ -169,6 +169,9 @@ app.use('/api/fixed-assets', require('./routes/fixedAssets'));
 // Tancament d'exercici (Sprint 7)
 app.use('/api/closing', require('./routes/closing'));
 
+// Informes financers (Sprint 8)
+app.use('/api/reports', require('./routes/reports'));
+
 // Ruta pública per al conductor (sense autenticació, accés per token)
 app.get('/api/logistics/public/:token', async (req, res) => {
   try {

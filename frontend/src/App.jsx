@@ -47,6 +47,8 @@ import FixedAssets from './pages/accounting/FixedAssets';
 import FixedAssetDetail from './pages/accounting/FixedAssetDetail';
 import AmortizationCalendar from './pages/accounting/AmortizationCalendar';
 import YearClosing from './pages/accounting/YearClosing';
+import BalanceSheet from './pages/accounting/BalanceSheet';
+import ProfitAndLoss from './pages/accounting/ProfitAndLoss';
 import useAuthStore from './stores/authStore';
 
 function App() {
@@ -119,6 +121,9 @@ function App() {
         <Route path="fixed-assets/:id" element={<RoleGuard section="accounting"><FixedAssetDetail /></RoleGuard>} />
         <Route path="amortization-calendar" element={<RoleGuard section="accounting"><AmortizationCalendar /></RoleGuard>} />
         <Route path="year-closing" element={<RoleGuard section="accounting"><YearClosing /></RoleGuard>} />
+        {/* Informes financers — Sprint 8 */}
+        <Route path="balance-sheet" element={<RoleGuard section="accounting"><BalanceSheet /></RoleGuard>} />
+        <Route path="profit-loss" element={<RoleGuard section="accounting"><ProfitAndLoss /></RoleGuard>} />
       </Route>
     </Routes>
   );

@@ -41,6 +41,8 @@ import {
   Boxes,
   CalendarClock,
   FileLock,
+  Layers,
+  TrendingUp,
 } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
 import useCompanyStore from '../../stores/companyStore';
@@ -108,6 +110,8 @@ const sections = [
       { to: '/trial-balance', icon: Scale, label: 'Sumes i saldos', section: 'accounting' },
       { to: '/fixed-assets', icon: Boxes, label: 'Immobilitzat', section: 'accounting' },
       { to: '/amortization-calendar', icon: CalendarClock, label: 'Amortitzacions', section: 'accounting' },
+      { to: '/balance-sheet', icon: Layers, label: 'Balanç de situació', section: 'accounting' },
+      { to: '/profit-loss', icon: TrendingUp, label: 'Compte P&G', section: 'accounting' },
     ],
   },
   {
