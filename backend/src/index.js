@@ -131,6 +131,7 @@ app.use('/api/conciliation', require('./routes/conciliation'));
 app.use('/api/notes', require('./routes/notes'));
 app.use('/api/reminders', require('./routes/reminders'));
 app.use('/api/users', require('./routes/users'));
+app.use('/api/user-activity', require('./routes/userActivity'));
 app.use('/api/gdrive', require('./routes/gdrive'));
 app.use('/api/rentman', require('./routes/rentman'));
 app.use('/api/zoho', require('./routes/zoho'));

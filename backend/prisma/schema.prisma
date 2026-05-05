@@ -35,7 +35,8 @@ model User {
   // clients, bank, conciliation, reminders
   customPermissions Json?
   isActive      Boolean  @default(true)
-  lastLoginAt   DateTime?
+  lastLoginAt   DateTime?  // Marca al fer login amb credencials
+  lastSeenAt    DateTime?  // Marca a cada request autenticat (throttled cada 5 min)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -77,7 +78,32 @@ model User {
   journalEntriesCreated JournalEntry[]     @relation("journalCreated")
   journalEntriesPosted  JournalEntry[]     @relation("journalPosted")
 
+  // Historial d'accessos
+  loginLogs             UserLoginLog[]
+
   @@map("users")
+}
+
+// ===========================================
+// Historial d'accessos d'usuari (login/logout/failed login).
+// Permet veure quan i com cada usuari accedeix a l'app — útil per detectar
+// usuaris inactius o intents d'accés sospitosos.
+// ===========================================
+model UserLoginLog {
+  id           String   @id @default(cuid())
+  userId       String?  // Null si l'email no existeix (failed login amb email desconegut)
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  email        String   // Email intentat (per logs de fail amb usuari inexistent)
+  loggedInAt   DateTime @default(now()) @db.Timestamptz()
+  ipAddress    String?  // req.ip — necessita trust proxy ben configurat
+  userAgent    String?  // req.headers['user-agent']
+  success      Boolean  @default(true)
+  failReason   String?  // 'invalid_password', 'inactive_user', 'unknown_email'
+
+  @@index([userId, loggedInAt(sort: Desc)])
+  @@index([loggedInAt(sort: Desc)])
+  @@index([email])
+  @@map("user_login_logs")
 }
 
 // ===========================================

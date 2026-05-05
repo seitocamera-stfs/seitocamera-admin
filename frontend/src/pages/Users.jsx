@@ -1,10 +1,37 @@
 import { useState } from 'react';
-import { Plus, Edit2, Trash2, Key, ShieldCheck, ShieldAlert, Eye, SlidersHorizontal } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Plus, Edit2, Trash2, Key, ShieldCheck, ShieldAlert, Eye, SlidersHorizontal, LineChart } from 'lucide-react';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
 import Modal from '../components/shared/Modal';
 import { formatDate } from '../lib/utils';
 import useAuthStore from '../stores/authStore';
 import { SECTIONS, CUSTOMIZABLE_SECTIONS } from '../lib/permissions';
+
+// Format compacte "fa X temps" — coherent amb UserActivity.jsx
+function fmtRelative(iso) {
+  if (!iso) return 'Mai';
+  const ms = Date.now() - new Date(iso).getTime();
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return 'Ara';
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d`;
+  const mo = Math.floor(d / 30);
+  if (mo < 12) return `${mo} mes${mo === 1 ? '' : 'os'}`;
+  return `${Math.floor(mo / 12)}a`;
+}
+
+// Codi de color segons quants dies fa que no es veu l'usuari
+function activityCls(lastSeenAt) {
+  if (!lastSeenAt) return 'text-rose-600 font-medium';
+  const days = (Date.now() - new Date(lastSeenAt).getTime()) / 86400000;
+  if (days <= 7) return 'text-emerald-600 font-medium';
+  if (days <= 30) return 'text-gray-700';
+  if (days <= 90) return 'text-amber-600 font-medium';
+  return 'text-rose-600 font-medium';
+}
 
 const roleConfig = {
   ADMIN: { label: 'Administrador', icon: ShieldAlert, className: 'bg-red-100 text-red-800', description: 'Accés total: crear usuaris, eliminar, configurar' },
@@ -37,6 +64,7 @@ const LEVEL_OPTIONS = [
 ];
 
 export default function Users() {
+  const navigate = useNavigate();
   const currentUser = useAuthStore((s) => s.user);
   const [showModal, setShowModal] = useState(false);
   const [showResetModal, setShowResetModal] = useState(null);
@@ -126,9 +154,20 @@ export default function Users() {
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold">Gestió d'usuaris</h2>
-        <button onClick={() => { setEditing(null); setForm({ name: '', email: '', password: '', role: 'VIEWER', color: '', customPermissions: {} }); setShowModal(true); }} className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90">
-          <Plus size={16} /> Nou usuari
-        </button>
+        <div className="flex items-center gap-2">
+          {currentUser?.role === 'ADMIN' && (
+            <button
+              onClick={() => navigate('/user-activity')}
+              className="flex items-center gap-1.5 text-sm px-3 py-2 rounded-md border hover:bg-muted/50"
+              title="Historial complet d'accessos i intents fallits"
+            >
+              <LineChart size={14} /> Activitat
+            </button>
+          )}
+          <button onClick={() => { setEditing(null); setForm({ name: '', email: '', password: '', role: 'VIEWER', color: '', customPermissions: {} }); setShowModal(true); }} className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded-md text-sm font-medium hover:opacity-90">
+            <Plus size={16} /> Nou usuari
+          </button>
+        </div>
       </div>
 
       {/* Explicació de rols */}
@@ -153,13 +192,15 @@ export default function Users() {
               <th className="text-left p-3 font-medium">Email</th>
               <th className="text-center p-3 font-medium">Rol</th>
               <th className="text-center p-3 font-medium">Estat</th>
+              <th className="text-left p-3 font-medium">Última activitat</th>
               <th className="text-left p-3 font-medium">Últim login</th>
+              <th className="text-right p-3 font-medium">Logins</th>
               <th className="text-right p-3 font-medium">Accions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
+              <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">Carregant...</td></tr>
             ) : (
               users?.map((u) => {
                 const role = roleConfig[u.role] || {};
@@ -190,9 +231,22 @@ export default function Users() {
                         {u.isActive ? 'Actiu' : 'Inactiu'}
                       </span>
                     </td>
-                    <td className="p-3 text-muted-foreground text-xs">{u.lastLoginAt ? formatDate(u.lastLoginAt) : 'Mai'}</td>
+                    <td className={`p-3 text-xs ${activityCls(u.lastSeenAt)}`} title={u.lastSeenAt ? formatDate(u.lastSeenAt) : 'Mai vist'}>
+                      {fmtRelative(u.lastSeenAt)}
+                    </td>
+                    <td className="p-3 text-muted-foreground text-xs" title={u.lastLoginAt ? formatDate(u.lastLoginAt) : 'Mai'}>
+                      {fmtRelative(u.lastLoginAt)}
+                    </td>
+                    <td className="p-3 text-right text-xs text-muted-foreground">{u.successful_logins_total ?? 0}</td>
                     <td className="p-3 text-right">
                       <div className="flex items-center justify-end gap-1">
+                        {currentUser?.role === 'ADMIN' && (
+                          <button
+                            onClick={() => navigate(`/user-activity?userId=${u.id}`)}
+                            className="p-1.5 rounded hover:bg-muted"
+                            title="Veure historial d'accessos"
+                          ><LineChart size={14} /></button>
+                        )}
                         <button onClick={() => handleEdit(u)} className="p-1.5 rounded hover:bg-muted" title="Editar"><Edit2 size={14} /></button>
                         <button onClick={() => setShowResetModal(u.id)} className="p-1.5 rounded hover:bg-muted" title="Resetejar contrasenya"><Key size={14} /></button>
                         {u.id !== currentUser?.id && (

@@ -65,12 +65,18 @@ router.get('/', async (req, res, next) => {
         customPermissions: true,
         isActive: true,
         lastLoginAt: true,
+        lastSeenAt: true,
         createdAt: true,
+        _count: { select: { loginLogs: { where: { success: true } } } },
       },
       orderBy: { name: 'asc' },
     });
 
-    res.json(users);
+    res.json(users.map((u) => ({
+      ...u,
+      successful_logins_total: u._count.loginLogs,
+      _count: undefined,
+    })));
   } catch (error) {
     next(error);
   }

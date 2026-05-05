@@ -2,6 +2,7 @@ const express = require('express');
 const { z } = require('zod');
 const rateLimit = require('express-rate-limit');
 const authService = require('../services/authService');
+const userActivityService = require('../services/userActivityService');
 const { authenticate, authorize } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 
@@ -54,8 +55,12 @@ const changePasswordSchema = z.object({
  * Login amb email i password
  */
 router.post('/login', loginLimiter, validate(loginSchema), async (req, res, next) => {
+  const attemptedEmail = (req.body?.email || '').toLowerCase().trim();
   try {
     const { user, accessToken, refreshToken } = await authService.login(req.body);
+
+    // Registrar login exitós (fire-and-forget per no afegir latència)
+    userActivityService.recordLogin(user.id, user.email, req, { success: true });
 
     // Guardar refresh token com a cookie httpOnly
     res.cookie('refreshToken', refreshToken, {
@@ -70,6 +75,12 @@ router.post('/login', loginLimiter, validate(loginSchema), async (req, res, next
       token: accessToken,
     });
   } catch (error) {
+    // Registrar intent fallit amb classificació per al log d'admin.
+    // El missatge que es retorna al client segueix sent genèric (error.message).
+    userActivityService.recordLogin(error.userId || null, attemptedEmail, req, {
+      success: false,
+      failReason: error.code || 'unknown_error',
+    });
     next(error);
   }
 });

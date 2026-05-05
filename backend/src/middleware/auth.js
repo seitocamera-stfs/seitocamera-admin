@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const { prisma } = require('../config/database');
+const userActivityService = require('../services/userActivityService');
 
 /**
  * Middleware d'autenticació JWT
@@ -46,6 +47,8 @@ async function authenticate(req, res, next) {
     }
 
     req.user = user;
+    // Marca lastSeenAt (throttled cada 5 min, fire-and-forget)
+    userActivityService.touchLastSeen(user.id);
     next();
   } catch (error) {
     if (error.name === 'TokenExpiredError') {

@@ -148,20 +148,28 @@ async function login({ email, password }) {
     },
   });
 
-  // Missatge genèric per no revelar si l'email existeix
+  // Missatge genèric per no revelar si l'email existeix.
+  // El `code` només viatja a errors internament — el frontend rep `error`
+  // genèric. Es fa servir al log d'admin per saber el motiu real.
   if (!user) {
     await recordFailedAttempt(normalizedEmail);
-    throw Object.assign(new Error('Credencials incorrectes'), { status: 401 });
+    throw Object.assign(new Error('Credencials incorrectes'), { status: 401, code: 'unknown_email' });
   }
 
   if (!user.isActive) {
-    throw Object.assign(new Error('Compte desactivat. Contacta amb l\'administrador.'), { status: 403 });
+    throw Object.assign(
+      new Error('Compte desactivat. Contacta amb l\'administrador.'),
+      { status: 403, code: 'inactive_user', userId: user.id }
+    );
   }
 
   const validPassword = await bcrypt.compare(password, user.passwordHash);
   if (!validPassword) {
     await recordFailedAttempt(normalizedEmail);
-    throw Object.assign(new Error('Credencials incorrectes'), { status: 401 });
+    throw Object.assign(
+      new Error('Credencials incorrectes'),
+      { status: 401, code: 'invalid_password', userId: user.id }
+    );
   }
 
   // Login correcte → neteja intents

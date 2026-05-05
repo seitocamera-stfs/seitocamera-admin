@@ -47,6 +47,7 @@ import {
   Crown,
   Map,
   Warehouse,
+  LineChart,
 } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
 import useCompanyStore from '../../stores/companyStore';
@@ -164,6 +165,7 @@ const sections = [
     label: 'Administració',
     items: [
       { to: '/users', icon: UserCog, label: 'Usuaris', section: 'users' },
+      { to: '/user-activity', icon: LineChart, label: 'Activitat usuaris', section: null, adminOnly: true },
       { to: '/agent/supervisor', icon: Activity, label: 'Supervisor jobs IA', section: 'agent' },
       { to: '/agent/rules', icon: Brain, label: 'Regles agent', section: 'agent' },
       { to: '/settings/connections', icon: Plug, label: 'Connexions', section: null, adminOnly: true },
