@@ -37,7 +37,7 @@ const clientSchema = z.object({
 // ===========================================
 router.get('/', async (req, res, next) => {
   try {
-    const { search, page = 1, limit = 25, active, sortBy, sortOrder } = req.query;
+    const { search, page = 1, limit = 25, active, sortBy, sortOrder, prospect } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const where = {};
@@ -45,6 +45,9 @@ router.get('/', async (req, res, next) => {
     if (active !== undefined) {
       where.isActive = active === 'true';
     }
+    // Filtre per prospect: 'true' (només prospects) | 'false' (només NO prospects) | undefined (tots)
+    if (prospect === 'true') where.isProspect = true;
+    if (prospect === 'false') where.isProspect = false;
 
     if (search) {
       where.OR = [

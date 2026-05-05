@@ -19,7 +19,10 @@ const { prisma } = require('../config/database');
 const journalService = require('./journalService');
 const fixedAssetService = require('./fixedAssetService');
 
-const TOLERANCE = 0.01;
+// 2 cèntims — algunes factures de l'OCR del proveïdor arrosseguen errors
+// d'arrodoniment doble (subtotal mostrat + IVA mostrat ≠ total mostrat).
+// Real-world: 47.105 vs 47.11, 10654.485 vs 10654.49.
+const TOLERANCE = 0.02;
 
 function n(v) { return v == null ? 0 : Number(v); }
 function round2(v) { return Math.round(v * 100) / 100; }
@@ -131,45 +134,51 @@ function buildReceivedLines({ accountId, vatAccountId, irpfAccountId, counterpar
   const tax = n(invoice.taxAmount);
   const irpf = n(invoice.irpfAmount);
   const total = n(invoice.totalAmount);
+
+  // Notes de crèdit / abonaments: total < 0. Inverteixim deure↔haver per
+  // mantenir el contracte `xor_debit_credit` (cap línia amb import negatiu).
+  // Semàntica: "li devem MENYS al proveïdor + ens torna l'IVA suportat".
+  const isCreditNote = total < 0;
+  const D = (val) => round2(Math.abs(val));  // helper: import absolut arrodonit
   const lines = [];
 
   lines.push({
     accountId,
-    debit: round2(subtotal),
-    credit: 0,
-    description: invoice.description || `Factura ${invoice.invoiceNumber}`,
+    debit: isCreditNote ? 0 : D(subtotal),
+    credit: isCreditNote ? D(subtotal) : 0,
+    description: invoice.description || `${isCreditNote ? 'Abonament' : 'Factura'} ${invoice.invoiceNumber}`,
     counterpartyId: supplierId,
     counterpartyType: 'SUPPLIER',
     sortOrder: 0,
   });
-  if (tax > 0) {
+  if (Math.abs(tax) > 0.005) {
     lines.push({
       accountId: vatAccountId,
-      debit: round2(tax),
-      credit: 0,
-      description: `IVA suportat ${n(invoice.taxRate)}%`,
+      debit: isCreditNote ? 0 : D(tax),
+      credit: isCreditNote ? D(tax) : 0,
+      description: `IVA suportat ${n(invoice.taxRate)}%${isCreditNote ? ' (abonament)' : ''}`,
       vatRate: n(invoice.taxRate),
-      vatBase: round2(subtotal),
+      vatBase: D(subtotal),
       sortOrder: 1,
     });
   }
   lines.push({
     accountId: counterpartyAccountId,
-    debit: 0,
-    credit: round2(total),
-    description: invoice.description || `Factura ${invoice.invoiceNumber}`,
+    debit: isCreditNote ? D(total) : 0,
+    credit: isCreditNote ? 0 : D(total),
+    description: invoice.description || `${isCreditNote ? 'Abonament' : 'Factura'} ${invoice.invoiceNumber}`,
     counterpartyId: supplierId,
     counterpartyType: 'SUPPLIER',
     sortOrder: 2,
   });
-  if (irpf > 0) {
+  if (Math.abs(irpf) > 0.005) {
     lines.push({
       accountId: irpfAccountId,
-      debit: 0,
-      credit: round2(irpf),
-      description: `Retenció IRPF ${n(invoice.irpfRate)}%`,
+      debit: isCreditNote ? D(irpf) : 0,
+      credit: isCreditNote ? 0 : D(irpf),
+      description: `Retenció IRPF ${n(invoice.irpfRate)}%${isCreditNote ? ' (abonament)' : ''}`,
       irpfRate: n(invoice.irpfRate),
-      irpfBase: round2(subtotal),
+      irpfBase: D(subtotal),
       sortOrder: 3,
     });
   }
@@ -187,34 +196,39 @@ function buildIssuedLines({ accountId, vatAccountId, counterpartyAccountId, clie
   const subtotal = n(invoice.subtotal);
   const tax = n(invoice.taxAmount);
   const total = n(invoice.totalAmount);
+
+  // Notes de crèdit / abonaments emesos (rectificatives): total < 0.
+  // Invertim deure↔haver per evitar imports negatius a journal_lines.
+  const isCreditNote = total < 0;
+  const D = (val) => round2(Math.abs(val));
   const lines = [];
 
   lines.push({
     accountId: counterpartyAccountId,
-    debit: round2(total),
-    credit: 0,
-    description: invoice.description || `Factura ${invoice.invoiceNumber}`,
+    debit: isCreditNote ? 0 : D(total),
+    credit: isCreditNote ? D(total) : 0,
+    description: invoice.description || `${isCreditNote ? 'Abonament' : 'Factura'} ${invoice.invoiceNumber}`,
     counterpartyId: clientId,
     counterpartyType: 'CLIENT',
     sortOrder: 0,
   });
   lines.push({
     accountId,
-    debit: 0,
-    credit: round2(subtotal),
-    description: invoice.description || `Factura ${invoice.invoiceNumber}`,
+    debit: isCreditNote ? D(subtotal) : 0,
+    credit: isCreditNote ? 0 : D(subtotal),
+    description: invoice.description || `${isCreditNote ? 'Abonament' : 'Factura'} ${invoice.invoiceNumber}`,
     counterpartyId: clientId,
     counterpartyType: 'CLIENT',
     sortOrder: 1,
   });
-  if (tax > 0) {
+  if (Math.abs(tax) > 0.005) {
     lines.push({
       accountId: vatAccountId,
-      debit: 0,
-      credit: round2(tax),
-      description: `IVA repercutit ${n(invoice.taxRate)}%`,
+      debit: isCreditNote ? D(tax) : 0,
+      credit: isCreditNote ? 0 : D(tax),
+      description: `IVA repercutit ${n(invoice.taxRate)}%${isCreditNote ? ' (abonament)' : ''}`,
       vatRate: n(invoice.taxRate),
-      vatBase: round2(subtotal),
+      vatBase: D(subtotal),
       sortOrder: 2,
     });
   }
@@ -269,9 +283,10 @@ async function postReceivedInvoice(invoiceId, { userId, agent } = {}) {
   // 2. Resoldre counterparty del proveïdor (subcompte 410xxxx)
   const counterpartyAccount = await ensureCounterpartyAccount(invoice.supplier, 'SUPPLIER');
 
-  // 3. Comptes del sistema (IVA suportat, IRPF practicat)
-  const vatAccount  = n(invoice.taxAmount)  > 0 ? await getSystemAccount(company.id, '472000') : null;
-  const irpfAccount = n(invoice.irpfAmount) > 0 ? await getSystemAccount(company.id, '4751')   : null;
+  // 3. Comptes del sistema (IVA suportat, IRPF practicat) — usem Math.abs
+  // perquè abonaments tenen taxAmount/irpfAmount negatius
+  const vatAccount  = Math.abs(n(invoice.taxAmount))  > 0.005 ? await getSystemAccount(company.id, '472000') : null;
+  const irpfAccount = Math.abs(n(invoice.irpfAmount)) > 0.005 ? await getSystemAccount(company.id, '4751')   : null;
 
   // 4. Validació numèrica abans de cridar el diari
   const sumDeure  = round2(n(invoice.subtotal) + n(invoice.taxAmount));
@@ -315,9 +330,17 @@ async function postReceivedInvoice(invoiceId, { userId, agent } = {}) {
     include: { account: true, counterpartyAccount: true, journalEntry: { include: { lines: true } } },
   });
 
-  // 7. Si el compte és d'immobilitzat (grup 2), crear FixedAsset + calendari
+  // 7. Si el compte és d'immobilitzat amortizable, crear FixedAsset + calendari.
+  // Cobertura: 206 (aplicacions informàtiques), 207 (drets traspàs), 21x sencer
+  // (instal·lacions, maquinària, mobiliari, EPI, transport...). Excloem 210 (terrenys)
+  // perquè no s'amortitzen i 211 (construccions) que tenen lògica separada.
   let fixedAsset = null;
-  if (updated.account?.type === 'ASSET' && /^21[3-9]/.test(updated.account.code)) {
+  const code = updated.account?.code || '';
+  const isAmortizableAsset = updated.account?.type === 'ASSET' && (
+    /^20[67]/.test(code) ||
+    /^21[2-9]/.test(code)
+  );
+  if (isAmortizableAsset) {
     try {
       fixedAsset = await fixedAssetService.createFromInvoice({
         invoiceId: updated.id,
@@ -355,7 +378,7 @@ async function postIssuedInvoice(invoiceId, { userId } = {}) {
   const counterpartyAccount = await ensureCounterpartyAccount(invoice.client, 'CLIENT');
 
   // 3. Comptes del sistema (IVA repercutit)
-  const vatAccount = n(invoice.taxAmount) > 0 ? await getSystemAccount(company.id, '477000') : null;
+  const vatAccount = Math.abs(n(invoice.taxAmount)) > 0.005 ? await getSystemAccount(company.id, '477000') : null;
 
   // 4. Validació numèrica
   const sumDeure  = round2(n(invoice.totalAmount));

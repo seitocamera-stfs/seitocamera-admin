@@ -13,6 +13,8 @@ const cron = require('node-cron');
 const { prisma } = require('../config/database');
 const { logger } = require('../config/logger');
 const agent = require('./accountingAgentService');
+const scopeService = require('./accountingScopeService');
+const { runWarehouseDailyBriefing } = require('../jobs/warehouseDailyBriefingJob');
 
 // ===========================================
 // Configuració per defecte dels jobs
@@ -48,6 +50,12 @@ const DEFAULT_JOBS = [
     label: 'Proposar conciliacions',
     description: 'Busca moviments bancaris que coincideixin amb factures per proposar conciliació',
     cronSchedule: '0 10 * * 1-5', // dilluns a divendres a les 10
+  },
+  {
+    jobType: 'warehouse_agent',
+    label: 'Magatzem IA',
+    description: 'Briefing diari proactiu (preparacions avui, devolucions endarrerides, conflictes equipament, ítems pendents) + endpoint de chat operatiu. Desactivar atura cron i bloqueja chat.',
+    cronSchedule: process.env.WAREHOUSE_BRIEFING_CRON || '0 8 * * *', // cada dia a les 8:00
   },
 ];
 
@@ -90,6 +98,13 @@ async function runClassify() {
 
     for (const invoice of unclassified) {
       try {
+        // Skip si ja té un suggeriment CLASSIFICATION PENDING (evita duplicats per cada execució del cron)
+        const existing = await prisma.agentSuggestion.findFirst({
+          where: { receivedInvoiceId: invoice.id, type: 'CLASSIFICATION', status: 'PENDING' },
+          select: { id: true },
+        });
+        if (existing) continue;
+
         const classification = await agent.classifyInvoice(invoice.id);
 
         await prisma.agentSuggestion.create({
@@ -158,8 +173,11 @@ async function runAnomalies() {
 
   try {
     // Factures dels últims 7 dies sense suggeriments d'anomalia
+    // i dins del scope comptable configurat
+    const scope = await scopeService.scopeFilter('issueDate');
     const recent = await prisma.receivedInvoice.findMany({
       where: {
+        ...scope,
         createdAt: { gte: new Date(Date.now() - 7 * 24 * 3600 * 1000) },
         status: { notIn: ['REJECTED'] },
         agentSuggestions: { none: { type: { in: ['ANOMALY', 'TAX_WARNING', 'DUPLICATE', 'MISSING_DATA'] } } },
@@ -179,12 +197,40 @@ async function runAnomalies() {
     const invoiceIds = recent.map((r) => r.id);
     const anomalies = await agent.analyzeAnomalies(invoiceIds);
 
+    // Carreguem invoiceNumber → id per resoldre el vincle correcte
+    // (l'agent retorna `invoiceNumber`; abans tot s'atribuïa a invoiceIds[0])
+    const invoicesByNumber = await prisma.receivedInvoice.findMany({
+      where: { id: { in: invoiceIds } },
+      select: { id: true, invoiceNumber: true },
+    });
+    const idByInvoiceNumber = new Map(invoicesByNumber.map((i) => [i.invoiceNumber, i.id]));
+
     let created = 0;
+    let skippedNoMatch = 0;
     for (const anomaly of anomalies) {
       try {
+        // Resol invoiceId real des de invoiceNumber (sino, salta — no falsejar atribució)
+        const targetInvoiceId = anomaly.invoiceNumber ? idByInvoiceNumber.get(anomaly.invoiceNumber) : null;
+        if (!targetInvoiceId) {
+          skippedNoMatch++;
+          continue;
+        }
+
+        // Deduplicació: no crear si ja existeix un PENDING amb mateix (invoice, type, title)
+        const existing = await prisma.agentSuggestion.findFirst({
+          where: {
+            receivedInvoiceId: targetInvoiceId,
+            type: anomaly.type || 'ANOMALY',
+            title: anomaly.title,
+            status: 'PENDING',
+          },
+          select: { id: true },
+        });
+        if (existing) continue;
+
         await prisma.agentSuggestion.create({
           data: {
-            receivedInvoiceId: invoiceIds[0],
+            receivedInvoiceId: targetInvoiceId,
             type: anomaly.type || 'ANOMALY',
             title: anomaly.title,
             description: anomaly.description,
@@ -194,6 +240,9 @@ async function runAnomalies() {
         });
         created++;
       } catch {}
+    }
+    if (skippedNoMatch > 0) {
+      logger.warn(`[Agent Job] anomalies: ${skippedNoMatch} anomalies saltades per invoiceNumber sense match`);
     }
 
     await prisma.agentJob.update({
@@ -228,12 +277,18 @@ async function runDuplicates() {
   });
 
   try {
-    // Buscar factures amb el mateix número i proveïdor
-    const duplicates = await prisma.$queryRaw`
+    // Una factura es considera duplicada NOMÉS si comparteix proveïdor +
+    // número de factura. Imports iguals amb números diferents són factures
+    // distintes (subscripcions mensuals, cuotes recurrents, etc.) i NO
+    // duplicats. Aquesta és la regla sol·licitada per l'usuari.
+    const scopeFrom = await scopeService.getAccountingScopeFrom();
+    const duplicates = await prisma.$queryRawUnsafe(`
       SELECT a.id as "id1", b.id as "id2",
-             a."invoiceNumber", a."supplierId",
+             a."invoiceNumber" as "num1", b."invoiceNumber" as "num2",
+             a."supplierId",
              a."totalAmount" as "amount1", b."totalAmount" as "amount2",
-             a."issueDate" as "date1", b."issueDate" as "date2"
+             a."issueDate" as "date1", b."issueDate" as "date2",
+             'NUMBER_MATCH' as "matchType"
       FROM "received_invoices" a
       JOIN "received_invoices" b ON a."invoiceNumber" = b."invoiceNumber"
         AND a."supplierId" = b."supplierId"
@@ -241,17 +296,20 @@ async function runDuplicates() {
       WHERE a.status != 'REJECTED' AND b.status != 'REJECTED'
         AND a."isDuplicate" = false AND b."isDuplicate" = false
         AND a."createdAt" > NOW() - INTERVAL '30 days'
-      LIMIT 20
-    `;
+        ${scopeFrom ? 'AND a."issueDate" >= $1 AND b."issueDate" >= $1' : ''}
+      LIMIT 30
+    `, ...(scopeFrom ? [scopeFrom] : []));
 
     let created = 0;
     for (const dup of duplicates) {
-      // Comprovar si ja hi ha un suggeriment de duplicat per aquesta parella
+      // Dedup per (factura B, type, duplicateOfId) per evitar crear múltiples
+      // suggeriments per la mateixa parella d'A i B (ex: NUMBER_MATCH + AMOUNT_DATE_MATCH)
       const existing = await prisma.agentSuggestion.findFirst({
         where: {
           receivedInvoiceId: dup.id2,
           type: 'DUPLICATE',
           status: 'PENDING',
+          suggestedValue: { path: ['duplicateOfId'], equals: dup.id1 },
         },
       });
       if (existing) continue;
@@ -263,17 +321,26 @@ async function runDuplicates() {
 
       const sameAmount = parseFloat(dup.amount1) === parseFloat(dup.amount2);
 
+      let title, description, confidence;
+      if (sameAmount) {
+        title = `Possible duplicat: ${dup.num1} (${supplier?.name || '?'})`;
+        description = `Dues factures amb el mateix número (${dup.num1}), proveïdor i import (${dup.amount2}€). Probablement duplicada.`;
+        confidence = 0.95;
+      } else {
+        title = `Possible duplicat (imports diferents): ${dup.num1} (${supplier?.name || '?'})`;
+        description = `Dues factures amb el mateix número (${dup.num1}) i proveïdor però import diferent (${dup.amount1}€ vs ${dup.amount2}€). Revisar quina és correcta.`;
+        confidence = 0.75;
+      }
+
       await prisma.agentSuggestion.create({
         data: {
           receivedInvoiceId: dup.id2,
           type: 'DUPLICATE',
-          title: `Possible duplicat: ${dup.invoiceNumber} (${supplier?.name || '?'})`,
-          description: sameAmount
-            ? `Dues factures amb el mateix número (${dup.invoiceNumber}), proveïdor i import (${dup.amount2}€). Probablement duplicada.`
-            : `Dues factures amb el mateix número (${dup.invoiceNumber}) i proveïdor però import diferent (${dup.amount1}€ vs ${dup.amount2}€). Revisar quina és correcta.`,
-          confidence: sameAmount ? 0.95 : 0.75,
-          reasoning: `Factura ${dup.invoiceNumber} apareix dues vegades per ${supplier?.name}`,
-          suggestedValue: { duplicateOfId: dup.id1, sameAmount },
+          title,
+          description,
+          confidence,
+          reasoning: `Match: ${dup.matchType}. Factures ${dup.num1} ↔ ${dup.num2} per ${supplier?.name}`,
+          suggestedValue: { duplicateOfId: dup.id1, matchType: dup.matchType, sameAmount },
         },
       });
       created++;
@@ -314,9 +381,11 @@ async function runOverdue() {
     const now = new Date();
     const in7days = new Date(now.getTime() + 7 * 24 * 3600 * 1000);
 
-    // Factures que vencen en 7 dies o ja estan vençudes
+    // Factures que vencen en 7 dies o ja estan vençudes (dins del scope)
+    const scope = await scopeService.scopeFilter('issueDate');
     const overdue = await prisma.receivedInvoice.findMany({
       where: {
+        ...scope,
         status: { notIn: ['PAID', 'REJECTED'] },
         dueDate: { lte: in7days },
         conciliations: { none: { status: { in: ['CONFIRMED', 'MANUAL_MATCHED'] } } },
@@ -328,14 +397,21 @@ async function runOverdue() {
 
     let created = 0;
     for (const inv of overdue) {
-      // No crear duplicat si ja hi ha alerta pendent
-      const existing = await prisma.agentSuggestion.findFirst({
-        where: { receivedInvoiceId: inv.id, type: 'ANOMALY', status: 'PENDING', title: { contains: 'venciment' } },
-      });
-      if (existing) continue;
-
       const isOverdue = inv.dueDate < now;
       const daysUntil = Math.ceil((inv.dueDate - now) / (24 * 3600 * 1000));
+      const stateTag = isOverdue ? 'overdue' : 'upcoming';
+
+      // Dedup més precís: distingir entre "passat" i "proper" perquè quan una
+      // factura passa de proper→passat el suggeriment NOU ha de poder crear-se.
+      const existing = await prisma.agentSuggestion.findFirst({
+        where: {
+          receivedInvoiceId: inv.id,
+          type: 'ANOMALY',
+          status: 'PENDING',
+          title: { contains: isOverdue ? '⚠️ Venciment passat' : 'Venciment proper' },
+        },
+      });
+      if (existing) continue;
 
       await prisma.agentSuggestion.create({
         data: {
@@ -386,9 +462,11 @@ async function runConciliation() {
   });
 
   try {
-    // Moviments bancaris no conciliats (despeses)
+    // Moviments bancaris no conciliats (despeses) — dins del scope comptable
+    const scope = await scopeService.scopeFilter('date');
     const movements = await prisma.bankMovement.findMany({
       where: {
+        ...scope,
         isConciliated: false,
         isDismissed: false,
         type: 'EXPENSE',
@@ -403,15 +481,20 @@ async function runConciliation() {
       },
     });
 
-    // Factures sense conciliar
+    // Factures sense conciliar (dins del scope) — limitat a 500 per evitar OOM
+    // en empreses amb molt històric. Si calen més, executar el job més vegades.
+    const invScope = await scopeService.scopeFilter('issueDate');
     const invoices = await prisma.receivedInvoice.findMany({
       where: {
+        ...invScope,
         status: { notIn: ['PAID', 'REJECTED'] },
       },
       include: {
         supplier: { select: { name: true } },
         conciliations: { select: { id: true }, take: 1 },
       },
+      orderBy: { issueDate: 'desc' },
+      take: 500,
     });
 
     // Filtrar només factures sense cap conciliació
@@ -485,6 +568,7 @@ const JOB_FUNCTIONS = {
   duplicates: runDuplicates,
   overdue: runOverdue,
   conciliation: runConciliation,
+  warehouse_agent: runWarehouseDailyBriefing,
 };
 
 // ===========================================
@@ -569,6 +653,9 @@ async function rescheduleJob(jobType) {
   const config = await prisma.agentJobConfig.findUnique({ where: { jobType } });
   if (!config) return;
 
+  // Invalidar cache d'estats per a que altres rutes (chat agent) ho vegin a l'instant
+  _enabledCache.delete(jobType);
+
   if (config.isEnabled) {
     scheduleJob(config);
   } else {
@@ -592,9 +679,42 @@ async function runJobManually(jobType) {
   });
 }
 
+/**
+ * Comprovació ràpida (cache 30s) per saber si un toggle d'agent està actiu.
+ * Usat per rutes per bloquejar accions quan l'agent està desactivat.
+ */
+const _enabledCache = new Map(); // jobType → { enabled, t }
+const ENABLED_TTL_MS = 30_000;
+
+async function isJobEnabled(jobType) {
+  const now = Date.now();
+  const cached = _enabledCache.get(jobType);
+  if (cached && now - cached.t < ENABLED_TTL_MS) return cached.enabled;
+  try {
+    const c = await prisma.agentJobConfig.findUnique({
+      where: { jobType },
+      select: { isEnabled: true },
+    });
+    // Si no existeix encara, és per defecte true (init no ha corregut)
+    const enabled = c ? c.isEnabled : true;
+    _enabledCache.set(jobType, { enabled, t: now });
+    return enabled;
+  } catch (e) {
+    logger.warn(`isJobEnabled(${jobType}) fail: ${e.message}`);
+    return true; // fail-open per no trencar funcionalitat
+  }
+}
+
+function clearEnabledCache(jobType) {
+  if (jobType) _enabledCache.delete(jobType);
+  else _enabledCache.clear();
+}
+
 module.exports = {
   initJobs,
   rescheduleJob,
   runJobManually,
+  isJobEnabled,
+  clearEnabledCache,
   JOB_FUNCTIONS,
 };

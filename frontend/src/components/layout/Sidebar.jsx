@@ -45,10 +45,14 @@ import {
   TrendingUp,
   Sparkles,
   Crown,
+  Map,
+  Warehouse,
 } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
 import useCompanyStore from '../../stores/companyStore';
 import { canAccessSection } from '../../lib/permissions';
+import { useAgentEnabled } from '../../hooks/useAgentToggles';
+import { useMarketingStatus } from '../../hooks/useMarketingStatus';
 
 // ===========================================
 // Seccions del sidebar
@@ -60,6 +64,7 @@ const sections = [
     label: 'Inici',
     items: [
       { to: '/', icon: LayoutDashboard, label: 'Dashboard', section: 'dashboard' },
+      { to: '/warehouse/agent', icon: Warehouse, label: 'Magatzem IA', section: 'agent', requiresAgent: 'warehouse_agent' },
     ],
   },
   {
@@ -130,6 +135,8 @@ const sections = [
     items: [
       { to: '/ceo', icon: Crown, label: 'CEO IA', section: 'agent' },
       { to: '/gestor', icon: Sparkles, label: 'Gestor IA', section: 'agent' },
+      { to: '/marketing/runs', icon: Sparkles, label: 'Marketing AI · Runs', section: 'agent', requiresFeature: 'marketing' },
+      { to: '/marketing/settings', icon: Settings, label: 'Marketing AI · Context', section: 'agent', requiresFeature: 'marketing' },
     ],
   },
   {
@@ -148,6 +155,7 @@ const sections = [
       { to: '/company/settings', icon: Building2, label: 'Dades fiscals', section: 'accounting' },
       { to: '/company/fiscal-years', icon: Calendar, label: 'Exercicis comptables', section: 'accounting' },
       { to: '/company/chart-of-accounts', icon: BookText, label: 'Pla de comptes', section: 'accounting' },
+      { to: '/supplier-mapping', icon: Map, label: 'Mapatge proveïdors', section: 'accounting' },
       { to: '/year-closing', icon: FileLock, label: 'Tancament d\'exercici', section: 'accounting' },
     ],
   },
@@ -174,15 +182,22 @@ export default function Sidebar({ onClose }) {
   const logout = useAuthStore((s) => s.logout);
   const companyName = useCompanyStore((s) => s.name);
   const navigate = useNavigate();
+  const { enabled: warehouseAgentEnabled } = useAgentEnabled('warehouse_agent');
+  const { enabled: marketingEnabled } = useMarketingStatus();
 
   const handleLogout = async () => {
     await logout();
     navigate('/login');
   };
 
+  const agentToggles = { warehouse_agent: warehouseAgentEnabled };
+  const featureToggles = { marketing: marketingEnabled };
+
   const isVisible = (item) => {
     if (item.adminOnly && user?.role !== 'ADMIN') return false;
     if (item.section && !canAccessSection(user, item.section)) return false;
+    if (item.requiresAgent && agentToggles[item.requiresAgent] === false) return false;
+    if (item.requiresFeature && featureToggles[item.requiresFeature] === false) return false;
     return true;
   };
 

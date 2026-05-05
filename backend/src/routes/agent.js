@@ -292,7 +292,7 @@ router.patch('/suggestions/:id', authorize('ADMIN', 'EDITOR'), async (req, res, 
     }
 
     if (action === 'accept') {
-      const result = await agent.applySuggestion(req.params.id);
+      const result = await agent.applySuggestion(req.params.id, { userId: req.user?.id });
       res.json({ message: 'Suggeriment acceptat i aplicat', ...result });
     } else {
       await prisma.agentSuggestion.update({
@@ -327,7 +327,7 @@ router.post('/suggestions/accept-all', authorize('ADMIN'), async (req, res, next
     let applied = 0;
     for (const suggestion of pendingHigh) {
       try {
-        await agent.applySuggestion(suggestion.id);
+        await agent.applySuggestion(suggestion.id, { userId: req.user?.id });
         applied++;
       } catch (err) {
         // continuar amb la resta
@@ -352,6 +352,33 @@ router.post('/suggestions/accept-all', authorize('ADMIN'), async (req, res, next
  * POST /api/agent/analyze — Analitzar anomalies
  * Body: { invoiceIds }
  */
+// ===========================================
+// AI Review (passades puntuals manuals — duplicates / conciliation)
+// ===========================================
+const aiReview = require('../services/aiReviewService');
+
+router.post('/ai-review/duplicates', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const { daysBack, maxSuppliers } = req.body || {};
+    const stats = await aiReview.aiDuplicatesReview({
+      daysBack: daysBack ? parseInt(daysBack, 10) : undefined,
+      maxSuppliers: maxSuppliers ? parseInt(maxSuppliers, 10) : undefined,
+    });
+    res.json({ message: 'AI duplicates review completat', ...stats });
+  } catch (err) { next(err); }
+});
+
+router.post('/ai-review/conciliation', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
+  try {
+    const { daysBack, maxBatches } = req.body || {};
+    const stats = await aiReview.aiConciliationReview({
+      daysBack: daysBack ? parseInt(daysBack, 10) : undefined,
+      maxBatches: maxBatches ? parseInt(maxBatches, 10) : undefined,
+    });
+    res.json({ message: 'AI conciliation review completat', ...stats });
+  } catch (err) { next(err); }
+});
+
 router.post('/analyze', authorize('ADMIN', 'EDITOR'), async (req, res, next) => {
   try {
     let { invoiceIds } = req.body;

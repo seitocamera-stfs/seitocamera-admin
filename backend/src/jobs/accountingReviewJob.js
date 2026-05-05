@@ -49,55 +49,24 @@ async function runAccountingReview() {
 
           const classification = await agent.classifyInvoice(invoice.id);
 
-          // Si la confiança és alta (>0.85), aplicar directament
-          if (classification.confidence >= 0.85) {
-            await prisma.receivedInvoice.update({
-              where: { id: invoice.id },
-              data: {
+          // Sempre crear suggeriment PENDING — l'usuari decideix si aplicar.
+          // Política: cap canvi proactiu a la factura sense aprovació (evita
+          // sorpreses amb classificacions IA i facilita auditoria).
+          await prisma.agentSuggestion.create({
+            data: {
+              receivedInvoiceId: invoice.id,
+              type: 'CLASSIFICATION',
+              title: `${classification.accountingType === 'INVESTMENT' ? 'Inversió' : 'Despesa'}: ${classification.pgcAccount} ${classification.pgcAccountName}`,
+              description: classification.reasoning,
+              suggestedValue: {
                 accountingType: classification.accountingType,
                 pgcAccount: classification.pgcAccount,
                 pgcAccountName: classification.pgcAccountName,
-                classifiedBy: 'AGENT_AUTO',
-                classifiedAt: new Date(),
               },
-            });
-
-            await prisma.agentSuggestion.create({
-              data: {
-                receivedInvoiceId: invoice.id,
-                type: 'CLASSIFICATION',
-                status: 'ACCEPTED',
-                title: `${classification.accountingType === 'INVESTMENT' ? 'Inversió' : 'Despesa'}: ${classification.pgcAccount} ${classification.pgcAccountName}`,
-                description: classification.reasoning,
-                suggestedValue: {
-                  accountingType: classification.accountingType,
-                  pgcAccount: classification.pgcAccount,
-                  pgcAccountName: classification.pgcAccountName,
-                },
-                confidence: classification.confidence,
-                reasoning: classification.reasoning,
-                resolvedBy: 'auto',
-                resolvedAt: new Date(),
-              },
-            });
-          } else {
-            // Crear suggeriment per revisió manual
-            await prisma.agentSuggestion.create({
-              data: {
-                receivedInvoiceId: invoice.id,
-                type: 'CLASSIFICATION',
-                title: `${classification.accountingType === 'INVESTMENT' ? 'Inversió' : 'Despesa'}: ${classification.pgcAccount} ${classification.pgcAccountName}`,
-                description: classification.reasoning,
-                suggestedValue: {
-                  accountingType: classification.accountingType,
-                  pgcAccount: classification.pgcAccount,
-                  pgcAccountName: classification.pgcAccountName,
-                },
-                confidence: classification.confidence,
-                reasoning: classification.reasoning,
-              },
-            });
-          }
+              confidence: classification.confidence,
+              reasoning: classification.reasoning,
+            },
+          });
 
           results.classified++;
         } catch (err) {

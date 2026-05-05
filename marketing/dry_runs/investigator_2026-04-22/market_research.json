@@ -1,0 +1,256 @@
+{
+  "business": "Seito Camera",
+  "vertical": "audiovisual equipment rental",
+  "geography": "Barcelona",
+  "generated_at": "2026-04-22T09:00:00Z",
+  "tokens_used": 14000,
+  "_dry_run_note": "Dry-run manual executed by Claude playing the Investigator role. 6 web searches via WebSearch tool; direct site fetches blocked by session egress proxy (production Playwright will not have this restriction). Evidence drawn from search snippets only.",
+
+  "competitors": [
+    {
+      "name": "Napalm Rentals",
+      "website": "https://napalmrentals.com/",
+      "positioning": "Audiovisual equipment rental in Barcelona emphasizing competitive pricing, strong social media presence oriented to ad agencies and mid-range fiction",
+      "price_range": {
+        "low_eur": null,
+        "high_eur": null,
+        "unit": "per day",
+        "notes": "Published as 'very competitive price' on public profile; no explicit figures retrieved from search snippets"
+      },
+      "primary_channels": ["instagram", "facebook", "linkedin"],
+      "content_style": "Regular Instagram posts showcasing camera and lighting equipment (~5.2k followers)",
+      "observed_strengths": [
+        "High social visibility relative to peers",
+        "Wide gear selection (ARRI + Canon + multiple mounts)"
+      ],
+      "observed_weaknesses": [
+        "No published pricing despite claiming competitive prices — friction for potential clients comparing options"
+      ],
+      "sources": [
+        {
+          "url": "https://napalmrentals.com/",
+          "title": "Napalm Rentals",
+          "retrieved_at": "2026-04-22T09:00:00Z",
+          "excerpt": "Napalm provides audiovisual equipment rental in Barcelona with cameras, lenses in various mounts"
+        },
+        {
+          "url": "https://www.instagram.com/napalmrentals/",
+          "title": "NAPALM RENTALS Instagram",
+          "retrieved_at": "2026-04-22T09:00:00Z",
+          "excerpt": "@napalmrentals, 5,203 followers, camera and lighting equipment content"
+        },
+        {
+          "url": "https://www.bcncatfilmcommission.com/en/companies-directory/napalm-rentals",
+          "title": "Napalm Rentals | Barcelona Film Commission",
+          "retrieved_at": "2026-04-22T09:00:00Z",
+          "excerpt": "C/ Pere IV 78, Bajos, 08005 Barcelona; 936 117 974; INFO@NAPALMRENTALS.COM"
+        }
+      ]
+    },
+    {
+      "name": "Zig Zag Rental",
+      "website": "https://zigzagrental.com/",
+      "positioning": "Comprehensive camera-department services (rental + technical support + transportation + workshops) targeting cinema and advertising professionals; founded 2013",
+      "price_range": null,
+      "primary_channels": ["facebook", "instagram", "vimeo", "pinterest"],
+      "content_style": "Multi-platform visual portfolio (Vimeo for reels, Instagram for gear, Pinterest for inspiration)",
+      "observed_strengths": [
+        "Broadest service wrap: not just rental but transport + workshops (education → loyalty)",
+        "Strong diversified social presence (4 channels)",
+        "Located at Calle Àlaba 51, Barcelona (22@ district, close to productoras)"
+      ],
+      "observed_weaknesses": [
+        "Open question: on-set technical presence not explicit in public materials"
+      ],
+      "sources": [
+        {
+          "url": "https://zigzagrental.com/",
+          "title": "Home - Zig Zag Rental",
+          "retrieved_at": "2026-04-22T09:00:00Z",
+          "excerpt": "Founded 2013, comprehensive camera department services for film and TV"
+        },
+        {
+          "url": "https://zigzagrental.com/about-us/",
+          "title": "Work Philosophy - Zig Zag Rental",
+          "retrieved_at": "2026-04-22T09:00:00Z",
+          "excerpt": "Caters to professionals in cinema and advertising industries"
+        }
+      ]
+    },
+    {
+      "name": "Servicevision",
+      "website": "https://www.servicevision.es/",
+      "positioning": "Founded 1986 in Barcelona; designs and manufactures camera-support equipment (cranes, travelings, hot-heads, remote controls) in addition to rental; historically recognized as a top-tier cinema rental",
+      "price_range": {
+        "low_eur": null,
+        "high_eur": null,
+        "unit": "per day",
+        "notes": "No public pricing; market-perceived as high-end (top-tier cinema productions)"
+      },
+      "primary_channels": ["web_direct", "industry_directories"],
+      "content_style": "Professional corporate tone, emphasis on engineering heritage",
+      "observed_strengths": [
+        "40 years of track record",
+        "Owns manufacturing (cranes, hot-heads, remote controls) — deep moat",
+        "24-hour delivery + repair workshops",
+        "Headquartered near El Prat Airport (logistics advantage for crews flying in)"
+      ],
+      "observed_weaknesses": [
+        "Low visibility on consumer social (Instagram, LinkedIn)",
+        "Site architecture split between .servicevision.es and rental.servicevision.es — UX friction"
+      ],
+      "sources": [
+        {
+          "url": "https://www.servicevision.es/en/servicevision/",
+          "title": "Servicevision",
+          "retrieved_at": "2026-04-22T09:00:00Z",
+          "excerpt": "Founded Barcelona 1986 by the Andrés and Alfredo Vallés brothers"
+        },
+        {
+          "url": "https://rental.servicevision.es/en/rental/cameras/",
+          "title": "Cameras - ServiceVision Alquiler",
+          "retrieved_at": "2026-04-22T09:00:00Z",
+          "excerpt": "Rental of equipment for film and television filming (Cameras, Optics, Lights, Cranes)"
+        }
+      ]
+    },
+    {
+      "name": "Camera Lenses Rental (CLR)",
+      "website": "http://www.cameralensesrental.com/",
+      "positioning": "Camera & grip rental with presence in Barcelona and Madrid, specialized lens inventory (zoom, anamorphic, spherical, macro, prism) from 16mm to digital long format",
+      "price_range": null,
+      "primary_channels": ["web_direct"],
+      "content_style": "Technical, catalog-driven",
+      "observed_strengths": [
+        "Lens depth (anamorphics + specialty glass) is a differentiator for DPs with artistic briefs",
+        "Barcelona + Madrid footprint"
+      ],
+      "observed_weaknesses": [
+        "Low social footprint compared to Napalm/Camaleón",
+        "HTTP (non-HTTPS) site — trust signal mildly degraded"
+      ],
+      "sources": [
+        {
+          "url": "http://www.cameralensesrental.com/",
+          "title": "CLR - Camera Lenses Rental - Camera & Grip - Barcelona & Madrid",
+          "retrieved_at": "2026-04-22T09:00:00Z",
+          "excerpt": "Equipment from 16mm to digital long format with variety of lenses including zooms, anamorphics, spherical, macro, and prisms"
+        }
+      ]
+    },
+    {
+      "name": "Ovide",
+      "website": "https://www.ovide.com/",
+      "positioning": "Multi-city Spanish rental house (Barcelona, Madrid, Canarias, Euskadi, Sevilla, Valencia) with ARRI/Canon/RED/Sony inventory; geographic reach positioned as primary value",
+      "price_range": {
+        "low_eur": null,
+        "high_eur": null,
+        "unit": "per day",
+        "notes": "Market perception (per Seito's ground truth): lower-priced end of the premium tier"
+      },
+      "primary_channels": ["web_direct"],
+      "content_style": "Catalog-driven, multi-city presence",
+      "observed_strengths": [
+        "Only competitor in golden set with nation-wide presence",
+        "Suitable for productions that shoot across multiple Spanish regions"
+      ],
+      "observed_weaknesses": [
+        "Low social/content visibility (not appearing in social-focused searches)"
+      ],
+      "sources": [
+        {
+          "url": "https://www.ovide.com/alquiler/cine/camaras/",
+          "title": "Cámaras profesionales para rodajes de cine en alquiler - Ovide",
+          "retrieved_at": "2026-04-22T09:00:00Z",
+          "excerpt": "Rental of ARRI Alexa Mini LF cinema camera for films, series, advertising, documentaries"
+        }
+      ]
+    },
+    {
+      "name": "Camaleón Rental",
+      "website": "https://www.camaleonrental.com/",
+      "positioning": "Multi-country (Spain + Portugal) full-service rental, explicitly positioned on scale: '1,200+ projects in Barcelona', works with Netflix, HBO, Amazon Prime, Movistar+, TV3, TVE; targets international ad campaigns and streaming platforms",
+      "price_range": null,
+      "primary_channels": ["web_direct", "B2B_partnerships"],
+      "content_style": "Corporate, scale-oriented, multilingual (Spanish + English)",
+      "observed_strengths": [
+        "Platform partnerships (Netflix/HBO/Amazon) give reputation moat",
+        "Multi-city coverage (Madrid, Lisbon, Barcelona, Malaga, Seville, Majorca)",
+        "Vertical integration: rental + production services"
+      ],
+      "observed_weaknesses": [
+        "Large-shop feel may alienate boutique productoras seeking personal service"
+      ],
+      "sources": [
+        {
+          "url": "https://www.camaleonrental.com/gb/camera-rental-barcelona",
+          "title": "Film & Tv Camera Rental Barcelona - Camaleón Rental",
+          "retrieved_at": "2026-04-22T09:00:00Z",
+          "excerpt": "Participated in 1,200+ audiovisual projects filmed in Barcelona for Netflix, HBO, Amazon Prime"
+        }
+      ]
+    }
+  ],
+
+  "price_summary": "Published pricing is absent from all six major competitor sites reviewed — the market convention is 'request a quote'. Per Seito's industry knowledge (ground truth), the tier map is: Servicevision = premium, Camaleón = premium-international, Zig Zag = mid-high with service, Napalm = aggressive mid, Ovide = budget-premium multi-city, CLR = mid with lens specialty. The absence of published prices is itself a collective market weakness — any competitor that publishes transparent tiered pricing would create friction reduction for first-time clients.",
+
+  "channel_summary": "Of the six analyzed, only Napalm and Zig Zag show meaningful consumer-social activity (Instagram primarily). Servicevision, Ovide, and CLR rely on web + industry directories (Barcelona Film Commission). None surfaced in searches with strong LinkedIn presence for B2B DP targeting. No competitor surfaced technical/educational content marketing (the 'authority' play). Vimeo is used only by Zig Zag among the six.",
+
+  "opportunities": [
+    {
+      "description": "Own the 'on-set technical authority' positioning on LinkedIn + Vimeo with short technical content aimed at DPs and gaffers",
+      "rationale": "None of the six competitors surfaced technical-educational content in search results, despite this being a direct value a rental house can add. This matches Seito's stated unique_strength ('hands-on technical support on-set')",
+      "evidence": [
+        {
+          "url": "https://zigzagrental.com/about-us/",
+          "title": "Zig Zag Rental about-us",
+          "retrieved_at": "2026-04-22T09:00:00Z",
+          "excerpt": "Workshops for aspiring camera technicians — adjacent to but not the same as on-set client support"
+        },
+        {
+          "url": "https://www.servicevision.es/en/servicevision/",
+          "title": "Servicevision overview",
+          "retrieved_at": "2026-04-22T09:00:00Z",
+          "excerpt": "Repair, transformation and target collimation workshops — internal engineering, not client-facing content"
+        }
+      ]
+    },
+    {
+      "description": "Publish transparent daily-rate tiers for ARRI Mini / Mini LF — the single most friction-reducing move possible",
+      "rationale": "Every competitor hides price behind a quote form. A client comparing 5 rental houses with opaque pricing is a commodity bid. Transparent pricing signals confidence and saves them time.",
+      "evidence": [
+        {
+          "url": "https://napalmrentals.com/",
+          "title": "Napalm Rentals homepage",
+          "retrieved_at": "2026-04-22T09:00:00Z",
+          "excerpt": "No public rates despite 'very competitive price' claim"
+        }
+      ]
+    },
+    {
+      "description": "Boutique-personal positioning as counter-narrative to the large multi-city shops (Camaleón, Ovide, Servicevision)",
+      "rationale": "Three of the six competitors are explicitly scale-oriented (multi-city, streaming-platform logos). There is a clear opposite-slot for 'high-touch Barcelona specialist, one-on-one with DPs'.",
+      "evidence": [
+        {
+          "url": "https://www.camaleonrental.com/gb/camera-rental-barcelona",
+          "title": "Camaleón Rental Barcelona",
+          "retrieved_at": "2026-04-22T09:00:00Z",
+          "excerpt": "1,200+ projects, Netflix/HBO/Amazon — scale-first positioning"
+        }
+      ]
+    }
+  ],
+
+  "risks": [
+    "Camaleón Rental's platform partnerships (Netflix/HBO) represent a reputation moat that head-on competition cannot break short-term; avoid competing on scale.",
+    "Servicevision owns its own manufacturing — any 'tech superiority' claim must be framed around service, not gear.",
+    "Price-based competition with Napalm is a race to the bottom; the differentiator must be service quality, not rate."
+  ],
+
+  "open_questions": [
+    "Actual published rates for ARRI Mini / Mini LF daily across all six competitors — blocked by session egress proxy, requires Playwright fetches.",
+    "LinkedIn presence and posting cadence of each competitor — requires LinkedIn lookup tool (not available in this dry-run).",
+    "Should Camaleón Rental, Movie Men, GV Broadcast, and Exodo Rental be promoted to Seito's golden competitor set? All surfaced multiple times in landscape searches but were not in the original 5.",
+    "Current reviews/sentiment for Napalm ('mal servei' per Seito's notes) — sentiment data needs targeted scrape of review sites."
+  ]
+}

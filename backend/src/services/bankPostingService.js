@@ -105,7 +105,10 @@ async function postBankMovement(movementId, userId) {
       const partyName = c.receivedInvoice?.supplier?.name || c.issuedInvoice?.client?.name || '?';
       throw new Error(`La factura ${inv.invoiceNumber} (${partyName}) no té subcompte de contrapart assignat. Comptabilitza-la primer.`);
     }
-    const amount = round2(n(inv.totalAmount));
+    // Multi-match parcial: si la conciliació té `appliedAmount`, l'usem; sino
+    // assumim totalAmount (compatibilitat). Així una factura pagada en 2
+    // cobraments es pot conciliar correctament.
+    const amount = round2(n(c.appliedAmount ?? inv.totalAmount));
     counterpartyTotal += amount;
 
     if (entryType === 'COLLECTION') {
@@ -202,20 +205,35 @@ async function unpostBankMovement(movementId, userId, reason) {
  * falla NO bloqueja l'operació de conciliació (només loga warning).
  */
 async function tryPostFromConciliation(conciliationId, userId, logger) {
+  let bankMovementId = null;
   try {
     const c = await prisma.conciliation.findUnique({
       where: { id: conciliationId },
       select: { bankMovementId: true, status: true },
     });
     if (!c || c.status !== 'CONFIRMED') return null;
+    bankMovementId = c.bankMovementId;
     const movement = await prisma.bankMovement.findUnique({
       where: { id: c.bankMovementId },
       select: { journalEntryId: true },
     });
     if (movement?.journalEntryId) return null;  // ja comptabilitzat
-    return await postBankMovement(c.bankMovementId, userId);
+    const result = await postBankMovement(c.bankMovementId, userId);
+    // Èxit — netejem qualsevol error anterior
+    await prisma.bankMovement.update({
+      where: { id: c.bankMovementId },
+      data: { lastPostError: null, lastPostAttemptAt: new Date() },
+    }).catch(() => {});
+    return result;
   } catch (err) {
     logger?.warn?.(`bankPostingService: tryPost falla per conciliació ${conciliationId}: ${err.message}`);
+    // Persistir l'error perquè la UI el pugui mostrar (#24)
+    if (bankMovementId) {
+      await prisma.bankMovement.update({
+        where: { id: bankMovementId },
+        data: { lastPostError: err.message.slice(0, 500), lastPostAttemptAt: new Date() },
+      }).catch(() => {});
+    }
     return null;
   }
 }

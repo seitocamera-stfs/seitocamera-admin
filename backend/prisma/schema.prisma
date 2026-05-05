@@ -180,6 +180,12 @@ model Client {
   notes       String?
   isActive    Boolean  @default(true)
 
+  // Marketing AI prospect support
+  isProspect           Boolean   @default(false)  // true = lead encara no facturat
+  source               String?                    // "marketing_ai" / "manual" / "qonto" / etc.
+  prospectMetadata     Json?                      // fit_score, why_good_fit, suggested_outreach, evidence, contacts
+  prospectImportedAt   DateTime?
+
   // Vincle comptabilitat formal (Sprint 3)
   defaultRevenueAccountId String?              // Subcompte ingrés habitual (705, 700, etc.)
   counterpartyAccountId   String?  @unique     // Subcompte 430xxxx propi
@@ -195,6 +201,7 @@ model Client {
   counterpartyAccount   ChartOfAccount? @relation("ClientCounterparty", fields: [counterpartyAccountId], references: [id])
 
   @@index([defaultRevenueAccountId])
+  @@index([isProspect])
   @@map("clients")
 }
 
@@ -504,6 +511,11 @@ model BankMovement {
   accountId       String?                         // Subcompte 572xxxx del banc d'aquest moviment
   journalEntryId  String?  @unique
   postedAt        DateTime?
+  // Visibilitat dels intents de comptabilització fallits (#24).
+  // Quan tryPostFromConciliation no pot completar (factura no POSTED, etc.),
+  // guardem aquí l'error perquè la UI el pugui mostrar.
+  lastPostError      String?
+  lastPostAttemptAt  DateTime?
 
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
@@ -543,6 +555,9 @@ model Conciliation {
   status              ConciliationStatus  @default(AUTO_MATCHED)
   confidence          Float?
   matchReason         String?
+  // Multi-match parcial: import d'aquesta factura cobert per aquest moviment.
+  // Si null, s'assumeix invoice.totalAmount complet (comportament històric).
+  appliedAmount       Decimal?            @db.Decimal(12, 2)
   confirmedBy         String?
   confirmedAt         DateTime?
   createdAt           DateTime            @default(now())
@@ -1510,6 +1525,33 @@ model AgentJobConfig {
   @@map("agent_job_configs")
 }
 
+// Persistència dels runs del subprojecte marketing/ (Python multi-agent).
+// Substitueix l'estat en memòria del backend Node — així sobreviuen reinicis,
+// permeten recuperació post-crash, i es poden llistar/filtrar/matar.
+model MarketingRun {
+  id              String   @id @default(cuid())
+  agent           String   // "investigator", "strategist", "lead_hunter", "fact_checker", "full_run"
+  script          String?  // path relatiu del script llançat
+  // running → procés viu | completed → output JSON existeix
+  // failed → procés mort sense output | killed → matat per usuari
+  // abandoned → backend reiniciat amb procés perdut (no es pot reconciliar)
+  status          String   @default("running")
+  pid             Int?
+  hostname        String?  // os.hostname() per detectar runs d'altre node en clúster
+  startedAt       DateTime @default(now()) @db.Timestamptz()
+  endedAt         DateTime? @db.Timestamptz()
+  logFile         String   // ruta absoluta del log
+  outputFile      String?  // detected post-completion (full_run_*.json o equivalent)
+  error           String?
+  spentUsd        Decimal? @db.Decimal(10, 4)
+  summary         Json?    // tokens, timings, verification_rate, etc.
+  triggeredById   String?
+
+  @@index([status])
+  @@index([startedAt(sort: Desc)])
+  @@map("marketing_runs")
+}
+
 model OpNotification {
   id              String         @id @default(cuid())
   userId          String
@@ -1712,6 +1754,16 @@ model Transport {
   projecte             String?                                // Text lliure (legacy) — quan rentalProjectId existeix s'omple amb el nom del projecte
   rentalProjectId      String?                                // Vincle real al projecte Rentman/operacions
   tipusServei          String    @default("Entrega")
+  // Categoria estandarditzada per càlcul automàtic de cost:
+  //   ENTREGA_RECOLLIDA / RODATGE_DIA / INTERN / ALTRE
+  tipusServeiCategoria String?
+  foraBarcelona        Boolean   @default(false)
+  kmAnadaTornada       Decimal?  @db.Decimal(8, 2)
+  // Cost: si costManual no és null, té prioritat sobre costCalculat
+  costCalculat         Decimal?  @db.Decimal(10, 2)
+  costManual           Decimal?  @db.Decimal(10, 2)
+  costBreakdown        Json?     // { servei, km, hores, total }
+  costCalculatAt       DateTime? @db.Timestamptz(3)
   origen               String?
   notesOrigen          String?
   desti                String?
@@ -1749,6 +1801,21 @@ model Transport {
   @@index([empresaId])
   @@index([rentalProjectId])
   @@map("transports")
+}
+
+/// Singleton de tarifes per al càlcul automàtic de cost per Transport.
+/// Una sola row amb id='default'. Editable des de la pantalla de logística.
+model TransportCostConfig {
+  id                    String   @id @default("default")
+  costEntregaRecollida  Decimal  @default(30)    @db.Decimal(8, 2)
+  costRodatgeDia        Decimal  @default(80)    @db.Decimal(8, 2)
+  costIntern            Decimal  @default(0)     @db.Decimal(8, 2)
+  costPerKm             Decimal  @default(0.200) @db.Decimal(6, 3)
+  tarifaHoraExtra       Decimal  @default(25)    @db.Decimal(6, 2)
+  updatedAt             DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+  updatedById           String?
+
+  @@map("transport_cost_configs")
 }
 
 // ===========================================
@@ -1794,6 +1861,19 @@ model Company {
   aeatRegime           String    @default("GENERAL")
   is347Threshold       Decimal   @default(3005.06) @db.Decimal(12, 2)
   vatPeriod            String    @default("QUARTERLY")
+
+  // Data tall a partir de la qual el sistema considera comptablement una
+  // factura. Tot el que té issueDate < accountingScopeFrom queda fora del
+  // scope: cap alerta IA, no surt a "Cobraments vençuts", no apareix al
+  // Dashboard com a problema. Permet operar net sobre l'any en curs sense
+  // soroll d'històric incomplet.
+  accountingScopeFrom  DateTime? @db.Timestamptz(3)
+
+  // Context de marketing/marca (consumit pels agents IA — comptables i marketing)
+  // Forma esperada (mirror de BusinessContext a marketing/src/schemas/business.py):
+  //   { vertical, language, target_customers, unique_strengths,
+  //     known_competitors, excluded_segments, goals, brand_voice }
+  marketingContext     Json?
 
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt

@@ -42,12 +42,22 @@ async function getAccount(companyId, code) {
 /**
  * Saldo (debit-credit) d'un compte al període [from, to] sumant només
  * journal_lines de assentaments POSTED.
+ *
+ * Si `from` és null/undefined, agafa des del principi (saldo acumulat fins
+ * a `to`). Útil per regularitzacions on cal incloure saldos arrossegats
+ * d'obertura encara que no caiguin dins el rang del FY.
  */
 async function getAccountBalance(accountId, from, to) {
+  const dateFilter = {};
+  if (from) dateFilter.gte = from;
+  if (to) dateFilter.lte = to;
   const lines = await prisma.journalLine.findMany({
     where: {
       accountId,
-      journalEntry: { status: 'POSTED', date: { gte: from, lte: to } },
+      journalEntry: {
+        status: 'POSTED',
+        ...(Object.keys(dateFilter).length > 0 && { date: dateFilter }),
+      },
     },
     select: { debit: true, credit: true },
   });
@@ -113,8 +123,17 @@ async function getChecklist(year) {
     prisma.journalEntry.count({
       where: { fiscalYearId: fy.id, status: 'DRAFT' },
     }),
+    // Inclou amortitzacions pendents de qualsevol mes d'aquest any I anys
+    // anteriors (poden quedar amortitzacions de novembre/desembre any
+    // anterior pendents quan no es va tancar correctament).
     prisma.amortizationEntry.count({
-      where: { year, month: 12, status: 'PENDING', fixedAsset: { status: 'ACTIVE' } },
+      where: {
+        OR: [
+          { year, status: 'PENDING' },
+          { year: { lt: year }, status: 'PENDING' },
+        ],
+        fixedAsset: { status: 'ACTIVE' },
+      },
     }),
     computeTrialBalanceTotals(company.id, from, to),
   ]);
@@ -163,11 +182,13 @@ async function regularizeVat(year, userId) {
   });
   if (existing) throw new Error(`La regularització d'IVA del ${year} ja està feta (assentament #${existing.entryNumber})`);
 
-  // Calcular saldos del 472 i 477 acumulats fins al 31/12
+  // Calcular saldos acumulats fins al 31/12 (passem null com a `from` per
+  // capturar també saldos arrossegats d'obertura, que poden ser fora del rang
+  // [fy.startDate, fy.endDate] però rellevants per la regularització).
   const acc472 = await getAccount(company.id, '472000');
   const acc477 = await getAccount(company.id, '477000');
-  const bal472 = await getAccountBalance(acc472.id, fy.startDate, fy.endDate);  // saldo deutor (suportat)
-  const bal477 = await getAccountBalance(acc477.id, fy.startDate, fy.endDate);  // saldo creditor (repercutit)
+  const bal472 = await getAccountBalance(acc472.id, null, fy.endDate);  // saldo deutor (suportat)
+  const bal477 = await getAccountBalance(acc477.id, null, fy.endDate);  // saldo creditor (repercutit)
 
   const ivaSuportat   = round2(bal472.debit - bal472.credit);   // > 0 si encara hi ha IVA suportat
   const ivaRepercutit = round2(bal477.credit - bal477.debit);   // > 0 si encara hi ha IVA repercutit

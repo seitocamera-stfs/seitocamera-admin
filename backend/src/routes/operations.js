@@ -2377,14 +2377,20 @@ router.get('/stats', async (req, res, next) => {
 // GET /api/operations/dashboard — Dashboard operatiu complet
 router.get('/dashboard', async (req, res, next) => {
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayEnd = new Date();
-    todayEnd.setHours(23, 59, 59, 999);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const weekEnd = new Date(today);
-    weekEnd.setDate(weekEnd.getDate() + 7);
+    // Anclar dates a noon UTC del dia LOCAL per evitar bug TZ amb camps @db.Date
+    // (vegeu logistics.js / dashboard transports per al mateix patró)
+    const localNow = new Date();
+    const off = localNow.getTimezoneOffset() * 60000;
+    const localISO = (d) => new Date(d.getTime() - off).toISOString().slice(0, 10);
+    const todayStr = localISO(localNow);
+    const tomorrowStr = localISO(new Date(localNow.getTime() + 86400000));
+    const weekEndStr = localISO(new Date(localNow.getTime() + 7 * 86400000));
+    const today = new Date(`${todayStr}T12:00:00Z`);
+    const tomorrow = new Date(`${tomorrowStr}T12:00:00Z`);
+    const weekEnd = new Date(`${weekEndStr}T12:00:00Z`);
+    // Per camps TIMESTAMP (no DATE) sí que volem rang sencer del dia local
+    const todayStartLocal = new Date(`${todayStr}T00:00:00`);
+    const todayEnd = new Date(`${todayStr}T23:59:59.999`);
 
     const [
       activeProjects,
@@ -2504,12 +2510,13 @@ router.get('/dashboard', async (req, res, next) => {
         },
         orderBy: { role: { sortOrder: 'asc' } },
       }),
-      // Absències aprovades que se solapen amb avui (rang dia complet local
-      // per evitar offset de timezone entre Date local i Postgres DATE).
+      // Absències aprovades que se solapen amb avui.
+      // Camps `@db.Date` → comparar amb `today` anclat a noon UTC del dia
+      // local (evita el bug TZ que feia aparèixer absences del dia anterior).
       prisma.staffAbsence.findMany({
         where: {
           status: 'APROVADA',
-          startDate: { lte: todayEnd },
+          startDate: { lte: today },
           endDate: { gte: today },
         },
         include: {

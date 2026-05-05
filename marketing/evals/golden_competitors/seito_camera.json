@@ -1,0 +1,50 @@
+{
+  "business": "Seito Camera",
+  "vertical": "audiovisual equipment rental",
+  "geography": "Barcelona",
+  "curated_by": "Seito",
+  "curated_at": "2026-04-21",
+  "notes": "Initial golden set for Phase 1 evaluation. The Investigator agent MUST identify at least 3 of these 5 competitors in a successful run. Expand to 10 before Phase 2 MVP.",
+  "competitors": [
+    {
+      "canonical_name": "Napalm Rentals",
+      "website": "https://napalmrentals.com/",
+      "aliases": [],
+      "notes_for_evaluator": "Competidor directe a BCN, stock d'ARRI Alexa Mini LF i Mini, preus publicats al web (~450-680€/dia), preus molt agresius. Enfocats a publicitat i ficció mitjana-alta. Molt visibles en xarxes, molt mal servei, desorganitzat",
+      "verified_at": "2026-04-22"
+    },
+    {
+      "canonical_name": "Zig Zag Rental",
+      "website": "https://zigzagrental.com/",
+      "aliases": [],
+      "notes_for_evaluator": "Competidor molt directe a BCN, stock d'ARRI Alexa Mini LF i Mini, ofereixen bon servei. Enfocats a publicitat i ficció mitjana-alta. Molt visibles en xarxes.",
+      "verified_at": "2026-04-22"
+    },
+    {
+      "canonical_name": "Servicevision",
+      "website": "https://www.servicevision.es/es/",
+      "aliases": [],
+      "notes_for_evaluator": "Competidor directe a BCN, la casa de lloguer més gran, stock molt gran d'ARRI Alexa Mini LF i Mini, preus cars. Enfocats a publicitat. Poc visibles en xarxes, estan anticuats",
+      "verified_at": "2026-04-22"
+    },
+    {
+      "canonical_name": "Camera Lenses Rental",
+      "website": "http://www.cameralensesrental.com/",
+      "aliases": [],
+      "notes_for_evaluator": "Competidor directe a BCN, stock  d'ARRI Alexa Mini LF i Mini, preus cars. Enfocats a publicitat, fan molts services de fora, Poc visibles en xarxes.",
+      "verified_at": "2026-04-22"
+    },
+    {
+      "canonical_name": "Ovide",
+      "website": "https://www.ovide.com/",
+      "aliases": [],
+      "notes_for_evaluator": "Competidor directe a BCN, la casa de lloguer gran, també estan a madrid, stock molt gran d'ARRI Alexa Mini LF i Mini, preus barats. Enfocats a cinema i alguna publicitat. Poc visibles en xarxes, mal servei",
+      "verified_at": "2026-04-22"
+    }
+  ],
+  "evaluation_thresholds": {
+    "min_recall_for_pass": 0.6,
+    "min_recall_for_strong_pass": 0.8,
+    "allow_aliased_matches": true
+  }
+}

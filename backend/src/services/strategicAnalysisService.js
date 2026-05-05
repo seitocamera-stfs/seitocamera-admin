@@ -213,10 +213,19 @@ async function getTopSuppliers(year, limit = 10) {
 // ------------------------------------------------------------------
 // Cobraments vençuts amb impacte
 // ------------------------------------------------------------------
-async function getOverdueCollections() {
+async function getOverdueCollections({ year } = {}) {
+  const scopeService = require('./accountingScopeService');
+  const scopeFrom = await scopeService.getAccountingScopeFrom();
   const today = new Date();
+  const where = { dueDate: { lte: today, not: null } };
+  if (year) {
+    where.issueDate = { gte: yearStart(year), lte: yearEnd(year) };
+  } else if (scopeFrom) {
+    // Si no hi ha filtre per any però sí scope comptable, només factures dins scope
+    where.issueDate = { gte: scopeFrom };
+  }
   const overdue = await prisma.issuedInvoice.findMany({
-    where: { dueDate: { lte: today, not: null } },
+    where,
     select: {
       id: true, invoiceNumber: true, dueDate: true, totalAmount: true, paidAmount: true,
       client: { select: { id: true, name: true } },
@@ -256,9 +265,11 @@ async function getOverdueCollections() {
 // Cash flow: tresoreria actual vs cobraments/pagaments dels propers 60 dies
 // ------------------------------------------------------------------
 async function getCashFlowProjection(daysAhead = 60) {
+  const scopeService = require('./accountingScopeService');
   const company = await resolveCompany();
   const today = new Date();
   const horizon = new Date(today.getTime() + daysAhead * 24 * 60 * 60 * 1000);
+  const scopeFrom = await scopeService.getAccountingScopeFrom();
 
   // Saldo actual
   const cash = await prisma.$queryRawUnsafe(`
@@ -272,20 +283,25 @@ async function getCashFlowProjection(daysAhead = 60) {
   `, company.id);
   const cashBalance = round2(cash[0]?.total || 0);
 
-  // Cobraments previstos: factures emeses no pagades amb dueDate dins l'horitzó
+  // Cobraments previstos: factures emeses no pagades amb dueDate dins l'horitzó (i dins scope)
   const collectionsExpected = await prisma.issuedInvoice.findMany({
-    where: { dueDate: { lte: horizon, not: null }, status: { notIn: ['PAID'] } },
+    where: {
+      dueDate: { lte: horizon, not: null },
+      status: { notIn: ['PAID'] },
+      ...(scopeFrom ? { issueDate: { gte: scopeFrom } } : {}),
+    },
     select: { totalAmount: true, paidAmount: true, dueDate: true },
   });
   const expectedCollections = round2(collectionsExpected.reduce((s, i) => s + (n(i.totalAmount) - n(i.paidAmount)), 0));
 
-  // Pagaments previstos: factures rebudes no pagades amb dueDate dins l'horitzó
+  // Pagaments previstos: factures rebudes no pagades amb dueDate dins l'horitzó (i dins scope)
   const paymentsExpected = await prisma.receivedInvoice.findMany({
     where: {
       deletedAt: null, isDuplicate: false,
       origin: { not: 'LOGISTIK' },
       dueDate: { lte: horizon, not: null },
       status: { notIn: ['PAID', 'REJECTED', 'NOT_INVOICE'] },
+      ...(scopeFrom ? { issueDate: { gte: scopeFrom } } : {}),
     },
     select: { totalAmount: true, paidAmount: true, dueDate: true },
   });
@@ -377,9 +393,11 @@ async function getInventorySummary() {
 // Riscos estratègics — observacions de nivell directiu
 // ------------------------------------------------------------------
 async function getStrategicRisks() {
+  const currentYear = new Date().getFullYear();
   const kpi = await getKpiOverview();
   const cashflow = await getCashFlowProjection(60);
-  const overdue = await getOverdueCollections();
+  const overdueAll = await getOverdueCollections();
+  const overdueYear = await getOverdueCollections({ year: currentYear });
   const topClients = await getTopClients(undefined, 5);
 
   const risks = [];
@@ -415,13 +433,26 @@ async function getStrategicRisks() {
   }
 
   // Risc 3: Cobraments vençuts grans
-  if (kpi.totalIncomes > 0 && (overdue.total / kpi.totalIncomes) > 0.15) {
+  // Comparem només els vençuts de l'exercici en curs amb la facturació de l'exercici
+  // (sinó comparar deute històric amb ingressos d'un sol any dóna percentatges absurds)
+  if (kpi.totalIncomes > 0 && (overdueYear.total / kpi.totalIncomes) > 0.15) {
+    const pctYear = round2((overdueYear.total / kpi.totalIncomes) * 100);
+    const histExtra = overdueAll.total - overdueYear.total;
     risks.push({
       level: 2,
       category: 'COLLECTION',
-      title: `Cobraments vençuts (${overdue.total.toFixed(2)} €) representen ${round2((overdue.total / kpi.totalIncomes) * 100)}% de la facturació`,
-      description: `Tens ${overdue.count} factures vençudes pendents. Considera enviar recordatoris o restringir crèdit a clients reincidents.`,
-      impact: overdue.total,
+      title: `Cobraments vençuts ${currentYear}: ${overdueYear.total.toFixed(2)} € (${pctYear}% de la facturació)`,
+      description: `${overdueYear.count} factures vençudes de l'exercici en curs.${histExtra > 0 ? ` A més, ${histExtra.toFixed(2)} € d'exercicis anteriors.` : ''} Considera enviar recordatoris o restringir crèdit a clients reincidents.`,
+      impact: overdueYear.total,
+    });
+  } else if (overdueAll.total > 0 && overdueAll.count >= 5) {
+    // Si no hi ha risc per l'any actual però hi ha deute històric
+    risks.push({
+      level: 1,
+      category: 'COLLECTION',
+      title: `Deute històric vençut: ${overdueAll.total.toFixed(2)} € (${overdueAll.count} factures)`,
+      description: 'Cobraments pendents acumulats d\'exercicis anteriors. Revisa si són recuperables o cal provisionar com a incobrables.',
+      impact: overdueAll.total,
     });
   }
 

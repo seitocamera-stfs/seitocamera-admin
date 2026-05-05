@@ -155,6 +155,9 @@ async function calculateModel303(year, quarter) {
 
   // Adquisicions intracomunitàries (inversió subjecte passiu):
   // des de invoices comptabilitzades amb proveïdor UE.
+  // L'IVA s'autoliquida al tipus que correspongui al producte (21% general,
+  // 10% reduït, 4% superreduït). Si la factura té `taxRate` el respectem;
+  // sino caiem a 21% per defecte (tipus general).
   const received = await getPostedReceivedInvoices(from, to);
   let baseIntracomunitaria = 0;
   let ivaIntracomunitaria  = 0;
@@ -162,8 +165,9 @@ async function calculateModel303(year, quarter) {
     const country = inv.supplier?.country || 'ES';
     if (!EU_COUNTRIES.includes(country)) continue;
     const base = n(inv.subtotal);
+    const rate = n(inv.taxRate) > 0 ? n(inv.taxRate) / 100 : 0.21;
     baseIntracomunitaria += base;
-    ivaIntracomunitaria  += base * 0.21;
+    ivaIntracomunitaria  += base * rate;
   }
 
   // Resultat = repercutit - suportat

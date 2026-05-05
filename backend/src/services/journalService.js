@@ -13,7 +13,9 @@
  */
 const { prisma } = require('../config/database');
 
-const TOLERANCE = 0.005;  // ½ cèntim — per cobrir errors d'arredoniment
+// 2 cèntims — coincideix amb la tolerància d'invoicePostingService.
+// Cobreix doble arrodoniment d'OCR (subtotal mostrat + IVA mostrat ≠ total mostrat).
+const TOLERANCE = 0.02;
 
 /**
  * Suma deure i haver d'una llista de línies.

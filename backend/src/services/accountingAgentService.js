@@ -14,6 +14,7 @@ const { logger } = require('../config/logger');
 const { prisma } = require('../config/database');
 const company = require('../config/company');
 const aiCostTracker = require('./aiCostTracker');
+const localLLM = require('./localLLMService');
 
 // ===========================================
 // Configuració Claude API
@@ -38,6 +39,8 @@ async function callLLM(systemPrompt, messages, options = {}) {
     system: systemPrompt,
     messages,
   };
+  // Permetre temperature explícita (e.g. 0 per classificacions deterministes)
+  if (options.temperature !== undefined) body.temperature = options.temperature;
 
   // Retry amb backoff per a rate limits (429): respecta retry-after header.
   const maxRetries = options.maxRetries ?? 4;
@@ -95,6 +98,43 @@ async function callLLM(systemPrompt, messages, options = {}) {
   }).catch(() => {});
 
   return text;
+}
+
+/**
+ * callLLMLocalFirst — Per tasques no interactives (classificació, detecció
+ * d'anomalies, etc.) prova primer Ollama local i només cau a Claude si no
+ * està disponible o falla. Estalvia cost i evita rate limits.
+ *
+ * Per tasques amb tool-use complex (chat CEO, chat Gestor) NO usar — Qwen3
+ * no és prou fiable per tool-calling.
+ *
+ * Es pot desactivar globalment amb LOCAL_LLM_ENABLED=false al .env.
+ */
+async function callLLMLocalFirst(systemPrompt, messages, options = {}) {
+  const useLocal = process.env.LOCAL_LLM_ENABLED !== 'false' && await localLLM.isAvailable();
+  if (!useLocal) {
+    return callLLM(systemPrompt, messages, options);
+  }
+  try {
+    const localOpts = { ...options, trackingService: (options.trackingService || 'accounting_agent') + '_local' };
+    const text = await localLLM.callLLM(systemPrompt, messages, localOpts);
+    // Validació opcional: si caller passa `validateJson: true`, comprovem que
+    // la resposta contingui JSON parsejable. Sinó cau a Claude.
+    if (options.validateJson) {
+      try {
+        const m = text.match(/\{[\s\S]*\}/);
+        if (!m) throw new Error('Resposta local sense JSON');
+        JSON.parse(m[0]);
+      } catch (parseErr) {
+        logger.warn(`Local LLM JSON invàlid (${options.trackingService || 'task'}): ${parseErr.message}. Fallback a Claude.`);
+        return callLLM(systemPrompt, messages, options);
+      }
+    }
+    return text;
+  } catch (err) {
+    logger.warn(`Local LLM va fallar (${options.trackingService || 'task'}): ${err.message}. Fallback a Claude.`);
+    return callLLM(systemPrompt, messages, options);
+  }
 }
 
 // ===========================================
@@ -160,9 +200,12 @@ Respon SEMPRE en format JSON:
 
 const SYSTEM_PROMPT_ANOMALY = `Ets un auditor comptable expert revisant factures d'una empresa de ${company.sector} (${company.name}, ${company.city}).
 
+REGLA CRÍTICA — País del proveïdor:
+El país de cada factura te'l dono explícitament al camp "País" (codi ISO 2 lletres: ES, DE, FR, NL, BE, IT, PT, etc.). NO infereixis nacionalitat del nom del proveïdor ni del text. Si una factura diu "País: ES" és espanyola, encara que el proveïdor es digui "TODOCERRADURAS GmbH". Si vols afirmar "factura intracomunitària" o "factura d'altre país", el codi NO ha de ser ES.
+
 Busca anomalies en les factures rebudes:
 
-1. **IVA incorrecte**: Espanya general 21%, reduït 10%, superreduït 4%. Si l'IVA no quadra amb l'import, alerta.
+1. **IVA incorrecte**: Espanya general 21%, reduït 10%, superreduït 4%. Si l'IVA no quadra amb l'import, alerta. Per factures NO espanyoles (País != ES) considera intracomunitari (IVA 0% amb inversió subjecte passiu) o exportació.
 2. **Imports inusuals**: Si una factura d'un proveïdor habitual té un import molt diferent del normal, alerta.
 3. **Dades incompletes**: NIF absent, número de factura sospitós, data futura.
 4. **Possibles duplicats**: Factures del mateix proveïdor amb import similar en dates properes.
@@ -385,8 +428,12 @@ async function getInvoiceContext(invoiceId) {
  * Obté les últimes factures sense classificar
  */
 async function getUnclassifiedInvoices(limit = 20) {
+  // Aplica scope comptable: no classifiquem factures fora del rang configurat
+  const scopeService = require('./accountingScopeService');
+  const scope = await scopeService.scopeFilter('issueDate');
   return prisma.receivedInvoice.findMany({
     where: {
+      ...scope,
       accountingType: null,
       status: { notIn: ['REJECTED'] },
     },
@@ -440,9 +487,10 @@ HISTORIAL PROVEÏDOR:
     });
   }
 
-  const response = await callLLM(classifierPrompt, [
+  // Temperature 0: classificació és tasca determinista; no volem variació
+  const response = await callLLMLocalFirst(classifierPrompt, [
     { role: 'user', content: invoiceText },
-  ], { trackingService: 'accounting_agent_classify', entityType: 'invoice', entityId: invoiceId });
+  ], { trackingService: 'accounting_agent_classify', entityType: 'invoice', entityId: invoiceId, metadata: { invoiceId }, temperature: 0, validateJson: true });
 
   try {
     // Extreure JSON de la resposta (pot venir amb text extra)
@@ -450,10 +498,26 @@ HISTORIAL PROVEÏDOR:
     if (!jsonMatch) throw new Error('Resposta sense JSON');
     const result = JSON.parse(jsonMatch[0]);
 
+    // Validar pgcAccount real: el LLM a vegades inventa codis ficticis com 000/999.
+    // Comprovem que existeix al pla de comptes (provant 3 dígits + variant amb sufix).
+    const rawCode = String(result.pgcAccount || '').trim();
+    if (!rawCode) {
+      throw new Error('pgcAccount buit a la resposta del LLM');
+    }
+    const candidates = [rawCode, rawCode + '000', rawCode.padEnd(6, '0')];
+    const found = await prisma.chartOfAccount.findFirst({
+      where: { code: { in: candidates } },
+      select: { code: true, name: true },
+    });
+    if (!found) {
+      logger.warn(`Classifier: pgcAccount ${rawCode} no existeix al pla de comptes (factura ${invoiceId})`);
+      throw new Error(`pgcAccount inventat: ${rawCode} no existeix al pla de comptes`);
+    }
+
     return {
       accountingType: result.accountingType,
       pgcAccount: result.pgcAccount,
-      pgcAccountName: result.pgcAccountName,
+      pgcAccountName: found.name,  // usem nom verídic, no el del LLM (per evitar drift)
       confidence: result.confidence || 0.7,
       reasoning: result.reasoning || '',
     };
@@ -470,7 +534,7 @@ async function analyzeAnomalies(invoiceIds) {
   const invoices = await prisma.receivedInvoice.findMany({
     where: { id: { in: invoiceIds } },
     include: {
-      supplier: { select: { name: true, nif: true } },
+      supplier: { select: { name: true, nif: true, country: true } },
     },
   });
 
@@ -492,8 +556,9 @@ async function analyzeAnomalies(invoiceIds) {
 
   const invoicesText = invoices.map((inv) => {
     const stats = inv.supplierId ? supplierStats[inv.supplierId] : null;
+    const country = inv.supplier?.country || 'ES';
     return `
-- Nº ${inv.invoiceNumber} | ${inv.supplier?.name || '?'} (NIF: ${inv.supplier?.nif || 'SENSE NIF'})
+- Nº ${inv.invoiceNumber} | ${inv.supplier?.name || '?'} (NIF: ${inv.supplier?.nif || 'SENSE NIF'}) | País: ${country}
   Import: ${inv.totalAmount}€ | Base: ${inv.subtotal}€ | IVA: ${inv.taxRate}% (${inv.taxAmount}€)
   Data: ${inv.issueDate?.toISOString().split('T')[0]} | Estat: ${inv.status}
   ${stats ? `Historial proveïdor: ${stats._count} factures, mitjana ${stats._avg?.totalAmount || '?'}€` : ''}`;
@@ -512,9 +577,9 @@ async function analyzeAnomalies(invoiceIds) {
     });
   }
 
-  const response = await callLLM(anomalyPrompt, [
+  const response = await callLLMLocalFirst(anomalyPrompt, [
     { role: 'user', content: `Analitza aquestes ${invoices.length} factures:\n${invoicesText}` },
-  ], { trackingService: 'accounting_agent_anomalies' });
+  ], { trackingService: 'accounting_agent_anomalies', maxTokens: 3072, validateJson: true });
 
   try {
     const jsonMatch = response.match(/\{[\s\S]*\}/);
@@ -1201,9 +1266,19 @@ async function batchClassify(invoiceIds) {
 }
 
 /**
- * Aplica un suggeriment acceptat a la factura
+ * Aplica un suggeriment acceptat a la factura.
+ *
+ * Casos:
+ *   - CLASSIFICATION / PGC_ACCOUNT sobre factura SENSE journalEntryId →
+ *     només actualitza camps de la factura.
+ *   - CLASSIFICATION / PGC_ACCOUNT sobre factura JA comptabilitzada (té
+ *     journalEntryId) → reclassificació real: anul·la l'assentament actual,
+ *     actualitza la factura amb el nou compte, i re-comptabilitza.
+ *
+ * Per fer la reclassificació necessitem un userId (per registrar audit/reverse).
+ * Si no es passa, prova de resoldre un admin del sistema.
  */
-async function applySuggestion(suggestionId) {
+async function applySuggestion(suggestionId, { userId, reason } = {}) {
   const suggestion = await prisma.agentSuggestion.findUnique({
     where: { id: suggestionId },
   });
@@ -1218,16 +1293,53 @@ async function applySuggestion(suggestionId) {
     if (val.accountingType) updateData.accountingType = val.accountingType;
     if (val.pgcAccount) updateData.pgcAccount = val.pgcAccount;
     if (val.pgcAccountName) updateData.pgcAccountName = val.pgcAccountName;
+    if (val.accountId) updateData.accountId = val.accountId;
     updateData.classifiedBy = 'AGENT_AUTO';
     updateData.classifiedAt = new Date();
   }
 
-  // Actualitzar factura si hi ha dades
+  let reclassified = false;
+
   if (Object.keys(updateData).length > 0) {
-    await prisma.receivedInvoice.update({
+    // Comprovar si la factura ja està comptabilitzada
+    const invoice = await prisma.receivedInvoice.findUnique({
       where: { id: suggestion.receivedInvoiceId },
-      data: updateData,
+      select: { id: true, journalEntryId: true, accountId: true },
     });
+
+    const changingAccount = updateData.accountId && invoice?.accountId && updateData.accountId !== invoice.accountId;
+
+    if (invoice?.journalEntryId && changingAccount) {
+      // Reclassificació de factura ja comptabilitzada → unpost + update + repost
+      const invoicePostingService = require('./invoicePostingService');
+      let resolvedUserId = userId;
+      if (!resolvedUserId) {
+        const admin = await prisma.user.findFirst({
+          where: { role: 'ADMIN' },
+          orderBy: { createdAt: 'asc' },
+          select: { id: true },
+        });
+        resolvedUserId = admin?.id;
+      }
+      if (!resolvedUserId) throw new Error('No s\'ha trobat cap usuari ADMIN per registrar la reclassificació');
+
+      await invoicePostingService.unpostInvoice('RECEIVED', invoice.id, {
+        userId: resolvedUserId,
+        reason: reason || `Reclassificació: aplicació de suggeriment ${suggestionId}`,
+      });
+      await prisma.receivedInvoice.update({
+        where: { id: invoice.id },
+        data: updateData,
+      });
+      await invoicePostingService.postReceivedInvoice(invoice.id, { userId: resolvedUserId });
+      reclassified = true;
+    } else {
+      // Cas simple: només actualitzar la factura
+      await prisma.receivedInvoice.update({
+        where: { id: suggestion.receivedInvoiceId },
+        data: updateData,
+      });
+    }
   }
 
   // Marcar suggeriment com acceptat
@@ -1235,12 +1347,12 @@ async function applySuggestion(suggestionId) {
     where: { id: suggestionId },
     data: {
       status: 'ACCEPTED',
-      resolvedBy: 'user',
+      resolvedBy: userId ? 'user' : 'auto',
       resolvedAt: new Date(),
     },
   });
 
-  return { applied: updateData };
+  return { applied: updateData, reclassified };
 }
 
 /**
@@ -1317,4 +1429,5 @@ module.exports = {
   applySuggestion,
   getUnclassifiedInvoices,
   getAccountingSummary,
+  callLLMLocalFirst,  // exposat per altres serveis (e.g. aiReviewService)
 };

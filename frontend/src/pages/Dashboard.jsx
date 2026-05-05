@@ -6,6 +6,7 @@ import {
   Clock, Users, Phone, Warehouse, Wrench, Shield,
 } from 'lucide-react';
 import { useApiGet } from '../hooks/useApi';
+import { useAgentEnabled } from '../hooks/useAgentToggles';
 import api from '../lib/api';
 
 // ===========================================
@@ -49,6 +50,14 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const { data, loading, refetch } = useApiGet('/operations/dashboard', {}, { refetchOnFocus: true, refetchOnVisible: true });
   const { data: logistics, refetch: refetchLogistics } = useApiGet('/logistics/dashboard', {}, { refetchOnFocus: true, refetchOnVisible: true });
+  const { enabled: warehouseAgentEnabled } = useAgentEnabled('warehouse_agent');
+  // Només demanem el briefing si el Magatzem IA està actiu — així evitem la
+  // crida i amaguem els cards relacionats quan està desactivat.
+  const { data: warehouse } = useApiGet(
+    warehouseAgentEnabled ? '/warehouse/briefing' : null,
+    {},
+    { refetchOnFocus: true }
+  );
   const [syncing, setSyncing] = useState(false);
 
   const handleSync = async () => {
@@ -201,6 +210,96 @@ export default function Dashboard() {
               </div>
             );
           })()}
+
+          {/* Magatzem · alertes (només es mostren si hi ha contingut) */}
+          {warehouse && (warehouse.summary?.overdue_returns > 0 || warehouse.summary?.equipment_broken_or_lost > 0) && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
+              {warehouse.summary?.overdue_returns > 0 && (
+                <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 md:p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-[11px] md:text-xs font-medium text-rose-900 flex items-center gap-1.5">
+                      <Clock size={13} className="text-rose-600" /> Devolucions endarrerides
+                    </h3>
+                    <span className="text-[10px] md:text-[11px] font-medium px-2 py-0.5 rounded-full bg-rose-200 text-rose-900">
+                      {warehouse.summary.overdue_returns}
+                    </span>
+                  </div>
+                  <div className="space-y-1">
+                    {(warehouse.overdue_returns || []).slice(0, 3).map((p) => {
+                      const days = Math.floor((new Date() - new Date(p.returnDate)) / 86400000);
+                      return (
+                        <div key={p.id} className="flex items-center justify-between text-xs bg-white/60 rounded px-2 py-1">
+                          <span className="font-medium truncate">{p.name}</span>
+                          <span className="text-rose-700 ml-2 flex-shrink-0">{days}d</span>
+                        </div>
+                      );
+                    })}
+                    {warehouse.summary.overdue_returns > 3 && (
+                      <button
+                        onClick={() => navigate('/warehouse/agent')}
+                        className="text-[10px] md:text-[11px] text-rose-700 hover:underline inline-flex items-center gap-1"
+                      >
+                        Veure les {warehouse.summary.overdue_returns} <ArrowRight size={10} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {warehouse.summary?.equipment_broken_or_lost > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 md:p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-[11px] md:text-xs font-medium text-amber-900 flex items-center gap-1.5">
+                      <Wrench size={13} className="text-amber-600" /> Equips fora de servei
+                    </h3>
+                    <span className="text-[10px] md:text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-200 text-amber-900">
+                      {warehouse.summary.equipment_broken_or_lost}
+                    </span>
+                  </div>
+                  <div className="space-y-1">
+                    {(warehouse.broken_equipment || []).slice(0, 3).map((e) => {
+                      const inc = e.openIncident;
+                      return (
+                        <div key={e.id} className="flex items-center justify-between text-xs bg-white/60 rounded px-2 py-1 gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium truncate">{e.name}</div>
+                            {inc ? (
+                              <button
+                                onClick={() => navigate('/operations/incidents')}
+                                className="text-[10px] text-amber-800 hover:underline truncate text-left w-full"
+                                title={inc.title}
+                              >
+                                Incidència oberta · {inc.status.replace('INC_', '').toLowerCase()}
+                              </button>
+                            ) : (
+                              <span className="text-[10px] text-rose-700 italic">⚠ Sense incidència oberta</span>
+                            )}
+                          </div>
+                          <span className={`flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded ${e.status === 'BROKEN' ? 'bg-rose-200 text-rose-900' : e.status === 'LOST' ? 'bg-slate-200 text-slate-700' : 'bg-orange-200 text-orange-900'}`}>{e.status}</span>
+                        </div>
+                      );
+                    })}
+                    <div className="flex justify-between gap-2 pt-1">
+                      {warehouse.summary.equipment_broken_or_lost > 3 && (
+                        <button
+                          onClick={() => navigate('/warehouse/agent')}
+                          className="text-[10px] md:text-[11px] text-amber-700 hover:underline inline-flex items-center gap-1"
+                        >
+                          Veure els {warehouse.summary.equipment_broken_or_lost} <ArrowRight size={10} />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => navigate('/operations/incidents')}
+                        className="text-[10px] md:text-[11px] text-amber-700 hover:underline inline-flex items-center gap-1 ml-auto"
+                      >
+                        Incidències <ArrowRight size={10} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Transports avui i demà */}
           {logistics && (logistics.transportsAvuiCount > 0 || logistics.transportsDemaCount > 0) && (

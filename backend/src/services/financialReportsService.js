@@ -53,7 +53,8 @@ function classifyForBalance(code) {
   // Deutors / Creditors (grup 4)
   if (/^43/.test(c))  return { side: 'ASSET', section: 'CURRENT', group: 'II. Deutors comercials (clients)' };
   if (/^44/.test(c))  return { side: 'ASSET', section: 'CURRENT', group: 'II. Deutors comercials (altres)' };
-  if (/^46[02]/.test(c)) return { side: 'ASSET', section: 'CURRENT', group: 'II. Deutors comercials (personal)' };
+  // 460 (Anticips), 461 (Deutors per operacions amb personal), 462 (Comptes corrents amb consellers)
+  if (/^46[012]/.test(c)) return { side: 'ASSET', section: 'CURRENT', group: 'II. Deutors comercials (personal)' };
   if (/^4709/.test(c)) return { side: 'ASSET', section: 'CURRENT', group: 'II. Deutors comercials (HP IVA)' };
   if (/^472/.test(c))  return { side: 'ASSET', section: 'CURRENT', group: 'II. Deutors comercials (HP IVA suportat)' };
   if (/^40/.test(c))  return { side: 'LIABILITY_EQUITY', section: 'CURRENT_LIAB', group: 'III. Creditors comercials i altres (proveïdors)' };
@@ -260,7 +261,8 @@ async function getBalanceSheet({ companyId, atDate, compareDate }) {
     totals: {
       asset: totalAsset,
       liabilityEquity: totalLE,
-      balanced: Math.abs(totalAsset - totalLE) < 0.5,  // tolerància d'arredoniment
+      // 5 cèntims de tolerància — abans 0.5€ era massa permissiu i amagava errors reals
+      balanced: Math.abs(totalAsset - totalLE) < 0.05,
       difference: round2(totalAsset - totalLE),
     },
     comparative: compareDate ? {
@@ -285,7 +287,9 @@ async function getProfitAndLoss({ companyId, fromDate, toDate, compareFromDate, 
     const linesPrev = await getLinesInRange(c, new Date(compareFromDate), new Date(compareToDate));
     prevAccounts = aggregateByAccount(linesPrev);
   }
-  const prevMap = new Map((prevAccounts || []).map((a) => [a.code, a.balance]));
+  // Mantenim debit/credit per separat per fer la comparativa coherent
+  // amb el càlcul del període actual (INCOME = credit-debit, EXPENSE = debit-credit, MIXED = balance)
+  const prevMap = new Map((prevAccounts || []).map((a) => [a.code, { debit: a.debit, credit: a.credit, balance: a.balance }]));
 
   // Per cada compte, classificar a un epígraf
   const epigrafs = new Map();
@@ -303,9 +307,12 @@ async function getProfitAndLoss({ companyId, fromDate, toDate, compareFromDate, 
 
     const prevAccValue = (() => {
       const pb = prevMap.get(acc.code);
-      if (pb == null) return 0;
-      // Per a comparativa cal accedir al debit/credit comparatiu — per simplicitat usem el balance tal qual aplicat al sign
-      return cl.side === 'INCOME' ? -round2(pb) : cl.side === 'EXPENSE' ? round2(pb) : round2(pb);
+      if (!pb) return 0;
+      // Mateix càlcul que pel període actual — abans MIXED només passava el balance crú
+      // sense fer la mateixa transformació, cosa que distorsionava la comparativa de 67/77
+      if (cl.side === 'INCOME')  return round2(pb.credit - pb.debit);
+      if (cl.side === 'EXPENSE') return round2(pb.debit - pb.credit);
+      return round2(pb.balance);  // MIXED
     })();
 
     if (!epigrafs.has(cl.epigraf)) {

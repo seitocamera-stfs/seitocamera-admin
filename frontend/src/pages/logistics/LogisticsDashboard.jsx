@@ -4,7 +4,7 @@ import {
   Truck, Plus, Search, X, Filter, ChevronDown, ChevronRight,
   Package, PackageCheck, PackageOpen, Clock, Phone, MapPin,
   Trash2, StickyNote, CalendarDays, Table, Building2, RefreshCw,
-  User, Ban, MessageCircle, Link2,
+  User, Ban, MessageCircle, Link2, Euro, Calculator, Save,
 } from 'lucide-react';
 import api from '../../lib/api';
 import { useApiGet } from '../../hooks/useApi';
@@ -16,6 +16,15 @@ import { enviarViaWhatsapp, enviarViaWhatsappEmpresa, copyDriverLink } from '../
 
 const ESTATS = ['Pendent', 'Confirmat', 'En Preparació', 'Lliurat', 'Cancel·lat'];
 const TIPUS_SERVEI = ['Entrega', 'Recollida', 'Tot el dia'];
+
+// Categories per al càlcul automàtic de cost (independent de tipusServei UI)
+const CATEGORIES_COST = [
+  { value: '',                  label: '— Sense categoria —' },
+  { value: 'ENTREGA_RECOLLIDA', label: 'Entrega / Recollida (cost fix)' },
+  { value: 'RODATGE_DIA',       label: 'Rodatge dia sencer (cost fix dia)' },
+  { value: 'INTERN',            label: 'Moviment intern' },
+  { value: 'ALTRE',             label: 'Altre (cost manual)' },
+];
 
 const ESTAT_STYLES = {
   'Pendent':       'bg-slate-100 text-slate-700',
@@ -44,12 +53,18 @@ function hmToMinutes(hm) {
 
 function descHoresExtres(minuts) {
   if (minuts == null) return '—';
-  if (minuts === 0) return 'Puntual';
-  const abs = Math.abs(minuts);
-  const h = Math.floor(abs / 60);
-  const m = abs % 60;
+  if (minuts === 0) return 'Sense extres';
+  const h = Math.floor(minuts / 60);
+  const m = minuts % 60;
   const str = h > 0 ? `${h}h ${m}min` : `${m}min`;
-  return minuts > 0 ? `+${str}` : `-${str}`;
+  return `+${str}`;
+}
+
+function fmtEur(v) {
+  if (v == null || v === '') return '—';
+  const n = Number(v);
+  if (!Number.isFinite(n)) return '—';
+  return `${n.toFixed(2)} €`;
 }
 
 function formatDataCurta(dateStr) {
@@ -69,7 +84,7 @@ export default function LogisticsDashboard() {
   const [empreses, setEmpreses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [showConfig, setShowConfig] = useState(null); // 'conductors' | 'empreses' | null
+  const [showConfig, setShowConfig] = useState(null); // 'conductors' | 'empreses' | 'cost' | null
   const [highlightId, setHighlightId] = useState(null);
   const [preselectedProject, setPreselectedProject] = useState({ id: null, name: '' });
 
@@ -145,10 +160,12 @@ export default function LogisticsDashboard() {
 
   // KPIs
   const kpis = useMemo(() => {
-    let totalExtres = 0, ambExtres = 0;
+    let totalExtres = 0, ambExtres = 0, costTotal = 0;
     filtered.forEach(t => {
       if (t.estat === 'Cancel·lat') return;
       if (t.minutsExtres > 0) { totalExtres += t.minutsExtres; ambExtres++; }
+      const c = Number(t.costCalculat ?? t.costManual ?? 0);
+      if (Number.isFinite(c)) costTotal += c;
     });
     return {
       total: filtered.length,
@@ -159,6 +176,7 @@ export default function LogisticsDashboard() {
       cancellats: filtered.filter(t => t.estat === 'Cancel·lat').length,
       ambExtres,
       totalExtresH: (totalExtres / 60).toFixed(1),
+      costTotal,
     };
   }, [filtered]);
 
@@ -211,6 +229,9 @@ export default function LogisticsDashboard() {
           <button onClick={() => setShowConfig('empreses')} className="flex items-center gap-1.5 px-3 py-2 text-xs border rounded-lg text-gray-600 hover:bg-gray-50">
             <Building2 size={13} /> Empreses
           </button>
+          <button onClick={() => setShowConfig('cost')} className="flex items-center gap-1.5 px-3 py-2 text-xs border rounded-lg text-gray-600 hover:bg-gray-50">
+            <Calculator size={13} /> Tarifes cost
+          </button>
           <button onClick={() => setShowModal(true)} className="flex items-center gap-1.5 px-3 py-2 text-xs rounded-lg text-white" style={{ background: '#00617F' }}>
             <Plus size={13} /> Nou transport
           </button>
@@ -253,7 +274,7 @@ export default function LogisticsDashboard() {
       ) : (
         <div className="px-3 md:px-6 py-4 md:py-5 max-w-[1600px] mx-auto space-y-4">
           {/* KPIs */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 md:gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 md:gap-3">
             <Kpi label="Total" value={kpis.total} />
             <Kpi label="Pendents" value={kpis.pendents} tone="slate" />
             <Kpi label="Confirmats" value={kpis.confirmats} tone="blue" />
@@ -261,6 +282,7 @@ export default function LogisticsDashboard() {
             <Kpi label="Lliurats" value={kpis.lliurats} tone="emerald" />
             <Kpi label="Cancel·lats" value={kpis.cancellats} tone="rose" />
             <Kpi label="Hores extres" value={`${kpis.totalExtresH}h`} sub={`${kpis.ambExtres} transp.`} tone="orange" />
+            <Kpi label="Cost intern" value={fmtEur(kpis.costTotal)} sub="auto + manual" tone="blue" />
           </div>
 
           {/* Taula */}
@@ -287,6 +309,7 @@ export default function LogisticsDashboard() {
                       <Th>Empresa</Th>
                       <Th>Estat</Th>
                       <Th>H. extres</Th>
+                      <Th>Cost</Th>
                       <Th w={60}></Th>
                     </tr>
                   </thead>
@@ -327,6 +350,9 @@ export default function LogisticsDashboard() {
       )}
       {showConfig === 'empreses' && (
         <EmpresesPanel onClose={() => setShowConfig(null)} onRefresh={fetchAll} />
+      )}
+      {showConfig === 'cost' && (
+        <CostConfigPanel onClose={() => setShowConfig(null)} onSaved={fetchAll} />
       )}
     </div>
   );
@@ -426,6 +452,22 @@ function TransportRow({ t, conductors, empreses, onUpdate, onDelete, isHighlight
         <td className={`px-3 py-2.5 text-xs ${extresCls}`}>
           {descHoresExtres(minsExtres)}
         </td>
+        <td className="px-3 py-2.5 text-xs">
+          {(() => {
+            const c = t.costCalculat ?? t.costManual;
+            if (c == null) return <span className="text-gray-300">—</span>;
+            const isManual = t.costManual != null;
+            return (
+              <span
+                className={isManual ? 'text-blue-700 font-medium' : 'text-gray-700'}
+                title={isManual ? 'Cost manual (override)' : 'Cost calculat automàticament'}
+              >
+                {fmtEur(c)}
+                {isManual && <span className="ml-1 text-[9px] uppercase text-blue-500">M</span>}
+              </span>
+            );
+          })()}
+        </td>
         <td className="px-3 py-2.5 text-right">
           <div className="flex items-center justify-end gap-0.5">
             <button
@@ -452,7 +494,7 @@ function TransportRow({ t, conductors, empreses, onUpdate, onDelete, isHighlight
       {/* Expansió: notes + historial */}
       {expanded && (
         <tr className="bg-gray-50/50">
-          <td colSpan={12} className="px-6 py-4">
+          <td colSpan={13} className="px-6 py-4">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
               {/* Col 1: Notes i detalls */}
               <div>
@@ -523,6 +565,7 @@ function TransportRow({ t, conductors, empreses, onUpdate, onDelete, isHighlight
                   <div className="flex items-center gap-2">
                     <span className="text-gray-500 w-20">Inici real:</span>
                     <InlineEdit value={t.horaIniciReal} onSave={v => onUpdate(t.id, { horaIniciReal: v })} placeholder="HH:MM" type="time" className="font-medium text-gray-700" />
+                    {!t.horaIniciReal && <span className="text-[10px] text-gray-400 italic">(es marca quan el conductor dona play)</span>}
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-gray-500 w-20">Fi real:</span>
@@ -530,11 +573,15 @@ function TransportRow({ t, conductors, empreses, onUpdate, onDelete, isHighlight
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-gray-500 w-20">H. extres:</span>
-                    <span className={`font-medium ${minsExtres != null && minsExtres > 0 ? 'text-rose-600' : minsExtres != null ? 'text-emerald-600' : 'text-gray-400'}`}>
+                    <span className={`font-medium ${minsExtres != null && minsExtres > 0 ? 'text-rose-600' : 'text-gray-400'}`}>
                       {descHoresExtres(minsExtres)}
                     </span>
+                    <span className="text-[10px] text-gray-400">(jornada estàndard 12h)</span>
                   </div>
                 </div>
+
+                {/* Cost intern */}
+                <CostPanel t={t} onUpdate={onUpdate} />
 
                 {/* Creador */}
                 <div className="mt-4 pt-3 border-t border-gray-200">
@@ -716,6 +763,8 @@ function NewTransportModal({ conductors, empreses, onClose, onCreate, defaultRen
     dataCarrega: '', dataEntrega: '', horaRecollida: '', horaFiPrevista: '',
     horaEntregaEstimada: '', responsableProduccio: '', telefonResponsable: '',
     conductorId: '', empresaId: '', notes: '',
+    // Cost
+    tipusServeiCategoria: '', foraBarcelona: false, kmAnadaTornada: '', costManual: '',
   });
   const { data: rentalProjects } = useApiGet('/operations/projects', { limit: 200 });
   const allProjects = Array.isArray(rentalProjects) ? rentalProjects : (rentalProjects?.data || rentalProjects?.projects || []);
@@ -818,6 +867,10 @@ function NewTransportModal({ conductors, empreses, onClose, onCreate, defaultRen
           <Field label="Notes">
             <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} className="input-field resize-none" rows={2} />
           </Field>
+
+          {/* Bloc cost intern */}
+          <CostFieldsBlock form={form} setForm={setForm} />
+
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={onClose} className="px-4 py-2 text-xs border rounded-lg hover:bg-gray-50">Cancel·lar</button>
             <button type="submit" className="px-4 py-2 text-xs rounded-lg text-white" style={{ background: '#00617F' }}>Crear transport</button>
@@ -983,6 +1036,398 @@ function EmpresesPanel({ onClose, onRefresh }) {
               </div>
             ))}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ===========================================
+// Cost Fields Block — reutilitzable al modal de creació
+// ===========================================
+
+function CostFieldsBlock({ form, setForm }) {
+  const [kmLoading, setKmLoading] = useState(false);
+  const [kmInfo, setKmInfo] = useState(null);
+  const [kmError, setKmError] = useState(null);
+
+  const fetchKm = useCallback(async (origen, desti) => {
+    if (!desti?.trim()) {
+      setKmError('Cal definir el destí abans');
+      return;
+    }
+    setKmLoading(true);
+    setKmError(null);
+    setKmInfo(null);
+    try {
+      const r = await api.post('/logistics/distance', { origen: origen || null, desti });
+      setForm(prev => ({ ...prev, kmAnadaTornada: String(r.data.km) }));
+      setKmInfo(`Calculat: ${r.data.oneway} km × 2 = ${r.data.km} km (origen: ${r.data.origen})`);
+    } catch (e) {
+      const code = e?.response?.data?.code;
+      if (code === 'MISSING_API_KEY') setKmError('Google Maps no configurat al servidor');
+      else if (code === 'NOT_FOUND') setKmError('Adreça no trobada per Google Maps');
+      else if (code === 'EMPTY_ADDRESS') setKmError('Cal omplir destí');
+      else setKmError(e?.response?.data?.error || 'Error calculant distància');
+    } finally {
+      setKmLoading(false);
+    }
+  }, [setForm]);
+
+  // Auto-trigger en marcar foraBarcelona si tenim destí i no hi ha km
+  const onToggleFora = (checked) => {
+    setForm({ ...form, foraBarcelona: checked });
+    if (checked && !form.kmAnadaTornada && form.desti?.trim()) {
+      // Petit debounce per donar temps a setForm
+      setTimeout(() => fetchKm(form.origen, form.desti), 50);
+    }
+  };
+
+  return (
+    <div className="border-t pt-3 mt-2">
+      <div className="flex items-center gap-1.5 mb-2 text-[11px] font-medium text-gray-600">
+        <Calculator size={12} /> Càlcul cost intern (auto)
+      </div>
+      <Field label="Categoria">
+        <select
+          value={form.tipusServeiCategoria}
+          onChange={e => setForm({ ...form, tipusServeiCategoria: e.target.value })}
+          className="input-field"
+        >
+          {CATEGORIES_COST.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+        </select>
+      </Field>
+      <div className="grid grid-cols-2 gap-3 mt-2">
+        <Field label="Fora de Barcelona">
+          <label className="flex items-center gap-2 text-xs h-[34px]">
+            <input
+              type="checkbox"
+              checked={form.foraBarcelona}
+              onChange={e => onToggleFora(e.target.checked)}
+              className="h-4 w-4"
+            />
+            <span className="text-gray-600">Sumar combustible per km</span>
+          </label>
+        </Field>
+        <Field label="Km (anada + tornada)">
+          <div className="flex gap-1">
+            <input
+              type="number" step="0.1" min="0"
+              value={form.kmAnadaTornada}
+              onChange={e => setForm({ ...form, kmAnadaTornada: e.target.value })}
+              className="input-field flex-1"
+              placeholder="0"
+              disabled={!form.foraBarcelona}
+            />
+            <button
+              type="button"
+              onClick={() => fetchKm(form.origen, form.desti)}
+              disabled={!form.foraBarcelona || kmLoading || !form.desti?.trim()}
+              className="px-2 py-1 text-[10px] border rounded text-blue-600 hover:bg-blue-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+              title="Calcular km automàticament amb Google Maps"
+            >
+              {kmLoading ? <RefreshCw size={11} className="animate-spin" /> : <MapPin size={11} />}
+              Auto
+            </button>
+          </div>
+        </Field>
+      </div>
+      {kmInfo && <p className="text-[10px] text-emerald-600 mt-1">✓ {kmInfo}</p>}
+      {kmError && <p className="text-[10px] text-rose-600 mt-1">⚠ {kmError}</p>}
+      <Field label="Cost manual (override, opcional)">
+        <input
+          type="number" step="0.01" min="0"
+          value={form.costManual}
+          onChange={e => setForm({ ...form, costManual: e.target.value })}
+          className="input-field"
+          placeholder="Deixa buit per usar el càlcul automàtic"
+        />
+      </Field>
+      <p className="text-[10px] text-gray-400 mt-1">
+        Hores extres: jornada estàndard 12h, comptades des que el conductor dona "play".
+        Km auto via Google Maps quan marquis "fora de Barcelona" amb destí definit.
+      </p>
+    </div>
+  );
+}
+
+// ===========================================
+// Cost Panel (dins fila expandida)
+// ===========================================
+
+function CostPanel({ t, onUpdate }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState({
+    tipusServeiCategoria: t.tipusServeiCategoria || '',
+    foraBarcelona: !!t.foraBarcelona,
+    kmAnadaTornada: t.kmAnadaTornada ?? '',
+    costManual: t.costManual ?? '',
+  });
+  const [saving, setSaving] = useState(false);
+
+  const breakdown = t.costBreakdown || null;
+  const total = t.costCalculat ?? t.costManual;
+  const isManual = t.costManual != null;
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await onUpdate(t.id, {
+        tipusServeiCategoria: draft.tipusServeiCategoria || null,
+        foraBarcelona: !!draft.foraBarcelona,
+        kmAnadaTornada: draft.kmAnadaTornada === '' ? null : Number(draft.kmAnadaTornada),
+        costManual: draft.costManual === '' ? null : Number(draft.costManual),
+      });
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const recompute = async (forceKm = false) => {
+    setSaving(true);
+    try {
+      await api.post(`/logistics/transports/${t.id}/recompute-cost`, { forceKm });
+      await onUpdate(t.id, {}); // dispara refresh global
+    } catch (e) {
+      console.error('Error recompute', e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 pt-3 border-t border-gray-200">
+      <div className="flex items-center justify-between mb-2">
+        <h4 className="font-medium text-gray-700 flex items-center gap-1"><Euro size={12} /> Cost intern</h4>
+        {!editing ? (
+          <button onClick={() => setEditing(true)} className="text-[10px] text-blue-600 hover:underline">
+            Editar
+          </button>
+        ) : (
+          <div className="flex items-center gap-2">
+            <button onClick={() => setEditing(false)} className="text-[10px] text-gray-500 hover:underline">
+              Cancel·lar
+            </button>
+            <button onClick={save} disabled={saving} className="text-[10px] text-emerald-600 font-medium hover:underline disabled:opacity-50">
+              <Save size={10} className="inline mr-0.5" />Guardar
+            </button>
+          </div>
+        )}
+      </div>
+
+      {!editing ? (
+        <div className="space-y-1 text-[11px]">
+          <div className="flex items-center gap-2">
+            <span className="text-gray-500 w-20">Categoria:</span>
+            <span className="text-gray-700">
+              {CATEGORIES_COST.find(c => c.value === t.tipusServeiCategoria)?.label || <em className="text-gray-400">— sense definir —</em>}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-gray-500 w-20">Fora BCN:</span>
+            <span className="text-gray-700">
+              {t.foraBarcelona ? `Sí · ${t.kmAnadaTornada ?? 0} km` : 'No (intra-BCN)'}
+            </span>
+            {t.foraBarcelona && (breakdown?.kmAuto || breakdown?.kmError) && (
+              <span className={`text-[10px] ${breakdown.kmError ? 'text-rose-500' : 'text-emerald-600'}`}>
+                {breakdown.kmError ? `⚠ ${breakdown.kmError}` : '✓ km auto'}
+              </span>
+            )}
+          </div>
+          {breakdown && (
+            <div className="mt-2 p-2 bg-white rounded border border-gray-100 text-[10.5px] leading-relaxed">
+              <div className="flex justify-between"><span className="text-gray-500">Servei (tarifa categoria)</span><span className="text-gray-700">{fmtEur(breakdown.servei)}</span></div>
+              <div className="flex justify-between"><span className="text-gray-500">Combustible (km)</span><span className="text-gray-700">{fmtEur(breakdown.gasolina)}</span></div>
+              <div className="flex justify-between"><span className="text-gray-500">Hores extres</span><span className="text-gray-700">{fmtEur(breakdown.hores)}</span></div>
+              <div className="flex justify-between border-t mt-1 pt-1 font-medium">
+                <span className="text-gray-700">Total {breakdown.isManual ? '(manual)' : '(auto)'}</span>
+                <span className={breakdown.isManual ? 'text-blue-700' : 'text-gray-900'}>{fmtEur(breakdown.total)}</span>
+              </div>
+              {breakdown.reason && (
+                <div className="text-[10px] text-amber-600 mt-1 italic">{breakdown.reason}</div>
+              )}
+            </div>
+          )}
+          {!breakdown && total != null && (
+            <div className="text-gray-700 mt-1">
+              Total: <span className={isManual ? 'text-blue-700 font-medium' : 'font-medium'}>{fmtEur(total)}</span>
+              {isManual && <span className="ml-1 text-[9px] uppercase text-blue-500">manual</span>}
+            </div>
+          )}
+          {!breakdown && total == null && (
+            <div className="text-gray-400 italic mt-1">Sense càlcul. Defineix categoria o cost manual i guarda.</div>
+          )}
+          <div className="flex items-center gap-3 mt-1">
+            <button onClick={() => recompute(false)} disabled={saving} className="text-[10px] text-blue-600 hover:underline disabled:opacity-50">
+              <RefreshCw size={9} className="inline mr-0.5" /> Recalcular
+            </button>
+            {t.foraBarcelona && (
+              <button onClick={() => recompute(true)} disabled={saving} className="text-[10px] text-blue-600 hover:underline disabled:opacity-50" title="Esborra km i els torna a buscar amb Google Maps">
+                <MapPin size={9} className="inline mr-0.5" /> Recalcular km auto
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-2 text-[11px]">
+          <div className="flex items-center gap-2">
+            <span className="text-gray-500 w-20 shrink-0">Categoria:</span>
+            <select
+              value={draft.tipusServeiCategoria}
+              onChange={e => setDraft({ ...draft, tipusServeiCategoria: e.target.value })}
+              className="text-[11px] border rounded px-2 py-1 flex-1 bg-white"
+            >
+              {CATEGORIES_COST.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-gray-500 w-20 shrink-0">Fora BCN:</span>
+            <input
+              type="checkbox"
+              checked={draft.foraBarcelona}
+              onChange={e => setDraft({ ...draft, foraBarcelona: e.target.checked })}
+              className="h-3.5 w-3.5"
+            />
+            <input
+              type="number" step="0.1" min="0"
+              value={draft.kmAnadaTornada}
+              onChange={e => setDraft({ ...draft, kmAnadaTornada: e.target.value })}
+              placeholder="km a+t"
+              disabled={!draft.foraBarcelona}
+              className="text-[11px] border rounded px-2 py-1 w-20 bg-white disabled:bg-gray-100"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-gray-500 w-20 shrink-0">Manual:</span>
+            <input
+              type="number" step="0.01" min="0"
+              value={draft.costManual}
+              onChange={e => setDraft({ ...draft, costManual: e.target.value })}
+              placeholder="Override en €"
+              className="text-[11px] border rounded px-2 py-1 flex-1 bg-white"
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ===========================================
+// Cost Config Panel (tarifes singleton)
+// ===========================================
+
+function CostConfigPanel({ onClose, onSaved }) {
+  const [config, setConfig] = useState(null);
+  const [draft, setDraft] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    api.get('/logistics/cost-config').then(r => {
+      setConfig(r.data);
+      setDraft({
+        costEntregaRecollida: Number(r.data.costEntregaRecollida || 0),
+        costRodatgeDia:       Number(r.data.costRodatgeDia || 0),
+        costIntern:           Number(r.data.costIntern || 0),
+        costPerKm:            Number(r.data.costPerKm || 0),
+        tarifaHoraExtra:      Number(r.data.tarifaHoraExtra || 0),
+      });
+    }).catch(e => setErr(e?.response?.data?.error || 'Error carregant tarifes'));
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    setErr(null);
+    try {
+      await api.put('/logistics/cost-config', draft);
+      onSaved?.();
+      onClose();
+    } catch (e) {
+      setErr(e?.response?.data?.error || 'Error guardant');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl w-full max-w-md max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b">
+          <h2 className="text-sm font-semibold flex items-center gap-2"><Calculator size={16} /> Tarifes cost transport</h2>
+          <button onClick={onClose} className="p-1 rounded hover:bg-gray-100"><X size={18} /></button>
+        </div>
+        <div className="px-5 py-4 space-y-3">
+          {!config && !err && (
+            <div className="text-center text-gray-400 py-8 text-xs"><RefreshCw className="animate-spin inline mr-1" size={14} /> Carregant…</div>
+          )}
+          {err && <div className="text-xs text-rose-600 bg-rose-50 border border-rose-100 rounded p-2">{err}</div>}
+          {config && (
+            <>
+              <p className="text-[11px] text-gray-500">
+                Aquestes tarifes s'apliquen automàticament a tots els transports nous i recalculen els existents quan es modifiquen els camps rellevants.
+              </p>
+              <Field label="Cost fix Entrega/Recollida (€)">
+                <input
+                  type="number" step="0.01" min="0"
+                  value={draft.costEntregaRecollida ?? ''}
+                  onChange={e => setDraft({ ...draft, costEntregaRecollida: e.target.value === '' ? '' : Number(e.target.value) })}
+                  className="input-field"
+                />
+              </Field>
+              <Field label="Cost fix Rodatge dia sencer (€)">
+                <input
+                  type="number" step="0.01" min="0"
+                  value={draft.costRodatgeDia ?? ''}
+                  onChange={e => setDraft({ ...draft, costRodatgeDia: e.target.value === '' ? '' : Number(e.target.value) })}
+                  className="input-field"
+                />
+              </Field>
+              <Field label="Cost moviment intern (€)">
+                <input
+                  type="number" step="0.01" min="0"
+                  value={draft.costIntern ?? ''}
+                  onChange={e => setDraft({ ...draft, costIntern: e.target.value === '' ? '' : Number(e.target.value) })}
+                  className="input-field"
+                />
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="€ / km (combustible)">
+                  <input
+                    type="number" step="0.001" min="0"
+                    value={draft.costPerKm ?? ''}
+                    onChange={e => setDraft({ ...draft, costPerKm: e.target.value === '' ? '' : Number(e.target.value) })}
+                    className="input-field"
+                  />
+                </Field>
+                <Field label="Tarifa hora extra (€/h)">
+                  <input
+                    type="number" step="0.01" min="0"
+                    value={draft.tarifaHoraExtra ?? ''}
+                    onChange={e => setDraft({ ...draft, tarifaHoraExtra: e.target.value === '' ? '' : Number(e.target.value) })}
+                    className="input-field"
+                  />
+                </Field>
+              </div>
+              <div className="text-[10px] text-gray-400 leading-relaxed bg-gray-50 rounded p-2 border">
+                <strong>Fórmula:</strong> tarifa categoria + (fora BCN ? km × €/km : 0) + minuts extres / 60 × €/h
+                <br />
+                <strong>Hores extres:</strong> jornada estàndard = 12h. Comencen a comptar des del moment en què el conductor fa "play" a l'enllaç.
+              </div>
+              {config.updatedAt && (
+                <div className="text-[10px] text-gray-400">
+                  Última modificació: {new Date(config.updatedAt).toLocaleString('ca-ES')}
+                </div>
+              )}
+              <div className="flex justify-end gap-2 pt-2">
+                <button onClick={onClose} className="px-4 py-2 text-xs border rounded-lg hover:bg-gray-50">Cancel·lar</button>
+                <button onClick={save} disabled={saving} className="px-4 py-2 text-xs rounded-lg text-white disabled:opacity-50" style={{ background: '#00617F' }}>
+                  {saving ? 'Guardant…' : 'Guardar tarifes'}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

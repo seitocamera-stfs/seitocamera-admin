@@ -2,9 +2,10 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Activity, Play, Pause, RefreshCw, Clock, CheckCircle2,
   XCircle, AlertTriangle, BarChart3, Layers, GitCompare,
-  FileText, Zap, Settings, History, TrendingUp,
+  FileText, Zap, Settings, History, TrendingUp, Warehouse,
 } from 'lucide-react';
 import api from '../lib/api';
+import { invalidateAgentToggles } from '../hooks/useAgentToggles';
 
 // ===========================================
 // Constants
@@ -16,6 +17,7 @@ const JOB_META = {
   duplicates: { label: 'Detectar duplicats', icon: FileText, color: 'text-red-600 bg-red-50' },
   overdue: { label: 'Venciments propers', icon: Clock, color: 'text-orange-600 bg-orange-50' },
   conciliation: { label: 'Proposar conciliació', icon: GitCompare, color: 'text-emerald-600 bg-emerald-50' },
+  warehouse_agent: { label: 'Magatzem IA', icon: Warehouse, color: 'text-indigo-600 bg-indigo-50' },
 };
 
 const STATUS_BADGE = {
@@ -139,6 +141,94 @@ function StatsCard({ icon: Icon, label, value, sub, color }) {
 // Pàgina principal
 // ===========================================
 
+// ===========================================
+// AI Review — passades puntuals manuals
+// ===========================================
+function AiReviewPanel({ onComplete }) {
+  const [running, setRunning] = useState(null);  // 'duplicates' | 'conciliation' | null
+  const [lastResult, setLastResult] = useState(null);  // { type, stats, error }
+
+  const runReview = async (kind) => {
+    if (running) return;
+    setRunning(kind);
+    setLastResult(null);
+    try {
+      const r = await api.post(`/agent/ai-review/${kind}`);
+      setLastResult({ type: kind, stats: r.data });
+      onComplete?.();
+    } catch (err) {
+      setLastResult({ type: kind, error: err.response?.data?.error || err.message });
+    } finally {
+      setRunning(null);
+    }
+  };
+
+  return (
+    <div>
+      <h2 className="text-base font-medium flex items-center gap-2 mb-3">
+        <Zap size={16} /> Passades puntuals amb IA
+      </h2>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="border rounded-lg p-4 bg-white">
+          <div className="flex items-start gap-3 mb-2">
+            <FileText size={18} className="text-red-600 mt-0.5" />
+            <div>
+              <h3 className="font-medium">Repas de duplicats</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                IA repassa factures dels últims 90 dies per supplier i detecta duplicats que SQL exacte no captura
+                (OCR misreads, descripcions equivalents). Crea suggeriments PENDING per revisar.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => runReview('duplicates')}
+            disabled={!!running}
+            className="mt-2 px-3 py-1.5 rounded-md text-sm font-medium bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 inline-flex items-center gap-2"
+          >
+            {running === 'duplicates' ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />}
+            {running === 'duplicates' ? 'Revisant…' : 'Llançar repas IA'}
+          </button>
+        </div>
+
+        <div className="border rounded-lg p-4 bg-white">
+          <div className="flex items-start gap-3 mb-2">
+            <GitCompare size={18} className="text-emerald-600 mt-0.5" />
+            <div>
+              <h3 className="font-medium">Repas de conciliació</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                IA proposa matches banc↔factura per casos que SQL exacte no captura (parcials, agrupats, comissions).
+                Crea suggeriments CONCILIATION_MATCH PENDING.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => runReview('conciliation')}
+            disabled={!!running}
+            className="mt-2 px-3 py-1.5 rounded-md text-sm font-medium bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 inline-flex items-center gap-2"
+          >
+            {running === 'conciliation' ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />}
+            {running === 'conciliation' ? 'Revisant…' : 'Llançar repas IA'}
+          </button>
+        </div>
+      </div>
+
+      {lastResult && (
+        <div className={`mt-3 p-3 rounded-md border text-sm ${lastResult.error ? 'bg-red-50 border-red-200 text-red-800' : 'bg-green-50 border-green-200 text-green-800'}`}>
+          <strong>Resultat {lastResult.type}:</strong>{' '}
+          {lastResult.error
+            ? lastResult.error
+            : lastResult.type === 'duplicates'
+              ? `${lastResult.stats.suppliersChecked || 0} proveïdors revisats · ${lastResult.stats.totalInvoicesScanned || 0} factures · ${lastResult.stats.suggestionsCreated || 0} suggeriments creats · ${lastResult.stats.errors || 0} errors`
+              : `${lastResult.stats.batchesProcessed || 0} lots · ${lastResult.stats.matchesProposed || 0} matches proposats · ${lastResult.stats.suggestionsCreated || 0} suggeriments creats · ${lastResult.stats.errors || 0} errors`}
+        </div>
+      )}
+      <p className="text-[11px] text-muted-foreground mt-2">
+        ⚠ Cada passada pot trigar 2-10 min depenent del volum. Usa Qwen3:32b local (cost €0). Revisa els suggeriments creats al final d'aquesta pàgina o al Gestor IA.
+      </p>
+    </div>
+  );
+}
+
 export default function AgentSupervisor() {
   const [configs, setConfigs] = useState([]);
   const [history, setHistory] = useState([]);
@@ -176,6 +266,8 @@ export default function AgentSupervisor() {
     try {
       await api.put(`/agent/jobs/config/${jobType}`, { isEnabled });
       setConfigs((prev) => prev.map((c) => (c.jobType === jobType ? { ...c, isEnabled } : c)));
+      // Invalida cache compartida perquè Sidebar/Dashboard mostrin el canvi sense recarregar
+      invalidateAgentToggles();
     } catch (err) {
       console.error('Error toggling job:', err);
     }
@@ -239,6 +331,9 @@ export default function AgentSupervisor() {
         <StatsCard icon={CheckCircle2} label="Suggeriments creats" value={totalSuggestions} color="text-green-600" />
         <StatsCard icon={XCircle} label="Errors" value={failedRuns} color="text-red-500" />
       </div>
+
+      {/* Passades puntuals amb IA */}
+      <AiReviewPanel onComplete={fetchAll} />
 
       {/* Job Configs */}
       <div>

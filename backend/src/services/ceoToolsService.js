@@ -12,6 +12,7 @@
 const strategic = require('./strategicAnalysisService');
 const reportsService = require('./financialReportsService');
 const fiscalService = require('./fiscalService');
+const transversal = require('./transversalContextService');
 
 const TOOLS = [
   {
@@ -113,6 +114,55 @@ const TOOLS = [
       required: ['year', 'quarter'],
     },
   },
+  // ===========================================
+  // Marketing — visió 360 sobre branding, estudis de mercat i prospects
+  // ===========================================
+  {
+    name: 'get_marketing_context',
+    description: 'Retorna el perfil de marca / posicionament que el departament de marketing manté sobre l\'empresa: vertical, idioma, target customers, fortaleses úniques, competidors coneguts, segments exclosos, objectius. Usar per saber QUÈ explica marketing sobre l\'empresa.',
+    input_schema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'get_latest_market_research',
+    description: 'Resum de l\'últim estudi de mercat fet per l\'agent Investigator: competidors detectats, oportunitats, riscos, preguntes obertes. Usar quan cal context competitiu actual.',
+    input_schema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'get_latest_campaign_strategy',
+    description: 'Resum de l\'última estratègia de campanya proposada pel Strategist: angle escollit, missatge clau, target segments, canals i mètriques d\'èxit. Usar per veure cap a on s\'ha decidit empènyer.',
+    input_schema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'get_marketing_prospects',
+    description: 'Leads importats per Lead Hunter encara sense facturar (Clients amb isProspect=true). Mostra fit_score, web i raonament. Usar per saber l\'embut comercial actual.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'integer', default: 20 },
+        minFitScore: { type: 'integer', default: 0, description: 'Filtra prospects per fit score mínim (0-10)' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'get_marketing_runs_summary',
+    description: 'Historial breu de runs marketing (què ha fet cada agent i quan). Útil per saber l\'activitat recent i si fa massa que no es revisa el mercat.',
+    input_schema: {
+      type: 'object',
+      properties: { limit: { type: 'integer', default: 10 } },
+      required: [],
+    },
+  },
+
+  // ===========================================
+  // Magatzem · Operacions
+  // ===========================================
+  {
+    name: 'get_warehouse_briefing',
+    description: 'Estat operatiu del magatzem AVUI: nombre de projectes a preparar, tornen, en rodatge, devolucions endarrerides amb detall, conflictes d\'equipament reservat 2 cops alhora, items pendents de retornar, equips trencats. Usar quan calgui evaluar la càrrega operativa actual.',
+    input_schema: { type: 'object', properties: {}, required: [] },
+  },
+
   {
     name: 'propose_action_plan',
     description: 'PROPOSA un pla d\'accions priortitzades. Cada acció classificada per nivell (1=Informatiu, 2=Recomanació revisable, 3=Decisió crítica que necessita validació). NO executa: només retorna el pla per a la UI.',
@@ -172,6 +222,15 @@ const HANDLERS = {
       irpf: { totalRetencions: m111.resultado, numPerceptors: m111.numPerceptors },
     };
   },
+  // Marketing
+  get_marketing_context: async () => transversal.getMarketingContext(),
+  get_latest_market_research: async () => transversal.getLatestMarketResearch(),
+  get_latest_campaign_strategy: async () => transversal.getLatestCampaignStrategy(),
+  get_marketing_prospects: async ({ limit, minFitScore }) => transversal.getMarketingProspects({ limit, minFitScore }),
+  get_marketing_runs_summary: async ({ limit }) => transversal.getMarketingRunsSummary({ limit }),
+  // Warehouse
+  get_warehouse_briefing: async () => transversal.getWarehouseBriefing(),
+
   propose_action_plan: async ({ actions }) => {
     return {
       proposal: { kind: 'ACTION_PLAN', actions, totalActions: actions.length, byLevel: { 1: actions.filter((a) => a.level === 1).length, 2: actions.filter((a) => a.level === 2).length, 3: actions.filter((a) => a.level === 3).length } },

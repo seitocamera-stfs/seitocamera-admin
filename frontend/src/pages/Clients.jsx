@@ -12,6 +12,7 @@ export default function Clients() {
   const [pageSize, setPageSize] = useState(25);
   const [sortField, setSortField] = useState('name');
   const [sortDir, setSortDir] = useState('asc');
+  const [tab, setTab] = useState('all'); // all | clients | prospects
   const [showModal, setShowModal] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const [selectedClient, setSelectedClient] = useState(null);
@@ -44,7 +45,10 @@ export default function Clients() {
     return sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />;
   };
 
-  const { data, loading, refetch } = useApiGet('/clients', { search, page, limit: pageSize, sortBy: sortField, sortOrder: sortDir });
+  const { data, loading, refetch } = useApiGet('/clients', {
+    search, page, limit: pageSize, sortBy: sortField, sortOrder: sortDir,
+    ...(tab === 'prospects' ? { prospect: 'true' } : tab === 'clients' ? { prospect: 'false' } : {}),
+  });
   const { data: clientInvoices } = useApiGet(
     selectedClient ? '/invoices/issued' : null,
     selectedClient ? { clientId: selectedClient.id, limit: 100 } : {}
@@ -101,10 +105,25 @@ export default function Clients() {
         </button>
       </div>
 
-      <div className="mb-4">
-        <div className="relative">
+      <div className="mb-4 flex gap-3">
+        <div className="relative flex-1">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input type="text" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Cercar per nom, NIF o email..." className="w-full pl-10 pr-4 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
+        </div>
+        <div className="flex border rounded-md overflow-hidden text-sm">
+          {[
+            ['all', 'Tots'],
+            ['clients', 'Clients'],
+            ['prospects', 'Prospects'],
+          ].map(([k, label]) => (
+            <button
+              key={k}
+              onClick={() => { setTab(k); setPage(1); }}
+              className={`px-3 py-2 ${tab === k ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -128,7 +147,19 @@ export default function Clients() {
             ) : (
               data?.data?.map((c) => (
                 <tr key={c.id} className="border-t hover:bg-muted/30">
-                  <td className="p-3 font-medium">{c.name}</td>
+                  <td className="p-3 font-medium">
+                    <div className="flex items-center gap-2">
+                      <span>{c.name}</span>
+                      {c.isProspect && (
+                        <span
+                          className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-medium"
+                          title={c.prospectMetadata?.fit_score ? `Fit ${c.prospectMetadata.fit_score}/10 — ${c.source || 'manual'}` : 'Prospect'}
+                        >
+                          PROSPECT{c.prospectMetadata?.fit_score ? ` ${c.prospectMetadata.fit_score}/10` : ''}
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="p-3 text-muted-foreground">{c.nif || '—'}</td>
                   <td className="p-3 text-muted-foreground">{c.email || '—'}</td>
                   <td className="p-3 text-muted-foreground">{c.phone || '—'}</td>

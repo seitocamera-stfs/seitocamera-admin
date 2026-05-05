@@ -50,6 +50,11 @@ import BalanceSheet from './pages/accounting/BalanceSheet';
 import ProfitAndLoss from './pages/accounting/ProfitAndLoss';
 import Gestor from './pages/accounting/Gestor';
 import CEO from './pages/accounting/CEO';
+import SupplierMapping from './pages/accounting/SupplierMapping';
+import MarketingSettings from './pages/marketing/MarketingSettings';
+import MarketingRuns from './pages/marketing/MarketingRuns';
+import MarketingRunDetail from './pages/marketing/MarketingRunDetail';
+import WarehouseAgent from './pages/warehouse/WarehouseAgent';
 import useAuthStore from './stores/authStore';
 
 function App() {
@@ -127,6 +132,14 @@ function App() {
         {/* Gestor IA — Sprint Agent IA */}
         <Route path="gestor" element={<RoleGuard section="agent"><Gestor /></RoleGuard>} />
         <Route path="ceo" element={<RoleGuard section="agent"><CEO /></RoleGuard>} />
+        {/* Mapatge proveïdor → compte */}
+        <Route path="supplier-mapping" element={<RoleGuard section="accounting"><SupplierMapping /></RoleGuard>} />
+        {/* Marketing AI */}
+        <Route path="marketing/settings" element={<RoleGuard section="agent"><MarketingSettings /></RoleGuard>} />
+        <Route path="marketing/runs" element={<RoleGuard section="agent"><MarketingRuns /></RoleGuard>} />
+        <Route path="marketing/runs/:id" element={<RoleGuard section="agent"><MarketingRunDetail /></RoleGuard>} />
+        {/* Magatzem IA — chat operatiu */}
+        <Route path="warehouse/agent" element={<RoleGuard section="agent"><WarehouseAgent /></RoleGuard>} />
       </Route>
     </Routes>
   );

@@ -160,6 +160,21 @@ app.use('/api/ledger', require('./routes/ledger'));
 // Comptabilització de factures (Sprint 3)
 app.use('/api/invoice-posting', require('./routes/invoicePosting'));
 
+// Mapatge de proveïdors a comptes per defecte
+app.use('/api/supplier-mapping', require('./routes/supplierMapping'));
+
+// Company Knowledge — context unificat per agents IA (comptables i marketing)
+app.use('/api/company-context', require('./routes/companyContext'));
+
+// Marketing AI — gestió de context, runs i agents
+app.use('/api/marketing', require('./routes/marketing'));
+
+// Warehouse · briefing diari (heurística operativa, sense LLM)
+app.use('/api/warehouse', require('./routes/warehouse'));
+
+// Magatzem IA · chat amb Claude (read + mutating tools, push notifications)
+app.use('/api/warehouse-agent', require('./routes/warehouseAgent'));
+
 // Comptabilització de moviments bancaris (Sprint 4)
 app.use('/api/bank-posting', require('./routes/bankPosting'));
 
@@ -322,6 +337,14 @@ async function start() {
     // startAccountingReviewJob();
     const { initJobs } = require('./services/agentJobsService');
     initJobs();
+    // El warehouse briefing ara es controla via AgentJobConfig (jobType=warehouse_agent)
+    // dins agentJobsService — el toggle del Supervisor IA atura/arrenca el cron
+    // i bloqueja el chat. NO cridar startWarehouseBriefingJob aquí.
+
+    // Recovery dels marketing runs: si el backend cau a meitat d'un run, queda
+    // un row `running` a la DB amb un PID que ja no existeix. Reconcilia.
+    require('./services/marketingRunService').recoverOrphans()
+      .catch((err) => logger.error(`[Marketing Run Recovery] Error: ${err.message}`));
 
     const server = app.listen(PORT, () => {
       logger.info(`Servidor escoltant al port ${PORT}`);

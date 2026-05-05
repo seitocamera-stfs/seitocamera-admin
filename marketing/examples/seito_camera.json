@@ -1,0 +1,44 @@
+{
+  "name": "Seito Camera",
+  "description": "Lloguer de material audiovisual professional: càmeres ARRI (Alexa Mini, Mini LF), òptiques de cinema, material d'il·luminació i accessoris de producció. Forma part d'un hub audiovisual integrat a Sant Just (Barcelona) amb serveis complementaris paret amb paret: dos platós (un sinfin de 10m i una caixa negra de 280m²), taller de construcció de decorats, serveis de grua telescòpica i transport de producció. El client pot cobrir tots els serveis necessaris d'una producció en una sola localització amb una sola coordinació.",
+  "vertical": "audiovisual equipment rental",
+  "location": "Barcelona (Sant Just Desvern)",
+  "target_customers": [
+    "production companies (productoras) in Barcelona",
+    "executive producers / caps executius / CEOs of productoras — they make structural supplier decisions",
+    "freelance line producers and caps de producció — many of them move between productoras, so winning an individual relationship compounds across multiple projects. In Spain/Catalonia their public professional presence is as much on Instagram as on LinkedIn, since audiovisual freelancers use IG for portfolio and community",
+    "independent DPs",
+    "advertising agencies"
+  ],
+  "unique_strengths": [
+    "True one-stop shop: Seito itself rents cameras, cinema optics AND lighting gear — plus the Sant Just hub wraps in two adjacent studios (10m-wide infinity cyc + 280m² black box), set construction workshop, telescopic crane services, and production transport. A client can cover an entire shoot at one address with one coordination",
+    "ARRI-specialized inventory (Alexa Mini, Mini LF) kept new, well-maintained and regularly reviewed — reduced mid-shoot failure risk",
+    "Hands-on technical support on-set — real humans who know the gear, not just a rental desk",
+    "DP-led advisory: the CEO is himself a working director of photography, so technical guidance comes from someone who actually shoots, not a salesperson",
+    "Trusted network of qualified technicians (operators, ACs, DITs) who already know Seito's specific inventory — Seito can recommend the right crew for the shoot, reducing ramp-up time",
+    "Commercial flexibility: competitive daily rates, meaningful volume discounts for preferred clients, and flexible availability windows (not only 9-to-6)",
+    "Personal, boutique relationship vs. the scale-first posture of Camaleón, Ovide and Servicevision"
+  ],
+  "known_competitors": [
+    "Napalm Rentals",
+    "Zig Zag Rental",
+    "Servicevision",
+    "Camera Lenses Rental",
+    "Ovide"
+  ],
+  "language": "ca",
+  "website": "https://seitocamera.com/",
+  "goals": [
+    "Acquire more high-end ad-production clients",
+    "Increase share among boutique productoras currently renting from Servicevision or Zig Zag",
+    "Capitalize on the Sant Just hub to sell 'integrated production' as a differentiated value proposition"
+  ],
+  "excluded_segments": [
+    "weekend amateur videographers",
+    "streaming setup rentals",
+    "photography-only clients",
+    "pure advertising or creative agencies that do not produce audiovisual content internally (i.e. they subcontract production to productoras and don't rent equipment themselves)",
+    "individual freelance filmmakers or solo DPs without a regular productora-level shoot schedule — they are occasional renters, not account-level targets",
+    "purely post-production or VFX companies — they don't rent cameras or lighting"
+  ]
+}

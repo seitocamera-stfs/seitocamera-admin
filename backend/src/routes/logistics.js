@@ -2,6 +2,8 @@ const express = require('express');
 const { authenticate } = require('../middleware/auth');
 const { prisma } = require('../config/database');
 const { logger } = require('../config/logger');
+const transportCostService = require('../services/transportCostService');
+const distanceService = require('../services/distanceService');
 
 const router = express.Router();
 router.use(authenticate);
@@ -10,19 +12,29 @@ router.use(authenticate);
 // Utils
 // ===========================================
 
-function calcularHoresExtres(horaFiPrevista, horaFiReal) {
-  const toMin = (hm) => {
-    if (!hm) return null;
-    const m = hm.match(/^(\d{1,2}):(\d{2})$/);
-    if (!m) return null;
-    return parseInt(m[1]) * 60 + parseInt(m[2]);
-  };
-  const prev = toMin(horaFiPrevista);
-  const real = toMin(horaFiReal);
-  if (prev == null || real == null) return null;
-  let diff = real - prev;
-  if (diff < -12 * 60) diff += 24 * 60;
-  return diff;
+// Una jornada estàndard són 12h. Les hores extres comencen a comptar
+// a partir d'aquesta durada (work_duration - 12h, mai negatives).
+const JORNADA_ESTANDARD_MIN = 12 * 60;
+
+function _toMin(hm) {
+  if (!hm) return null;
+  const m = hm.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  return parseInt(m[1]) * 60 + parseInt(m[2]);
+}
+
+/**
+ * Calcula minuts d'hores extres a partir de l'hora d'inici i fi reals.
+ * Regla: jornada estàndard = 12h. Tot el que excedeixi compta com a extra.
+ * Si la jornada acaba després de mitjanit, suma 24h al delta negatiu.
+ */
+function calcularHoresExtres(horaInici, horaFiReal) {
+  const inici = _toMin(horaInici);
+  const real = _toMin(horaFiReal);
+  if (inici == null || real == null) return null;
+  let duracio = real - inici;
+  if (duracio < 0) duracio += 24 * 60; // jornada nocturna passada de mitjanit
+  return Math.max(0, duracio - JORNADA_ESTANDARD_MIN);
 }
 
 function afegirHistorial(historial, accio, detall = '') {
@@ -170,6 +182,8 @@ router.post('/transports', async (req, res, next) => {
       dataCarrega, dataEntrega, horaRecollida, horaEntregaEstimada, horaFiPrevista,
       responsableProduccio, telefonResponsable, conductorId, empresaId,
       estat, notes,
+      // Cost
+      tipusServeiCategoria, foraBarcelona, kmAnadaTornada, costManual,
     } = req.body;
 
     // Si vinculem a un projecte real, sincronitzem el camp text amb el nom
@@ -186,6 +200,10 @@ router.post('/transports', async (req, res, next) => {
         projecte: projecteText,
         rentalProjectId: rentalProjectId || null,
         tipusServei: tipusServei || 'Entrega',
+        tipusServeiCategoria: tipusServeiCategoria || null,
+        foraBarcelona: Boolean(foraBarcelona),
+        kmAnadaTornada: kmAnadaTornada !== undefined && kmAnadaTornada !== null && kmAnadaTornada !== '' ? parseFloat(kmAnadaTornada) : null,
+        costManual: costManual !== undefined && costManual !== null && costManual !== '' ? parseFloat(costManual) : null,
         origen: origen || null,
         notesOrigen: notesOrigen || null,
         desti: desti || null,
@@ -214,7 +232,16 @@ router.post('/transports', async (req, res, next) => {
     // Sincronitzar absència automàtica si conductor és usuari Seito
     syncTransportAbsence(transport.id).catch(e => logger.error('Error sync absence (create):', e.message));
 
-    res.status(201).json(transport);
+    // Calcular cost inicial (si la categoria està definida)
+    let finalTransport = transport;
+    try {
+      const result = await transportCostService.recalculate(transport.id);
+      if (result?.transport) finalTransport = { ...transport, ...result.transport, costBreakdown: result.breakdown };
+    } catch (e) {
+      logger.warn(`Error calculant cost transport ${transport.id}: ${e.message}`);
+    }
+
+    res.status(201).json(finalTransport);
   } catch (err) {
     next(err);
   }
@@ -232,9 +259,18 @@ router.put('/transports/:id', async (req, res, next) => {
       'horaRecollida', 'horaEntregaEstimada', 'horaFiPrevista',
       'horaIniciReal', 'horaFiReal', 'responsableProduccio', 'telefonResponsable',
       'conductorId', 'empresaId', 'estat', 'motiuCancellacio', 'notes',
+      'tipusServeiCategoria',  // càlcul cost
     ];
     for (const f of fields) {
       if (req.body[f] !== undefined) data[f] = req.body[f] || null;
+    }
+    // Camps numèrics / boolean del càlcul de cost
+    if (req.body.foraBarcelona !== undefined) data.foraBarcelona = Boolean(req.body.foraBarcelona);
+    if (req.body.kmAnadaTornada !== undefined) {
+      data.kmAnadaTornada = req.body.kmAnadaTornada === null || req.body.kmAnadaTornada === '' ? null : parseFloat(req.body.kmAnadaTornada);
+    }
+    if (req.body.costManual !== undefined) {
+      data.costManual = req.body.costManual === null || req.body.costManual === '' ? null : parseFloat(req.body.costManual);
     }
     if (req.body.dataCarrega !== undefined) data.dataCarrega = req.body.dataCarrega ? new Date(req.body.dataCarrega) : null;
     if (req.body.dataEntrega !== undefined) data.dataEntrega = req.body.dataEntrega ? new Date(req.body.dataEntrega) : null;
@@ -247,10 +283,12 @@ router.put('/transports/:id', async (req, res, next) => {
       }
     }
 
-    // Calcular hores extres
+    // Calcular hores extres (jornada estàndard = 12h, comptant des del "play" del
+    // conductor — horaIniciReal —, no des de l'hora planificada). Si encara no
+    // s'ha registrat l'inici real, no podem calcular extres de manera fiable.
     if (req.body.horaFiReal !== undefined) {
-      const prevista = data.horaFiPrevista || prev.horaFiPrevista;
-      data.minutsExtres = calcularHoresExtres(prevista, req.body.horaFiReal);
+      const inici = data.horaIniciReal || prev.horaIniciReal;
+      data.minutsExtres = inici ? calcularHoresExtres(inici, req.body.horaFiReal) : null;
     }
 
     // Historial
@@ -293,7 +331,20 @@ router.put('/transports/:id', async (req, res, next) => {
     // Sincronitzar absència automàtica
     syncTransportAbsence(transport.id).catch(e => logger.error('Error sync absence (update):', e.message));
 
-    res.json(transport);
+    // Recalcular cost automàtic si algun camp rellevant ha canviat
+    let finalTransport = transport;
+    if (transportCostService.affectsCost(data)) {
+      try {
+        const result = await transportCostService.recalculate(transport.id);
+        if (result?.transport) {
+          finalTransport = { ...transport, ...result.transport, costBreakdown: result.breakdown };
+        }
+      } catch (e) {
+        logger.warn(`Error recalculant cost transport ${transport.id}: ${e.message}`);
+      }
+    }
+
+    res.json(finalTransport);
   } catch (err) {
     next(err);
   }
@@ -337,8 +388,15 @@ router.post('/transports/:id/end', async (req, res, next) => {
     const prev = await prisma.transport.findUnique({ where: { id: req.params.id } });
     if (!prev) return res.status(404).json({ error: 'Transport no trobat' });
 
-    const minutsExtres = calcularHoresExtres(prev.horaFiPrevista, hora);
-    let historial = afegirHistorial(prev.historial, 'tancament', `Hora final: ${hora} (previst ${prev.horaFiPrevista || '—'})`);
+    // Hores extres = excés sobre 12h des del "play" del conductor (horaIniciReal).
+    // Si no s'ha donat play, no calculem (la durada de jornada no és fiable).
+    const inici = prev.horaIniciReal;
+    const minutsExtres = inici ? calcularHoresExtres(inici, hora) : null;
+    let historial = afegirHistorial(
+      prev.historial,
+      'tancament',
+      `Hora final: ${hora} (inici ${inici || '— sense play —'}, extres ${minutsExtres != null ? `${(minutsExtres/60).toFixed(2)}h` : '—'})`
+    );
     historial = afegirHistorial(historial, 'canvi_estat', `${prev.estat} → Lliurat`);
 
     const transport = await prisma.transport.update({
@@ -346,7 +404,17 @@ router.post('/transports/:id/end', async (req, res, next) => {
       data: { horaFiReal: hora, minutsExtres, estat: 'Lliurat', historial },
       include: { conductor: { select: { id: true, nom: true, telefon: true, userId: true, user: { select: { id: true, name: true, color: true } } } }, empresa: { select: { id: true, nom: true } } },
     });
-    res.json(transport);
+
+    // Recalcular cost ara que tenim minutsExtres real
+    let finalTransport = transport;
+    try {
+      const result = await transportCostService.recalculate(transport.id);
+      if (result?.transport) finalTransport = { ...transport, ...result.transport, costBreakdown: result.breakdown };
+    } catch (e) {
+      logger.warn(`Error recalculant cost al tancar transport: ${e.message}`);
+    }
+
+    res.json(finalTransport);
   } catch (err) {
     next(err);
   }
@@ -550,6 +618,102 @@ router.delete('/empreses/:id', async (req, res, next) => {
     await prisma.empresaLogistica.delete({ where: { id: req.params.id } });
     res.json({ ok: true });
   } catch (err) {
+    next(err);
+  }
+});
+
+// ===========================================
+// CONFIGURACIÓ TARIFES (singleton id='default')
+// ===========================================
+
+// GET /api/logistics/cost-config — llegeix tarifes actuals
+router.get('/cost-config', async (req, res, next) => {
+  try {
+    const config = await transportCostService.getConfig();
+    res.json(config);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/logistics/cost-config — actualitza tarifes (només ADMIN)
+router.put('/cost-config', async (req, res, next) => {
+  try {
+    if (req.user.role !== 'ADMIN') {
+      return res.status(403).json({ error: 'Només ADMIN pot modificar tarifes' });
+    }
+
+    const num = (v, fallback) => {
+      if (v === undefined || v === null || v === '') return fallback;
+      const n = parseFloat(v);
+      return Number.isFinite(n) && n >= 0 ? n : fallback;
+    };
+
+    const data = {
+      updatedAt: new Date(),
+      updatedById: req.user.id,
+    };
+    if (req.body.costEntregaRecollida !== undefined) data.costEntregaRecollida = num(req.body.costEntregaRecollida, 0);
+    if (req.body.costRodatgeDia !== undefined)      data.costRodatgeDia = num(req.body.costRodatgeDia, 0);
+    if (req.body.costIntern !== undefined)          data.costIntern = num(req.body.costIntern, 0);
+    if (req.body.costPerKm !== undefined)           data.costPerKm = num(req.body.costPerKm, 0);
+    if (req.body.tarifaHoraExtra !== undefined)     data.tarifaHoraExtra = num(req.body.tarifaHoraExtra, 0);
+
+    const updated = await prisma.transportCostConfig.upsert({
+      where: { id: 'default' },
+      update: data,
+      create: { id: 'default', ...data },
+    });
+
+    transportCostService.clearConfigCache();
+    logger.info(`TransportCostConfig actualitzat per ${req.user.name || req.user.id}`);
+
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/logistics/transports/:id/recompute-cost — força recàlcul manual
+// Body opcional: { forceKm: true } per esborrar km i tornar-los a buscar
+router.post('/transports/:id/recompute-cost', async (req, res, next) => {
+  try {
+    const result = await transportCostService.recalculate(req.params.id, {
+      forceKm: !!req.body?.forceKm,
+    });
+    if (!result) return res.status(404).json({ error: 'Transport no trobat' });
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/logistics/distance — calcula km entre dues adreces sense persistir
+// Útil per al modal de nou transport (encara no existeix a BD).
+// Body: { origen?, desti } → retorna { km, oneway, origen, desti, source: 'google' }
+router.post('/distance', async (req, res, next) => {
+  try {
+    if (!distanceService.isConfigured()) {
+      return res.status(503).json({
+        error: 'Servei de distàncies no configurat',
+        code: 'MISSING_API_KEY',
+        hint: 'Cal definir GOOGLE_MAPS_API_KEY a l\'entorn del backend',
+      });
+    }
+    const { origen, desti } = req.body || {};
+    if (!desti?.trim()) return res.status(400).json({ error: 'Camp `desti` obligatori', code: 'EMPTY_ADDRESS' });
+
+    const o = origen?.trim() || (await distanceService.getHqAddress());
+    const km = await distanceService.getRoundtripKm({ origen: o, desti });
+    const oneway = Math.round(km / 2 * 10) / 10;
+    res.json({ km, oneway, origen: o, desti: desti.trim(), source: 'google' });
+  } catch (err) {
+    if (err?.code === 'NOT_FOUND' || err?.code === 'EMPTY_ADDRESS') {
+      return res.status(404).json({ error: err.message, code: err.code });
+    }
+    if (err?.code === 'API_ERROR' || err?.code === 'MISSING_API_KEY') {
+      return res.status(502).json({ error: err.message, code: err.code });
+    }
     next(err);
   }
 });

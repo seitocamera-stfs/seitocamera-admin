@@ -68,49 +68,91 @@ router.get('/', async (req, res, next) => {
           label,
           invoices: [],
           totalAmount: 0,
+          totalBase: 0,        // base imposable (subtotal)
+          totalTax: 0,         // IVA
           totalSeito: 0,
           totalLogistik: 0,
+          baseSeito: 0,
+          baseLogistik: 0,
+          taxSeito: 0,
+          taxLogistik: 0,
         };
       }
 
       const total = parseFloat(inv.totalAmount);
+      const base  = parseFloat(inv.subtotal || 0);
+      const tax   = parseFloat(inv.taxAmount || 0);
       const pSeito = parseFloat(inv.sharedPercentSeito) / 100;
       const pLogistik = parseFloat(inv.sharedPercentLogistik) / 100;
 
       groups[key].invoices.push({
         ...inv,
         paidBy: inv.paidBy || 'NONE',
-        amountSeito: +(total * pSeito).toFixed(2),
+        amountSeito:    +(total * pSeito).toFixed(2),
         amountLogistik: +(total * pLogistik).toFixed(2),
+        baseSeito:      +(base * pSeito).toFixed(2),
+        baseLogistik:   +(base * pLogistik).toFixed(2),
+        taxSeito:       +(tax * pSeito).toFixed(2),
+        taxLogistik:    +(tax * pLogistik).toFixed(2),
       });
       groups[key].totalAmount += total;
-      groups[key].totalSeito += +(total * pSeito).toFixed(2);
-      groups[key].totalLogistik += +(total * pLogistik).toFixed(2);
+      groups[key].totalBase += base;
+      groups[key].totalTax += tax;
+      groups[key].totalSeito += total * pSeito;
+      groups[key].totalLogistik += total * pLogistik;
+      groups[key].baseSeito += base * pSeito;
+      groups[key].baseLogistik += base * pLogistik;
+      groups[key].taxSeito += tax * pSeito;
+      groups[key].taxLogistik += tax * pLogistik;
     }
 
     // Arrodonir totals
     for (const g of Object.values(groups)) {
-      g.totalAmount = +g.totalAmount.toFixed(2);
-      g.totalSeito = +g.totalSeito.toFixed(2);
+      g.totalAmount   = +g.totalAmount.toFixed(2);
+      g.totalBase     = +g.totalBase.toFixed(2);
+      g.totalTax      = +g.totalTax.toFixed(2);
+      g.totalSeito    = +g.totalSeito.toFixed(2);
       g.totalLogistik = +g.totalLogistik.toFixed(2);
+      g.baseSeito     = +g.baseSeito.toFixed(2);
+      g.baseLogistik  = +g.baseLogistik.toFixed(2);
+      g.taxSeito      = +g.taxSeito.toFixed(2);
+      g.taxLogistik   = +g.taxLogistik.toFixed(2);
     }
 
     // Totals anuals
     const yearTotal = Object.values(groups).reduce((acc, g) => ({
-      totalAmount: acc.totalAmount + g.totalAmount,
-      totalSeito: acc.totalSeito + g.totalSeito,
+      totalAmount:   acc.totalAmount + g.totalAmount,
+      totalBase:     acc.totalBase + g.totalBase,
+      totalTax:      acc.totalTax + g.totalTax,
+      totalSeito:    acc.totalSeito + g.totalSeito,
       totalLogistik: acc.totalLogistik + g.totalLogistik,
+      baseSeito:     acc.baseSeito + g.baseSeito,
+      baseLogistik:  acc.baseLogistik + g.baseLogistik,
+      taxSeito:      acc.taxSeito + g.taxSeito,
+      taxLogistik:   acc.taxLogistik + g.taxLogistik,
       count: acc.count + g.invoices.length,
-    }), { totalAmount: 0, totalSeito: 0, totalLogistik: 0, count: 0 });
+    }), {
+      totalAmount: 0, totalBase: 0, totalTax: 0,
+      totalSeito: 0, totalLogistik: 0,
+      baseSeito: 0, baseLogistik: 0,
+      taxSeito: 0, taxLogistik: 0,
+      count: 0,
+    });
 
     res.json({
       year: isAll ? 'all' : targetYear,
       groupBy: isAll ? 'year' : groupBy,
       groups: Object.values(groups).sort((a, b) => a.key.localeCompare(b.key)),
       totals: {
-        totalAmount: +yearTotal.totalAmount.toFixed(2),
-        totalSeito: +yearTotal.totalSeito.toFixed(2),
+        totalAmount:   +yearTotal.totalAmount.toFixed(2),
+        totalBase:     +yearTotal.totalBase.toFixed(2),
+        totalTax:      +yearTotal.totalTax.toFixed(2),
+        totalSeito:    +yearTotal.totalSeito.toFixed(2),
         totalLogistik: +yearTotal.totalLogistik.toFixed(2),
+        baseSeito:     +yearTotal.baseSeito.toFixed(2),
+        baseLogistik:  +yearTotal.baseLogistik.toFixed(2),
+        taxSeito:      +yearTotal.taxSeito.toFixed(2),
+        taxLogistik:   +yearTotal.taxLogistik.toFixed(2),
         count: yearTotal.count,
       },
     });
@@ -212,9 +254,11 @@ router.post('/extract-pdf', async (req, res, next) => {
       return res.status(404).json({ error: 'Cap factura trobada' });
     }
 
-    // Calcular imports
+    // Calcular imports — incloem base + IVA per columnes desglossades
     const rows = invoices.map((inv) => {
       const total = parseFloat(inv.totalAmount);
+      const base  = parseFloat(inv.subtotal || 0);
+      const tax   = parseFloat(inv.taxAmount || 0);
       const pSeito = parseFloat(inv.sharedPercentSeito) / 100;
       const pLogistik = parseFloat(inv.sharedPercentLogistik) / 100;
       return {
@@ -222,19 +266,32 @@ router.post('/extract-pdf', async (req, res, next) => {
         supplier: inv.supplier?.name || '—',
         issueDate: inv.issueDate,
         total,
+        base,
+        tax,
+        taxRate: inv.taxRate ? parseFloat(inv.taxRate) : null,
         percentSeito: parseFloat(inv.sharedPercentSeito),
         percentLogistik: parseFloat(inv.sharedPercentLogistik),
-        amountSeito: +(total * pSeito).toFixed(2),
+        amountSeito:    +(total * pSeito).toFixed(2),
         amountLogistik: +(total * pLogistik).toFixed(2),
+        baseSeito:      +(base * pSeito).toFixed(2),
+        baseLogistik:   +(base * pLogistik).toFixed(2),
+        taxSeito:       +(tax * pSeito).toFixed(2),
+        taxLogistik:    +(tax * pLogistik).toFixed(2),
         paidBy: inv.paidBy === 'SEITO' ? 'Seito' : inv.paidBy === 'LOGISTIK' ? 'Logistik' : 'Pendent',
       };
     });
 
     const totals = rows.reduce((acc, r) => ({
-      total: acc.total + r.total,
-      seito: acc.seito + r.amountSeito,
-      logistik: acc.logistik + r.amountLogistik,
-    }), { total: 0, seito: 0, logistik: 0 });
+      total:        acc.total + r.total,
+      base:         acc.base + r.base,
+      tax:          acc.tax + r.tax,
+      seito:        acc.seito + r.amountSeito,
+      logistik:     acc.logistik + r.amountLogistik,
+      baseSeito:    acc.baseSeito + r.baseSeito,
+      baseLogistik: acc.baseLogistik + r.baseLogistik,
+      taxSeito:     acc.taxSeito + r.taxSeito,
+      taxLogistik:  acc.taxLogistik + r.taxLogistik,
+    }), { total: 0, base: 0, tax: 0, seito: 0, logistik: 0, baseSeito: 0, baseLogistik: 0, taxSeito: 0, taxLogistik: 0 });
 
     // Generar PDF
     const doc = new PDFDocument({

@@ -1,0 +1,102 @@
+{
+  "business": "Seito Camera",
+  "target_profile": "Production companies in Barcelona that use (or should use) ARRI cameras and cinema optics for high-end projects",
+  "curated_by": "Seito",
+  "curated_at": "2026-04-22",
+  "notes": "Golden set for Phase 1 evaluation. 11 productoras. The Lead Hunter agent is considered successful if it identifies ≥4 of these 11 (pass) or ≥8 (strong pass). Aliased matches allowed.",
+  "leads": [
+    {
+      "canonical_name": "Caminofilms.tv",
+      "website": "https://www.caminofilms.tv/",
+      "aliases": ["Camino Films"],
+      "why_ideal": "Productora BCN de mida mitjana-gran, roden amb ARRI casi sempre, roden regularment (vist a campanyes publicades 2025-26). Fan publicitat per a marques premium, necessiten suport tècnic a rodatge. Actualment probablement lloguen a Servicevision o zigzag rental.",
+      "known_contacts_pattern": "laura@caminofilms.tv, founder",
+      "verified_at": "2026-04-22"
+    },
+    {
+      "canonical_name": "Possible Films",
+      "website": "https://possible.es/",
+      "aliases": [],
+      "why_ideal": "Productora BCN de mida mitjana, roden amb ARRI casi sempre, (vist a campanyes publicades 2025-26). Fan publicitat per a marques premium, necessiten suport tècnic a rodatge, podem oferir transport. Actualment probablement lloguen a zigzag rental",
+      "known_contacts_pattern": "Tcristina@possible.es, productora executiva",
+      "verified_at": "2026-04-22"
+    },
+    {
+      "canonical_name": "Altiplà Films",
+      "website": "https://a-l-t-i-p-l-a.art/",
+      "aliases": ["Altipla Films"],
+      "why_ideal": "Productora BCN de mida mitjana, roden amb ARRI casi sempre, (vist a campanyes publicades 2025-26). Fan publicitat per a marques internacionals, necessiten suport tècnic a rodatge, podem oferir transport, roden bastant també fora de barcelona. Actualment probablement lloguen a zigzag rental",
+      "known_contacts_pattern": "carlespaune@a-l-t-i-p-l-a.art , cap de producció",
+      "verified_at": "2026-04-22"
+    },
+    {
+      "canonical_name": "Barcelona Production",
+      "website": "https://barcelonaproduction.com/",
+      "aliases": [],
+      "why_ideal": "Productora BCN de mida mitjana, roden amb ARRI casi sempre, (vist a campanyes publicades 2025-26). Fan publicitat per a marques internacionals, necessiten suport tècnic a rodatge, podem oferir transport, roden molt fora de barcelona. Actualment probablement lloguen a diversos proveidors, Napalm principalment",
+      "known_contacts_pattern": "info@barcelonaproduction.com",
+      "verified_at": "2026-04-22"
+    },
+    {
+      "canonical_name": "Twentyfour Seven",
+      "website": "https://twentyfourseven.xyz/",
+      "aliases": ["24/7", "24-7", "Twenty Four Seven"],
+      "why_ideal": "Productora BCN de mida molt gran, englova varies productores com smile films, etc...  roden amb ARRI casi sempre, (vist a campanyes publicades 2025-26). Fan publicitat per a marques internacionals, necessiten suport tècnic a rodatge, podem oferir transport, roden per tot europa. Actualment probablement lloguen a servicevision i seitocamera com a segona opció",
+      "known_contacts_pattern": "bidsspain@twentyfour-seven.tv",
+      "verified_at": "2026-04-22"
+    },
+    {
+      "canonical_name": "Blua",
+      "website": "https://helloblua.com/",
+      "aliases": ["Blua Films", "Blua Productions"],
+      "why_ideal": "Productora BCN de mida mitjana, roden amb ARRI casi sempre, (vist a campanyes publicades 2025-26). Fan publicitat per a marques nacionals, necessiten suport tècnic a rodatge, podem oferir transport, roden molt fora de barcelona. Actualment probablement lloguen a Seitocamera",
+      "known_contacts_pattern": "hello@helloblua.com",
+      "verified_at": "2026-04-22"
+    },
+    {
+      "canonical_name": "Production Club",
+      "website": "https://www.theproduction.club/",
+      "aliases": ["The Production Club"],
+      "why_ideal": "Productora BCN de mida mitjana, estan creixent,roden amb ARRI casi sempre, (vist a campanyes publicades 2025-26). Fan publicitat per a marques nacionals, necessiten suport tècnic a rodatge, podem oferir transport, roden molt fora de barcelona. Actualment probablement lloguen a zigzag",
+      "known_contacts_pattern": "sandramodamio@theproduction.club",
+      "verified_at": "2026-04-22"
+    },
+    {
+      "canonical_name": "Agosto",
+      "website": "https://www.agosto.tv/",
+      "aliases": ["Agosto Films", "Agosto Productions"],
+      "why_ideal": "Productora BCN de mida gran, top productora de barcelona,roden amb ARRI casi sempre, (vist a campanyes publicades 2025-26). Fan publicitat per a marques nacionals, necessiten suport tècnic a rodatge, podem oferir transport, roden molt fora de barcelona. Actualment probablement lloguen a servicevision",
+      "known_contacts_pattern": "laia@agosto.tv",
+      "verified_at": "2026-04-22"
+    },
+    {
+      "canonical_name": "Mamma Team",
+      "website": "https://www.mammateam.com/",
+      "aliases": ["Mamá Team", "Mama"],
+      "why_ideal": "Productora BCN de mida gran,  top productora de barcelona,roden amb ARRI casi sempre, (vist a campanyes publicades 2025-26). Fan publicitat per a marques nacionals, necessiten suport tècnic a rodatge, podem oferir transport, roden molt fora de barcelona. Actualment probablement lloguen a servicevision",
+      "known_contacts_pattern": "barcelona@mammateam.com",
+      "verified_at": "2026-04-22"
+    },
+    {
+      "canonical_name": "Roma",
+      "website": "https://www.salveroma.tv/",
+      "aliases": ["Roma", "Salve Roma"],
+      "why_ideal": "Productora BCN de mida gran,  top productora de barcelona,roden amb ARRI casi sempre, (vist a campanyes publicades 2025-26). Fan publicitat per a marques nacionals, necessiten suport tècnic a rodatge, podem oferir transport, roden molt fora de barcelona. Actualment probablement lloguen a servicevision",
+      "known_contacts_pattern": "hi@salveroma.tv",
+      "verified_at": "2026-04-22"
+    },
+    {
+      "canonical_name": "Vampire Films",
+      "website": "https://www.instagram.com/wearevampiro/",
+      "aliases": ["Vampire"],
+      "why_ideal": "Productora BCN associada al primavera sound,roden amb ARRI casi sempre, (vist a campanyes publicades 2025-26). Fan publicitat per a marques nacionals i grups, necessiten suport tècnic a rodatge, podem oferir transport, roden molt fora de barcelona. Actualment probablement lloguen a Napalm",
+      "known_contacts_pattern": "TO_FILL",
+      "verified_at": "2026-04-22"
+    }
+  ],
+  "evaluation_thresholds": {
+    "min_matches_for_pass": 4,
+    "min_matches_for_strong_pass": 8,
+    "allow_aliased_matches": true
+  }
+}

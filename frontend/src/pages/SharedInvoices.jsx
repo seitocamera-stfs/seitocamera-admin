@@ -324,7 +324,7 @@ export default function SharedInvoices() {
 
       {/* Resum totals */}
       {data?.totals && (
-        <div className="grid grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <div className="bg-card border rounded-lg p-4">
             <p className="text-xs text-muted-foreground">Total factures</p>
             <p className="text-2xl font-bold">{data.totals.count}</p>
@@ -332,14 +332,23 @@ export default function SharedInvoices() {
           <div className="bg-card border rounded-lg p-4">
             <p className="text-xs text-muted-foreground">Import total</p>
             <p className="text-2xl font-bold">{formatCurrency(data.totals.totalAmount)}</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              Base {formatCurrency(data.totals.totalBase || 0)} · IVA {formatCurrency(data.totals.totalTax || 0)}
+            </p>
           </div>
           <div className="bg-card border rounded-lg p-4 border-l-4 border-l-blue-500">
             <p className="text-xs text-muted-foreground">Seito Camera</p>
             <p className="text-2xl font-bold text-blue-600">{formatCurrency(data.totals.totalSeito)}</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              Base <span className="text-blue-700">{formatCurrency(data.totals.baseSeito || 0)}</span> · IVA <span className="text-blue-700">{formatCurrency(data.totals.taxSeito || 0)}</span>
+            </p>
           </div>
           <div className="bg-card border rounded-lg p-4 border-l-4 border-l-orange-500">
             <p className="text-xs text-muted-foreground">Logistik</p>
             <p className="text-2xl font-bold text-orange-600">{formatCurrency(data.totals.totalLogistik)}</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              Base <span className="text-orange-700">{formatCurrency(data.totals.baseLogistik || 0)}</span> · IVA <span className="text-orange-700">{formatCurrency(data.totals.taxLogistik || 0)}</span>
+            </p>
           </div>
         </div>
       )}
@@ -400,9 +409,18 @@ export default function SharedInvoices() {
                   <tr key={group.key} className="border-t hover:bg-muted/10">
                     <td className="p-3 font-medium">{group.label}</td>
                     <td className="p-3 text-center">{group.invoices.length}</td>
-                    <td className="p-3 text-right">{formatCurrency(group.totalAmount)}</td>
-                    <td className="p-3 text-right text-blue-600">{formatCurrency(group.totalSeito)}</td>
-                    <td className="p-3 text-right text-orange-600">{formatCurrency(group.totalLogistik)}</td>
+                    <td className="p-3 text-right">
+                      <div>{formatCurrency(group.totalAmount)}</div>
+                      <div className="text-[10px] text-muted-foreground">B {formatCurrency(group.totalBase || 0)} · IVA {formatCurrency(group.totalTax || 0)}</div>
+                    </td>
+                    <td className="p-3 text-right text-blue-600">
+                      <div>{formatCurrency(group.totalSeito)}</div>
+                      <div className="text-[10px] text-muted-foreground">B {formatCurrency(group.baseSeito || 0)} · IVA {formatCurrency(group.taxSeito || 0)}</div>
+                    </td>
+                    <td className="p-3 text-right text-orange-600">
+                      <div>{formatCurrency(group.totalLogistik)}</div>
+                      <div className="text-[10px] text-muted-foreground">B {formatCurrency(group.baseLogistik || 0)} · IVA {formatCurrency(group.taxLogistik || 0)}</div>
+                    </td>
                     <td className="p-3 text-right">{formatCurrency(paidSeito)}</td>
                     <td className="p-3 text-right">{formatCurrency(paidLogistik)}</td>
                     <td className="p-3 text-center text-xs">
@@ -449,9 +467,18 @@ export default function SharedInvoices() {
                   <tr className="border-t-2 bg-muted/30 font-semibold">
                     <td className="p-3">Total {year === 'all' ? 'global' : year}</td>
                     <td className="p-3 text-center">{data.totals.count}</td>
-                    <td className="p-3 text-right">{formatCurrency(data.totals.totalAmount)}</td>
-                    <td className="p-3 text-right text-blue-600">{formatCurrency(data.totals.totalSeito)}</td>
-                    <td className="p-3 text-right text-orange-600">{formatCurrency(data.totals.totalLogistik)}</td>
+                    <td className="p-3 text-right">
+                      <div>{formatCurrency(data.totals.totalAmount)}</div>
+                      <div className="text-[10px] text-muted-foreground font-normal">B {formatCurrency(data.totals.totalBase || 0)} · IVA {formatCurrency(data.totals.totalTax || 0)}</div>
+                    </td>
+                    <td className="p-3 text-right text-blue-600">
+                      <div>{formatCurrency(data.totals.totalSeito)}</div>
+                      <div className="text-[10px] text-muted-foreground font-normal">B {formatCurrency(data.totals.baseSeito || 0)} · IVA {formatCurrency(data.totals.taxSeito || 0)}</div>
+                    </td>
+                    <td className="p-3 text-right text-orange-600">
+                      <div>{formatCurrency(data.totals.totalLogistik)}</div>
+                      <div className="text-[10px] text-muted-foreground font-normal">B {formatCurrency(data.totals.baseLogistik || 0)} · IVA {formatCurrency(data.totals.taxLogistik || 0)}</div>
+                    </td>
                     <td className="p-3 text-right">{formatCurrency(totPaidSeito)}</td>
                     <td className="p-3 text-right">{formatCurrency(totPaidLogistik)}</td>
                     <td className="p-3 text-center text-xs">
@@ -641,9 +668,18 @@ export default function SharedInvoices() {
                           <td className="p-3 font-mono text-xs">{inv.invoiceNumber}</td>
                           <td className="p-3 text-muted-foreground">{inv.supplier?.name || '—'}</td>
                           <td className="p-3 text-muted-foreground">{formatDate(inv.issueDate)}</td>
-                          <td className="p-3 text-right font-medium">{formatCurrency(parseFloat(inv.totalAmount))}</td>
-                          <td className="p-3 text-right text-blue-600">{formatCurrency(inv.amountSeito)}</td>
-                          <td className="p-3 text-right text-orange-600">{formatCurrency(inv.amountLogistik)}</td>
+                          <td className="p-3 text-right font-medium">
+                            <div>{formatCurrency(parseFloat(inv.totalAmount))}</div>
+                            <div className="text-[10px] text-muted-foreground font-normal">B {formatCurrency(parseFloat(inv.subtotal || 0))} · IVA {formatCurrency(parseFloat(inv.taxAmount || 0))}</div>
+                          </td>
+                          <td className="p-3 text-right text-blue-600">
+                            <div>{formatCurrency(inv.amountSeito)}</div>
+                            <div className="text-[10px] text-muted-foreground font-normal">B {formatCurrency(inv.baseSeito || 0)} · IVA {formatCurrency(inv.taxSeito || 0)}</div>
+                          </td>
+                          <td className="p-3 text-right text-orange-600">
+                            <div>{formatCurrency(inv.amountLogistik)}</div>
+                            <div className="text-[10px] text-muted-foreground font-normal">B {formatCurrency(inv.baseLogistik || 0)} · IVA {formatCurrency(inv.taxLogistik || 0)}</div>
+                          </td>
                           <td className="p-3 text-center">
                             {!isLocked && editingId === inv.id ? (
                               <div className="flex items-center gap-1 justify-center">
