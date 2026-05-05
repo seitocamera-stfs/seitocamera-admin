@@ -772,7 +772,7 @@ router.get('/sync-status', authorize('ADMIN', 'EDITOR'), async (req, res, next) 
  */
 router.post('/rescan', authorize('ADMIN', 'EDITOR'), requireSection('receivedInvoices'), async (req, res, next) => {
   try {
-    const { from, to, ignoreProcessed = false } = req.body || {};
+    const { from, to, ignoreProcessed = false, folders } = req.body || {};
     if (!from || !to) {
       return res.status(400).json({ error: 'Falten camps `from` i/o `to` (format YYYY-MM-DD)' });
     }
@@ -788,11 +788,22 @@ router.post('/rescan', authorize('ADMIN', 'EDITOR'), requireSection('receivedInv
       return res.status(400).json({ error: 'Rang massa ample (màxim 90 dies). Divideix en trams.' });
     }
 
+    // Validar carpetes (si arriben): han de ser strings no buits
+    let foldersArr = null;
+    if (folders !== undefined && folders !== null) {
+      if (!Array.isArray(folders)) {
+        return res.status(400).json({ error: '`folders` ha de ser un array de noms de carpeta' });
+      }
+      foldersArr = folders.map((f) => String(f).trim()).filter(Boolean);
+      if (foldersArr.length === 0) foldersArr = null; // tornar al default
+    }
+
     const { rescanZohoRange } = require('../jobs/zohoEmailSync');
     const report = await rescanZohoRange({
       from: fromDate,
       to: toDate,
       ignoreProcessed: !!ignoreProcessed,
+      folders: foldersArr,
     });
 
     res.json(report);

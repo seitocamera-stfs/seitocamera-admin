@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   Plus, Search, Trash2, Check, X as XIcon, CheckCircle,
   FileText, Upload, Eye, Link2, AlertTriangle, Ban, Package, Sparkles, CreditCard,
@@ -154,12 +154,50 @@ export default function ReceivedInvoices() {
   // Modal "Sync Zohomail" — repassar correu en un rang de dates
   const [showZohoRescan, setShowZohoRescan] = useState(false);
   const [zohoRescanForm, setZohoRescanForm] = useState(() => {
-    // Default: últims 7 dies
+    // Default: últims 7 dies. Les carpetes s'auto-omplen quan es carrega la
+    // llista real del Zoho (useEffect més avall) — auto-marca les que tenen
+    // "factura"/"invoice"/"rebuda" al nom.
     const today = new Date();
     const weekAgo = new Date(today.getTime() - 7 * 86400000);
     const fmt = (d) => d.toISOString().slice(0, 10);
-    return { from: fmt(weekAgo), to: fmt(today), ignoreProcessed: false };
+    return {
+      from: fmt(weekAgo),
+      to: fmt(today),
+      ignoreProcessed: false,
+      folders: [],
+    };
   });
+
+  // Carrega la llista real de carpetes Zoho quan s'obre el modal
+  const { data: zohoFoldersData, loading: foldersLoading } = useApiGet(
+    showZohoRescan ? '/zoho/folders' : null
+  );
+  const zohoFolders = useMemo(() => {
+    const list = zohoFoldersData?.data || [];
+    // Filtra carpetes "Sent", "Drafts", "Trash", etc. — només safates entrants
+    return list.filter((f) => {
+      const n = (f.folderName || '').toLowerCase();
+      const p = (f.path || '').toLowerCase();
+      const isSystemOut = /sent|enviat|drafts|borrad|trash|paperera|spam|junk/.test(n + ' ' + p);
+      return !isSystemOut;
+    });
+  }, [zohoFoldersData]);
+
+  // Auto-detect la carpeta principal de factures
+  const isInvoiceFolder = (f) => /factur|invoice|rebud/i.test((f.folderName || '') + ' ' + (f.path || ''));
+
+  // Auto-marca les carpetes de factures la primera vegada que es carreguen
+  useEffect(() => {
+    if (!showZohoRescan || zohoFolders.length === 0) return;
+    if (zohoRescanForm.folders.length > 0) return; // l'usuari ja ha tocat alguna cosa
+    const invoiceOnes = zohoFolders.filter(isInvoiceFolder);
+    if (invoiceOnes.length > 0) {
+      setZohoRescanForm((prev) => ({
+        ...prev,
+        folders: invoiceOnes.map((f) => f.path || f.folderName),
+      }));
+    }
+  }, [zohoFolders, showZohoRescan]); // eslint-disable-line react-hooks/exhaustive-deps
   const [zohoRescanRunning, setZohoRescanRunning] = useState(false);
   const [zohoRescanResult, setZohoRescanResult] = useState(null);
 
@@ -231,6 +269,7 @@ export default function ReceivedInvoices() {
         from: zohoRescanForm.from,
         to: zohoRescanForm.to,
         ignoreProcessed: zohoRescanForm.ignoreProcessed,
+        folders: zohoRescanForm.folders,
       });
       setZohoRescanResult(data);
       // Si hi ha hagut PDFs nous, refrescar la llista
@@ -2165,6 +2204,85 @@ export default function ReceivedInvoices() {
                 </div>
               </div>
 
+              {/* Selector dinàmic de carpetes Zoho */}
+              <div className="space-y-2 p-3 rounded border bg-blue-50/40 border-blue-200">
+                <div className="text-xs font-medium text-blue-900 flex items-center gap-1.5">
+                  <Mail size={13} /> Carpetes Zoho a revisar
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Per defecte auto-marquem la carpeta dedicada a factures (★) per fer una
+                  passada profunda. Pots marcar altres bústies si vols incloure correus
+                  que encara no s'han mogut allà.
+                </p>
+
+                {foldersLoading && (
+                  <div className="text-[11px] text-muted-foreground text-center py-2">
+                    <RefreshCw size={11} className="inline animate-spin mr-1" /> Carregant carpetes del Zoho…
+                  </div>
+                )}
+
+                {!foldersLoading && zohoFolders.length === 0 && (
+                  <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+                    ⚠ No s'han pogut carregar les carpetes del Zoho. Comprova que estiguin
+                    configurades les credencials a Connexions.
+                  </div>
+                )}
+
+                {!foldersLoading && zohoFolders.length > 0 && (
+                  <div className="max-h-64 overflow-y-auto space-y-0.5 bg-white rounded border p-1">
+                    {[...zohoFolders]
+                      .sort((a, b) => {
+                        // Carpetes "factura" primer, després alfabèticament per path
+                        const aFact = isInvoiceFolder(a) ? 0 : 1;
+                        const bFact = isInvoiceFolder(b) ? 0 : 1;
+                        if (aFact !== bFact) return aFact - bFact;
+                        return (a.path || a.folderName || '').localeCompare(b.path || b.folderName || '');
+                      })
+                      .map((f) => {
+                        const folderId = f.path || f.folderName;
+                        const checked = zohoRescanForm.folders.includes(folderId);
+                        const isInvoice = isInvoiceFolder(f);
+                        return (
+                          <label
+                            key={folderId}
+                            className={`flex items-center gap-2 text-xs cursor-pointer p-1.5 rounded hover:bg-blue-50 ${
+                              checked ? 'bg-blue-50' : ''
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => {
+                                const folders = e.target.checked
+                                  ? [...zohoRescanForm.folders, folderId]
+                                  : zohoRescanForm.folders.filter((x) => x !== folderId);
+                                setZohoRescanForm({ ...zohoRescanForm, folders });
+                              }}
+                            />
+                            {isInvoice && <span className="text-amber-500 leading-none" title="Auto-detectada com a carpeta de factures">★</span>}
+                            <span className={`flex-1 font-mono ${isInvoice ? 'font-semibold text-blue-900' : 'text-gray-700'}`}>
+                              {f.path || f.folderName}
+                            </span>
+                            {f.unreadCount > 0 && (
+                              <span className="text-[10px] text-gray-400">{f.unreadCount} no llegits</span>
+                            )}
+                          </label>
+                        );
+                      })}
+                  </div>
+                )}
+
+                {zohoRescanForm.folders.length === 0 && !foldersLoading && zohoFolders.length > 0 && (
+                  <p className="text-[11px] text-rose-600 mt-1">⚠ Selecciona almenys una carpeta</p>
+                )}
+                {zohoRescanForm.folders.length > 0 && (
+                  <p className="text-[10px] text-muted-foreground">
+                    {zohoRescanForm.folders.length} carpeta{zohoRescanForm.folders.length === 1 ? '' : 's'} seleccionada{zohoRescanForm.folders.length === 1 ? '' : 's'}
+                    {zohoRescanForm.folders.length === 1 && ' · passada profunda (500 correus max)'}
+                  </p>
+                )}
+              </div>
+
               <label className="flex items-start gap-2 text-sm cursor-pointer p-2 rounded border bg-amber-50/40 border-amber-200">
                 <input
                   type="checkbox"
@@ -2230,9 +2348,18 @@ export default function ReceivedInvoices() {
 
           {zohoRescanResult && !zohoRescanResult.error && (
             <div className="space-y-3">
-              <div className="text-sm font-medium">
-                Rang: <span className="text-primary">{zohoRescanForm.from}</span> → <span className="text-primary">{zohoRescanForm.to}</span>
-                {zohoRescanResult.ignoreProcessed && <span className="ml-2 text-[11px] px-2 py-0.5 rounded bg-amber-100 text-amber-800">re-processats</span>}
+              <div className="space-y-1">
+                <div className="text-sm font-medium">
+                  Rang: <span className="text-primary">{zohoRescanForm.from}</span> → <span className="text-primary">{zohoRescanForm.to}</span>
+                  {zohoRescanResult.ignoreProcessed && <span className="ml-2 text-[11px] px-2 py-0.5 rounded bg-amber-100 text-amber-800">re-processats</span>}
+                </div>
+                {zohoRescanResult.folders?.length > 0 && (
+                  <div className="text-[11px] text-muted-foreground">
+                    Carpetes: {zohoRescanResult.folders.map((f) => (
+                      <code key={f} className="font-mono px-1 py-0.5 bg-blue-50 text-blue-800 rounded mx-0.5">{f}</code>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Cards stats */}

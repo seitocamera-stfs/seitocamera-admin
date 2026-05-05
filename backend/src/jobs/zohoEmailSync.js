@@ -427,9 +427,23 @@ async function syncZohoEmails() {
 }
 
 /**
+ * Carpetes preset per al rescan manual. La carpeta "FACTURA REBUDA" és la
+ * principal — és on l'usuari classifica manualment els correus de factura
+ * a Zoho. Les altres són les bústies generals on també hi pot haver factures
+ * que encara no s'han mogut.
+ */
+const RESCAN_FOLDER_PRESETS = {
+  FACTURA_REBUDA: 'FACTURA REBUDA',
+  INBOX:          'Inbox',
+  ADMIN:          '/Inbox/ADMIN',
+  RENTAL:         '/Inbox/RENTAL',
+};
+
+/**
  * Rescan manual d'un rang de dates (per detectar factures perdudes).
  *
- * - Escaneja les mateixes carpetes que el cron
+ * - Escaneja les carpetes especificades (default: només "FACTURA REBUDA",
+ *   que és on l'usuari classifica manualment els correus de factura)
  * - Pot opcionalment ignorar la cache de "ja processat" per re-processar correus
  * - Retorna stats + detall per correu (per al report del frontend)
  *
@@ -439,9 +453,13 @@ async function syncZohoEmails() {
  * @param {Date} opts.from - Data inicial (inclusiva, normalitzada a inici del dia)
  * @param {Date} opts.to - Data final (inclusiva, normalitzada a final del dia)
  * @param {boolean} opts.ignoreProcessed - Si true, re-processa correus ja vistos
- * @param {number} opts.limitPerFolder - Límit de correus per carpeta (default 200)
+ * @param {string[]} opts.folders - Llista de noms/paths de carpetes Zoho.
+ *   Default: ['FACTURA REBUDA'] (la carpeta dedicada a factures classificades).
+ *   Per escanejar més bústies, passa explícitament ['FACTURA REBUDA', 'Inbox', ...].
+ * @param {number} opts.limitPerFolder - Límit de correus per carpeta (default 300
+ *   en mode focus FACTURA REBUDA per fer una passada profunda)
  */
-async function rescanZohoRange({ from, to, ignoreProcessed = false, limitPerFolder = 200 }) {
+async function rescanZohoRange({ from, to, ignoreProcessed = false, folders = null, limitPerFolder = null }) {
   const hasAccounts = process.env.ZOHO_ACCOUNT_IDS || process.env.ZOHO_ACCOUNT_ID;
   if (!process.env.ZOHO_CLIENT_ID || !process.env.ZOHO_CLIENT_SECRET || !process.env.ZOHO_REFRESH_TOKEN || !hasAccounts) {
     throw new Error('Zoho no configurat (falten ZOHO_CLIENT_ID/SECRET/REFRESH_TOKEN o cap compte)');
@@ -450,18 +468,34 @@ async function rescanZohoRange({ from, to, ignoreProcessed = false, limitPerFold
   if (!(to instanceof Date) || isNaN(to)) throw new Error('Camp `to` invàlid');
   if (from > to) throw new Error('`from` ha de ser anterior o igual a `to`');
 
+  // Default: focalitzar sobre la carpeta "FACTURA REBUDA" amb una passada profunda
+  const folderList = (Array.isArray(folders) && folders.length > 0)
+    ? folders
+    : [RESCAN_FOLDER_PRESETS.FACTURA_REBUDA];
+
+  // Si només revisem FACTURA REBUDA, podem permetre un límit més alt (és la
+  // carpeta dedicada, té volum baix per any). Si l'usuari escaneja vàries
+  // bústies, deixem un límit més conservador per evitar timeouts.
+  const finalLimit = limitPerFolder
+    || (folderList.length === 1 && folderList[0] === RESCAN_FOLDER_PRESETS.FACTURA_REBUDA ? 500 : 200);
+
   // Normalitza per no perdre correus per ratlla d'hora (Zoho filtra per dia)
   const fromStart = new Date(from); fromStart.setHours(0, 0, 0, 0);
   const toEnd = new Date(to); toEnd.setHours(23, 59, 59, 999);
   // Per al filtre `before:` de Zoho cal +1 dia perquè és exclusiu
   const untilForZoho = new Date(toEnd.getTime() + 86400000);
 
-  logger.info(`Zoho rescan manual: ${fromStart.toISOString()} → ${toEnd.toISOString()} (ignoreProcessed=${ignoreProcessed})`);
+  logger.info(
+    `Zoho rescan manual: ${fromStart.toISOString()} → ${toEnd.toISOString()} `
+    + `| carpetes: ${folderList.join(', ')} | limit/carpeta: ${finalLimit} `
+    + `| ignoreProcessed=${ignoreProcessed}`
+  );
 
   const results = await zohoMail.scanAllAccounts({
     since: fromStart,
     until: untilForZoho,
-    limit: limitPerFolder,
+    limit: finalLimit,
+    folderNames: folderList,
   });
 
   const { stats, items } = await processEmails(results, { ignoreProcessed, collectDetails: true });
@@ -469,11 +503,12 @@ async function rescanZohoRange({ from, to, ignoreProcessed = false, limitPerFold
   logger.info(
     `Zoho rescan completat: ${stats.pdfAttached + stats.linkDetected + stats.manualReview} accions, `
     + `${stats.notInvoice} descartats, ${stats.skipped} ja processats, ${stats.errors} errors `
-    + `(de ${results.length} escanejats)`
+    + `(de ${results.length} escanejats a ${folderList.join(', ')})`
   );
 
   return {
     range: { from: fromStart.toISOString(), to: toEnd.toISOString() },
+    folders: folderList,
     ignoreProcessed,
     scanned: results.length,
     stats,
@@ -509,4 +544,4 @@ function startZohoEmailSync() {
   return { taskPeak, taskOffNight, taskOffSunday };
 }
 
-module.exports = { startZohoEmailSync, syncZohoEmails, rescanZohoRange };
+module.exports = { startZohoEmailSync, syncZohoEmails, rescanZohoRange, RESCAN_FOLDER_PRESETS };
