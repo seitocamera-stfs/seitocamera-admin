@@ -760,4 +760,46 @@ router.get('/sync-status', authorize('ADMIN', 'EDITOR'), async (req, res, next) 
   }
 });
 
+/**
+ * POST /api/zoho/rescan
+ * Repassa el correu en un rang de dates concret per detectar factures que
+ * potser s'han perdut (no s'han processat per error de connexió, filtres,
+ * o que es van marcar com "no factura" erròniament).
+ *
+ * Body: { from: "YYYY-MM-DD", to: "YYYY-MM-DD", ignoreProcessed?: bool }
+ *
+ * Retorna stats + detall per correu trobat (per al report a la UI).
+ */
+router.post('/rescan', authorize('ADMIN', 'EDITOR'), requireSection('receivedInvoices'), async (req, res, next) => {
+  try {
+    const { from, to, ignoreProcessed = false } = req.body || {};
+    if (!from || !to) {
+      return res.status(400).json({ error: 'Falten camps `from` i/o `to` (format YYYY-MM-DD)' });
+    }
+    const fromDate = new Date(from);
+    const toDate = new Date(to);
+    if (isNaN(fromDate) || isNaN(toDate)) {
+      return res.status(400).json({ error: 'Format de data invàlid (usa YYYY-MM-DD)' });
+    }
+    // Cap superior de seguretat: max 90 dies per evitar timeouts
+    const diffDays = (toDate - fromDate) / 86400000;
+    if (diffDays < 0) return res.status(400).json({ error: '`from` ha de ser anterior a `to`' });
+    if (diffDays > 90) {
+      return res.status(400).json({ error: 'Rang massa ample (màxim 90 dies). Divideix en trams.' });
+    }
+
+    const { rescanZohoRange } = require('../jobs/zohoEmailSync');
+    const report = await rescanZohoRange({
+      from: fromDate,
+      to: toDate,
+      ignoreProcessed: !!ignoreProcessed,
+    });
+
+    res.json(report);
+  } catch (err) {
+    logger.error(`Zoho rescan error: ${err.message}`);
+    next(err);
+  }
+});
+
 module.exports = router;

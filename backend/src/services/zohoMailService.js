@@ -322,20 +322,22 @@ async function getFolderIds(folderNames = [], accountId = null) {
  * @param {number} options.start - Offset per paginació (default 0)
  * @param {string} options.searchKey - Cerca per text
  * @param {Date} options.since - Només correus posteriors a aquesta data
+ * @param {Date} options.until - Només correus anteriors a aquesta data (rang superior)
  */
 async function getMessages(folderId, options = {}, accountId = null) {
-  const { limit = 50, start = 0, searchKey, since } = options;
+  const { limit = 50, start = 0, searchKey, since, until } = options;
 
   // Zoho Mail API: llistar missatges → GET /messages/view?folderId=...
   let endpoint = `/messages/view?folderId=${folderId}&limit=${limit}&start=${start}`;
 
-  // Zoho accepta searchKey amb sintaxi: after:YYYY/MM/DD
+  // Zoho accepta searchKey amb sintaxi: after:YYYY/MM/DD before:YYYY/MM/DD
+  const fmtDate = (d) => `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
   let searchParts = [];
   if (since instanceof Date && !isNaN(since)) {
-    const y = since.getFullYear();
-    const m = String(since.getMonth() + 1).padStart(2, '0');
-    const d = String(since.getDate()).padStart(2, '0');
-    searchParts.push(`after:${y}/${m}/${d}`);
+    searchParts.push(`after:${fmtDate(since)}`);
+  }
+  if (until instanceof Date && !isNaN(until)) {
+    searchParts.push(`before:${fmtDate(until)}`);
   }
   if (searchKey) searchParts.push(searchKey);
   if (searchParts.length > 0) {
@@ -844,6 +846,7 @@ async function scanForInvoices(options = {}) {
   const {
     folderNames = DEFAULT_SCAN_FOLDERS,
     since,
+    until,
     limit = 50,
     keywords = ['factura', 'invoice', 'fra', 'albarà', 'albaran', 'rebut', 'pressupost'],
     accountId = null,
@@ -869,6 +872,7 @@ async function scanForInvoices(options = {}) {
       // Obtenir correus d'aquesta carpeta
       const msgOptions = { limit };
       if (since) msgOptions.since = since;
+      if (until) msgOptions.until = until;
 
       let messages = await getMessages(folder.folderId, msgOptions, accountId);
 

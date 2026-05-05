@@ -3,6 +3,7 @@ import {
   Plus, Search, Trash2, Check, X as XIcon, CheckCircle,
   FileText, Upload, Eye, Link2, AlertTriangle, Ban, Package, Sparkles, CreditCard,
   ChevronRight, Paperclip, Pencil, RefreshCw, GitMerge, Split, Send, BookText,
+  Mail, AlertCircle,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useApiGet, useApiMutation } from '../hooks/useApi';
@@ -150,6 +151,18 @@ export default function ReceivedInvoices() {
   const [newSupplierForm, setNewSupplierForm] = useState({ name: '', nif: '', email: '' });
   const [newSupplierLoading, setNewSupplierLoading] = useState(false);
   const [tempSupplier, setTempSupplier] = useState(null);
+  // Modal "Sync Zohomail" — repassar correu en un rang de dates
+  const [showZohoRescan, setShowZohoRescan] = useState(false);
+  const [zohoRescanForm, setZohoRescanForm] = useState(() => {
+    // Default: últims 7 dies
+    const today = new Date();
+    const weekAgo = new Date(today.getTime() - 7 * 86400000);
+    const fmt = (d) => d.toISOString().slice(0, 10);
+    return { from: fmt(weekAgo), to: fmt(today), ignoreProcessed: false };
+  });
+  const [zohoRescanRunning, setZohoRescanRunning] = useState(false);
+  const [zohoRescanResult, setZohoRescanResult] = useState(null);
+
   const [showDriveAudit, setShowDriveAudit] = useState(false);
   const [driveAuditData, setDriveAuditData] = useState(null);
   const [driveAuditLoading, setDriveAuditLoading] = useState(false);
@@ -206,6 +219,29 @@ export default function ReceivedInvoices() {
       setSortDir('asc');
     }
     setPage(1);
+  };
+
+  // Sync Zohomail — repassa correu en un rang per detectar factures perdudes
+  const handleZohoRescan = async () => {
+    if (!zohoRescanForm.from || !zohoRescanForm.to) return;
+    setZohoRescanRunning(true);
+    setZohoRescanResult(null);
+    try {
+      const { data } = await api.post('/zoho/rescan', {
+        from: zohoRescanForm.from,
+        to: zohoRescanForm.to,
+        ignoreProcessed: zohoRescanForm.ignoreProcessed,
+      });
+      setZohoRescanResult(data);
+      // Si hi ha hagut PDFs nous, refrescar la llista
+      if (data.stats?.pdfAttached > 0) {
+        setTimeout(() => refetch(), 1500);
+      }
+    } catch (err) {
+      setZohoRescanResult({ error: err.response?.data?.error || err.message });
+    } finally {
+      setZohoRescanRunning(false);
+    }
   };
 
   // Gestió selecció
@@ -833,6 +869,13 @@ export default function ReceivedInvoices() {
             selectedIds={selectedIds}
           />
           {/* Botons Auditoria Drive i Dates eliminats — ja no calen */}
+          <button
+            onClick={() => { setZohoRescanResult(null); setShowZohoRescan(true); }}
+            className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium border hover:bg-muted"
+            title="Repassar el correu per detectar factures que potser s'han perdut"
+          >
+            <Mail size={16} /> Sync Zohomail
+          </button>
           <button onClick={() => { setShowAlerts(!showAlerts); setShowTrash(false); setPage(1); }} className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium border ${showAlerts ? 'bg-amber-500 text-white' : 'hover:bg-muted'}`}>
             <AlertTriangle size={16} /> {showAlerts ? 'Tornar a factures' : 'Alertes'}
           </button>
@@ -2081,6 +2124,227 @@ export default function ReceivedInvoices() {
             )}
           </div>
         )}
+      </Modal>
+
+      {/* Modal Sync Zohomail — repassar correu en un rang de dates */}
+      <Modal
+        isOpen={showZohoRescan}
+        onClose={() => { if (!zohoRescanRunning) { setShowZohoRescan(false); setZohoRescanResult(null); } }}
+        title="Sync Zohomail — Repassar correu per rang"
+        size="lg"
+      >
+        <div className="space-y-4">
+          {!zohoRescanResult && (
+            <>
+              <p className="text-sm text-muted-foreground">
+                Repassa els correus de les bústies configurades en un rang de dates concret per detectar
+                factures que potser s'han perdut (errors de connexió, filtres, classificació errònia).
+              </p>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Des de *</label>
+                  <input
+                    type="date"
+                    value={zohoRescanForm.from}
+                    onChange={(e) => setZohoRescanForm({ ...zohoRescanForm, from: e.target.value })}
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                    max={zohoRescanForm.to}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Fins a *</label>
+                  <input
+                    type="date"
+                    value={zohoRescanForm.to}
+                    onChange={(e) => setZohoRescanForm({ ...zohoRescanForm, to: e.target.value })}
+                    className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                    min={zohoRescanForm.from}
+                    max={new Date().toISOString().slice(0, 10)}
+                  />
+                </div>
+              </div>
+
+              <label className="flex items-start gap-2 text-sm cursor-pointer p-2 rounded border bg-amber-50/40 border-amber-200">
+                <input
+                  type="checkbox"
+                  checked={zohoRescanForm.ignoreProcessed}
+                  onChange={(e) => setZohoRescanForm({ ...zohoRescanForm, ignoreProcessed: e.target.checked })}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="font-medium">Ignorar correus ja processats</span>
+                  <span className="block text-[11px] text-muted-foreground mt-0.5">
+                    Re-processa correus que el sistema ja havia vist (útil si es van marcar erròniament com a "no factura"). Per defecte només es processen els nous.
+                  </span>
+                </span>
+              </label>
+
+              <div className="text-[11px] text-muted-foreground bg-slate-50 border rounded p-2">
+                ℹ️ Màxim 90 dies per evitar timeouts. Per rangs més grans, divideix en trams.
+                El cron automàtic continua funcionant amb el seu propi puntejat.
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t">
+                <button
+                  type="button"
+                  onClick={() => setShowZohoRescan(false)}
+                  disabled={zohoRescanRunning}
+                  className="px-4 py-2 rounded-md border text-sm"
+                >
+                  Cancel·lar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleZohoRescan}
+                  disabled={zohoRescanRunning || !zohoRescanForm.from || !zohoRescanForm.to}
+                  className="flex items-center gap-2 px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50"
+                >
+                  {zohoRescanRunning ? (
+                    <><RefreshCw size={14} className="animate-spin" /> Repassant…</>
+                  ) : (
+                    <><Mail size={14} /> Repassar correu</>
+                  )}
+                </button>
+              </div>
+            </>
+          )}
+
+          {zohoRescanResult?.error && (
+            <div className="p-3 rounded-md bg-red-50 border border-red-200 text-sm text-red-700">
+              <div className="flex items-start gap-2">
+                <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+                <div>
+                  <div className="font-medium">Error</div>
+                  <div className="text-xs mt-1">{zohoRescanResult.error}</div>
+                </div>
+              </div>
+              <button
+                onClick={() => setZohoRescanResult(null)}
+                className="mt-3 text-xs underline"
+              >
+                Tornar a provar
+              </button>
+            </div>
+          )}
+
+          {zohoRescanResult && !zohoRescanResult.error && (
+            <div className="space-y-3">
+              <div className="text-sm font-medium">
+                Rang: <span className="text-primary">{zohoRescanForm.from}</span> → <span className="text-primary">{zohoRescanForm.to}</span>
+                {zohoRescanResult.ignoreProcessed && <span className="ml-2 text-[11px] px-2 py-0.5 rounded bg-amber-100 text-amber-800">re-processats</span>}
+              </div>
+
+              {/* Cards stats */}
+              <div className="grid grid-cols-3 gap-2">
+                <div className="rounded-lg border p-3 bg-emerald-50/60 border-emerald-200">
+                  <div className="text-[10px] uppercase tracking-wide text-emerald-700 font-medium">PDFs nous descarregats</div>
+                  <div className="text-2xl font-semibold text-emerald-900">{zohoRescanResult.stats?.pdfAttached || 0}</div>
+                </div>
+                <div className="rounded-lg border p-3 bg-blue-50/60 border-blue-200">
+                  <div className="text-[10px] uppercase tracking-wide text-blue-700 font-medium">Links a plataformes</div>
+                  <div className="text-2xl font-semibold text-blue-900">{zohoRescanResult.stats?.linkDetected || 0}</div>
+                </div>
+                <div className="rounded-lg border p-3 bg-amber-50/60 border-amber-200">
+                  <div className="text-[10px] uppercase tracking-wide text-amber-700 font-medium">Revisió manual</div>
+                  <div className="text-2xl font-semibold text-amber-900">{zohoRescanResult.stats?.manualReview || 0}</div>
+                </div>
+                <div className="rounded-lg border p-3 bg-slate-50 border-slate-200">
+                  <div className="text-[10px] uppercase tracking-wide text-slate-600 font-medium">Descartats (no factura)</div>
+                  <div className="text-2xl font-semibold text-slate-700">{zohoRescanResult.stats?.notInvoice || 0}</div>
+                </div>
+                <div className="rounded-lg border p-3 bg-slate-50 border-slate-200">
+                  <div className="text-[10px] uppercase tracking-wide text-slate-600 font-medium">Ja processats abans</div>
+                  <div className="text-2xl font-semibold text-slate-700">{zohoRescanResult.stats?.skipped || 0}</div>
+                </div>
+                <div className="rounded-lg border p-3 bg-rose-50/60 border-rose-200">
+                  <div className="text-[10px] uppercase tracking-wide text-rose-700 font-medium">Errors</div>
+                  <div className="text-2xl font-semibold text-rose-900">{zohoRescanResult.stats?.errors || 0}</div>
+                </div>
+              </div>
+
+              <div className="text-xs text-muted-foreground">
+                Total escanejats: <strong>{zohoRescanResult.scanned}</strong>
+                {zohoRescanResult.stats?.pdfAttached > 0 && (
+                  <span className="ml-2 text-emerald-700">✓ Els PDFs nous estan a la carpeta inbox de Google Drive — apareixeran a la taula en uns segons.</span>
+                )}
+              </div>
+
+              {/* Detall per correu */}
+              {zohoRescanResult.items?.length > 0 && (
+                <details className="border rounded-lg bg-white" open>
+                  <summary className="cursor-pointer px-3 py-2 text-sm font-medium hover:bg-gray-50">
+                    Detall ({zohoRescanResult.items.length} correus)
+                  </summary>
+                  <div className="max-h-80 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="bg-gray-50 sticky top-0">
+                        <tr>
+                          <th className="text-left px-2 py-1.5 font-medium">Data</th>
+                          <th className="text-left px-2 py-1.5 font-medium">De</th>
+                          <th className="text-left px-2 py-1.5 font-medium">Assumpte</th>
+                          <th className="text-left px-2 py-1.5 font-medium">Acció</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {zohoRescanResult.items.map((item, idx) => {
+                          const actionStyles = {
+                            pdf_uploaded:    'bg-emerald-100 text-emerald-800',
+                            link_reminder:   'bg-blue-100 text-blue-800',
+                            manual_review:   'bg-amber-100 text-amber-800',
+                            not_invoice:     'bg-slate-100 text-slate-600',
+                            error:           'bg-rose-100 text-rose-800',
+                          };
+                          const actionCls = item.action?.startsWith('skipped')
+                            ? 'bg-slate-100 text-slate-500 italic'
+                            : (actionStyles[item.action] || 'bg-gray-100 text-gray-700');
+                          return (
+                            <tr key={idx} className="border-t hover:bg-gray-50/50">
+                              <td className="px-2 py-1.5 text-muted-foreground whitespace-nowrap">
+                                {item.date ? new Date(typeof item.date === 'number' ? item.date : item.date).toLocaleDateString('ca-ES') : '—'}
+                              </td>
+                              <td className="px-2 py-1.5 max-w-[160px] truncate" title={item.from}>
+                                {item.supplierName ? (
+                                  <span className="font-medium">{item.supplierName}</span>
+                                ) : (
+                                  <span className="text-gray-500">{item.from}</span>
+                                )}
+                              </td>
+                              <td className="px-2 py-1.5 max-w-[280px] truncate" title={item.subject}>
+                                {item.subject}
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] ${actionCls}`}>
+                                  {item.action || '—'}
+                                </span>
+                                {item.error && <div className="text-[10px] text-rose-600 mt-0.5" title={item.error}>{item.error.slice(0, 80)}</div>}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2 border-t">
+                <button
+                  onClick={() => setZohoRescanResult(null)}
+                  className="px-4 py-2 rounded-md border text-sm"
+                >
+                  Nou rang
+                </button>
+                <button
+                  onClick={() => { setShowZohoRescan(false); setZohoRescanResult(null); }}
+                  className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium"
+                >
+                  Tancar
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </Modal>
     </div>
   );

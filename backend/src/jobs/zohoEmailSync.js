@@ -283,6 +283,94 @@ async function handleManualReview(email, supplier, adminId) {
 // Sincronització principal
 // ===========================================
 
+/**
+ * Processa una llista de correus ja escanejats. Compartit entre el cron
+ * automàtic i el rescan manual.
+ *
+ * @param {Array} results - resultats de scanAllAccounts
+ * @param {Object} opts
+ * @param {boolean} opts.ignoreProcessed - Si true, re-processa correus ja vistos
+ *   (útil quan vols repassar manualment un rang)
+ * @param {boolean} opts.collectDetails - Si true, retorna detalls per correu
+ *   per al report del frontend
+ * @returns {Object} { stats, items? }
+ */
+async function processEmails(results, { ignoreProcessed = false, collectDetails = false } = {}) {
+  const stats = { pdfAttached: 0, linkDetected: 0, manualReview: 0, notInvoice: 0, skipped: 0, errors: 0 };
+  const items = collectDetails ? [] : null;
+  const adminId = await getAdminId();
+
+  for (const email of results) {
+    const meta = email.emailMeta || {};
+    const baseItem = collectDetails ? {
+      messageId: email.messageId,
+      from: meta.from,
+      subject: meta.subject || '(sense assumpte)',
+      date: meta.receivedTime || meta.sentTime || null,
+      classification: email.classification || 'NOT_INVOICE',
+      action: null,
+      supplierName: null,
+      error: null,
+    } : null;
+
+    // Saltar si ja processat (excepte si forcem rescan)
+    const cachedAction = await redis.get(`zoho:processed:${email.messageId}`);
+    if (cachedAction && !ignoreProcessed) {
+      stats.skipped++;
+      if (baseItem) { baseItem.action = `skipped (${cachedAction})`; items.push(baseItem); }
+      continue;
+    }
+
+    try {
+      const classification = email.classification || 'NOT_INVOICE';
+      const emailLabel = `${meta.from} — ${meta.subject || '?'}`;
+      const supplier = await findSupplierByEmail(meta.from);
+      if (baseItem && supplier) baseItem.supplierName = supplier.name;
+
+      switch (classification) {
+        case 'PDF_ATTACHED':
+          await withTimeout(handlePdfAttached(email, supplier), PER_EMAIL_TIMEOUT_MS, emailLabel);
+          await redis.set(`zoho:processed:${email.messageId}`, 'pdf_uploaded', 'EX', 90 * 24 * 3600);
+          stats.pdfAttached++;
+          if (baseItem) baseItem.action = 'pdf_uploaded';
+          break;
+
+        case 'LINK_DETECTED':
+          await withTimeout(handleLinkDetected(email, supplier, adminId), PER_EMAIL_TIMEOUT_MS, emailLabel);
+          await redis.set(`zoho:processed:${email.messageId}`, 'link_reminder', 'EX', 90 * 24 * 3600);
+          stats.linkDetected++;
+          if (baseItem) baseItem.action = 'link_reminder';
+          break;
+
+        case 'MANUAL_REVIEW':
+          await withTimeout(handleManualReview(email, supplier, adminId), PER_EMAIL_TIMEOUT_MS, emailLabel);
+          await redis.set(`zoho:processed:${email.messageId}`, 'manual_review', 'EX', 90 * 24 * 3600);
+          stats.manualReview++;
+          if (baseItem) baseItem.action = 'manual_review';
+          break;
+
+        default:
+          await redis.set(`zoho:processed:${email.messageId}`, 'not_invoice', 'EX', 30 * 24 * 3600);
+          stats.notInvoice++;
+          if (baseItem) baseItem.action = 'not_invoice';
+          break;
+      }
+
+      if (baseItem) items.push(baseItem);
+    } catch (err) {
+      logger.error(`Zoho processEmails: Error processant ${email.messageId} (${meta.from}): ${err.message}`);
+      stats.errors++;
+      if (baseItem) {
+        baseItem.action = 'error';
+        baseItem.error = err.message.slice(0, 200);
+        items.push(baseItem);
+      }
+    }
+  }
+
+  return { stats, items, total: results.length };
+}
+
 async function syncZohoEmails() {
   if (isRunning) {
     const minutesRunning = runStartedAt ? (Date.now() - runStartedAt) / 60000 : 0;
@@ -312,61 +400,8 @@ async function syncZohoEmails() {
 
     logger.info(`Zoho cron sync: Buscant correus des de ${since.toISOString()}`);
 
-    // Escanejar TOTS els comptes configurats (multi-compte o single)
     const results = await zohoMail.scanAllAccounts({ since, limit: 50 });
-
-    const stats = { pdfAttached: 0, linkDetected: 0, manualReview: 0, notInvoice: 0, skipped: 0, errors: 0 };
-    const adminId = await getAdminId();
-
-    for (const email of results) {
-      // Saltar si ja processat
-      const alreadyProcessed = await redis.get(`zoho:processed:${email.messageId}`);
-      if (alreadyProcessed) {
-        stats.skipped++;
-        continue;
-      }
-
-      try {
-        const classification = email.classification || 'NOT_INVOICE';
-        const emailLabel = `${email.emailMeta.from} — ${email.emailMeta.subject || '?'}`;
-
-        // Detectar proveïdor
-        const supplier = await findSupplierByEmail(email.emailMeta.from);
-
-        switch (classification) {
-          case 'PDF_ATTACHED':
-            // A: descarregar PDF → GDrive inbox (amb timeout)
-            await withTimeout(handlePdfAttached(email, supplier), PER_EMAIL_TIMEOUT_MS, emailLabel);
-            await redis.set(`zoho:processed:${email.messageId}`, 'pdf_uploaded', 'EX', 90 * 24 * 3600);
-            stats.pdfAttached++;
-            break;
-
-          case 'LINK_DETECTED':
-            // B: recordatori amb instruccions de plataforma
-            await withTimeout(handleLinkDetected(email, supplier, adminId), PER_EMAIL_TIMEOUT_MS, emailLabel);
-            await redis.set(`zoho:processed:${email.messageId}`, 'link_reminder', 'EX', 90 * 24 * 3600);
-            stats.linkDetected++;
-            break;
-
-          case 'MANUAL_REVIEW':
-            // C: recordatori de revisió manual
-            await withTimeout(handleManualReview(email, supplier, adminId), PER_EMAIL_TIMEOUT_MS, emailLabel);
-            await redis.set(`zoho:processed:${email.messageId}`, 'manual_review', 'EX', 90 * 24 * 3600);
-            stats.manualReview++;
-            break;
-
-          default:
-            // NOT_INVOICE: marcar com a vist sense fer res
-            await redis.set(`zoho:processed:${email.messageId}`, 'not_invoice', 'EX', 30 * 24 * 3600);
-            stats.notInvoice++;
-            break;
-        }
-
-      } catch (err) {
-        logger.error(`Zoho cron: Error processant correu ${email.messageId} (${email.emailMeta.from}): ${err.message}`);
-        stats.errors++;
-      }
-    }
+    const { stats } = await processEmails(results, { ignoreProcessed: false });
 
     // Actualitzar timestamp
     await redis.set('zoho:lastSync', Date.now().toString());
@@ -389,6 +424,61 @@ async function syncZohoEmails() {
   } finally {
     isRunning = false;
   }
+}
+
+/**
+ * Rescan manual d'un rang de dates (per detectar factures perdudes).
+ *
+ * - Escaneja les mateixes carpetes que el cron
+ * - Pot opcionalment ignorar la cache de "ja processat" per re-processar correus
+ * - Retorna stats + detall per correu (per al report del frontend)
+ *
+ * NO actualitza `zoho:lastSync` (el cron continua amb el seu propi puntejat).
+ *
+ * @param {Object} opts
+ * @param {Date} opts.from - Data inicial (inclusiva, normalitzada a inici del dia)
+ * @param {Date} opts.to - Data final (inclusiva, normalitzada a final del dia)
+ * @param {boolean} opts.ignoreProcessed - Si true, re-processa correus ja vistos
+ * @param {number} opts.limitPerFolder - Límit de correus per carpeta (default 200)
+ */
+async function rescanZohoRange({ from, to, ignoreProcessed = false, limitPerFolder = 200 }) {
+  const hasAccounts = process.env.ZOHO_ACCOUNT_IDS || process.env.ZOHO_ACCOUNT_ID;
+  if (!process.env.ZOHO_CLIENT_ID || !process.env.ZOHO_CLIENT_SECRET || !process.env.ZOHO_REFRESH_TOKEN || !hasAccounts) {
+    throw new Error('Zoho no configurat (falten ZOHO_CLIENT_ID/SECRET/REFRESH_TOKEN o cap compte)');
+  }
+  if (!(from instanceof Date) || isNaN(from)) throw new Error('Camp `from` invàlid');
+  if (!(to instanceof Date) || isNaN(to)) throw new Error('Camp `to` invàlid');
+  if (from > to) throw new Error('`from` ha de ser anterior o igual a `to`');
+
+  // Normalitza per no perdre correus per ratlla d'hora (Zoho filtra per dia)
+  const fromStart = new Date(from); fromStart.setHours(0, 0, 0, 0);
+  const toEnd = new Date(to); toEnd.setHours(23, 59, 59, 999);
+  // Per al filtre `before:` de Zoho cal +1 dia perquè és exclusiu
+  const untilForZoho = new Date(toEnd.getTime() + 86400000);
+
+  logger.info(`Zoho rescan manual: ${fromStart.toISOString()} → ${toEnd.toISOString()} (ignoreProcessed=${ignoreProcessed})`);
+
+  const results = await zohoMail.scanAllAccounts({
+    since: fromStart,
+    until: untilForZoho,
+    limit: limitPerFolder,
+  });
+
+  const { stats, items } = await processEmails(results, { ignoreProcessed, collectDetails: true });
+
+  logger.info(
+    `Zoho rescan completat: ${stats.pdfAttached + stats.linkDetected + stats.manualReview} accions, `
+    + `${stats.notInvoice} descartats, ${stats.skipped} ja processats, ${stats.errors} errors `
+    + `(de ${results.length} escanejats)`
+  );
+
+  return {
+    range: { from: fromStart.toISOString(), to: toEnd.toISOString() },
+    ignoreProcessed,
+    scanned: results.length,
+    stats,
+    items,
+  };
 }
 
 /**
@@ -419,4 +509,4 @@ function startZohoEmailSync() {
   return { taskPeak, taskOffNight, taskOffSunday };
 }
 
-module.exports = { startZohoEmailSync, syncZohoEmails };
+module.exports = { startZohoEmailSync, syncZohoEmails, rescanZohoRange };

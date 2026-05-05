@@ -179,7 +179,7 @@ router.post('/transports', async (req, res, next) => {
   try {
     const {
       projecte, rentalProjectId, tipusServei, origen, notesOrigen, desti, notesDesti,
-      dataCarrega, dataEntrega, horaRecollida, horaEntregaEstimada, horaFiPrevista,
+      dataCarrega, dataEntrega, horaCarrega, horaRecollida, horaEntregaEstimada, horaFiPrevista,
       responsableProduccio, telefonResponsable, conductorId, empresaId,
       estat, notes,
       // Cost
@@ -210,6 +210,7 @@ router.post('/transports', async (req, res, next) => {
         notesDesti: notesDesti || null,
         dataCarrega: dataCarrega ? new Date(dataCarrega) : null,
         dataEntrega: dataEntrega ? new Date(dataEntrega) : null,
+        horaCarrega: horaCarrega || null,
         horaRecollida: horaRecollida || null,
         horaEntregaEstimada: horaEntregaEstimada || null,
         horaFiPrevista: horaFiPrevista || null,
@@ -256,7 +257,7 @@ router.put('/transports/:id', async (req, res, next) => {
     const data = {};
     const fields = [
       'projecte', 'rentalProjectId', 'tipusServei', 'origen', 'notesOrigen', 'desti', 'notesDesti',
-      'horaRecollida', 'horaEntregaEstimada', 'horaFiPrevista',
+      'horaCarrega', 'horaRecollida', 'horaEntregaEstimada', 'horaFiPrevista',
       'horaIniciReal', 'horaFiReal', 'responsableProduccio', 'telefonResponsable',
       'conductorId', 'empresaId', 'estat', 'motiuCancellacio', 'notes',
       'tipusServeiCategoria',  // càlcul cost
@@ -714,6 +715,79 @@ router.post('/distance', async (req, res, next) => {
     if (err?.code === 'API_ERROR' || err?.code === 'MISSING_API_KEY') {
       return res.status(502).json({ error: err.message, code: err.code });
     }
+    next(err);
+  }
+});
+
+// ===========================================
+// LOCATIONS (llocs predeterminats per origen/destí)
+// ===========================================
+
+// GET /api/logistics/locations — favorites primer, després alfabètic
+router.get('/locations', async (req, res, next) => {
+  try {
+    const { kind } = req.query;
+    const where = {};
+    if (kind) where.kind = kind;
+    const locations = await prisma.logisticsLocation.findMany({
+      where,
+      orderBy: [{ isFavorite: 'desc' }, { name: 'asc' }],
+    });
+    res.json(locations);
+  } catch (err) { next(err); }
+});
+
+// POST /api/logistics/locations
+router.post('/locations', async (req, res, next) => {
+  try {
+    const { name, address, kind, isFavorite, notes } = req.body || {};
+    if (!name?.trim()) return res.status(400).json({ error: 'Nom requerit' });
+    const location = await prisma.logisticsLocation.create({
+      data: {
+        name: name.trim(),
+        address: address?.trim() || null,
+        kind: kind || 'OTHER',
+        isFavorite: !!isFavorite,
+        notes: notes?.trim() || null,
+      },
+    });
+    res.status(201).json(location);
+  } catch (err) {
+    if (err.code === 'P2002') return res.status(409).json({ error: 'Ja existeix una ubicació amb aquest nom' });
+    next(err);
+  }
+});
+
+// PUT /api/logistics/locations/:id
+router.put('/locations/:id', async (req, res, next) => {
+  try {
+    const { name, address, kind, isFavorite, notes } = req.body || {};
+    const data = {};
+    if (name !== undefined) data.name = name?.trim();
+    if (address !== undefined) data.address = address?.trim() || null;
+    if (kind !== undefined) data.kind = kind;
+    if (isFavorite !== undefined) data.isFavorite = !!isFavorite;
+    if (notes !== undefined) data.notes = notes?.trim() || null;
+
+    const location = await prisma.logisticsLocation.update({
+      where: { id: req.params.id },
+      data,
+    });
+    res.json(location);
+  } catch (err) {
+    if (err.code === 'P2002') return res.status(409).json({ error: 'Ja existeix una ubicació amb aquest nom' });
+    if (err.code === 'P2025') return res.status(404).json({ error: 'Ubicació no trobada' });
+    next(err);
+  }
+});
+
+// DELETE /api/logistics/locations/:id
+router.delete('/locations/:id', async (req, res, next) => {
+  try {
+    await prisma.logisticsLocation.delete({ where: { id: req.params.id } });
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === 'P2025') return res.status(404).json({ error: 'Ubicació no trobada' });
     next(err);
   }
 });

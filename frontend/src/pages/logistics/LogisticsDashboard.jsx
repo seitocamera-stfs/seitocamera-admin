@@ -82,9 +82,10 @@ export default function LogisticsDashboard() {
   const [transports, setTransports] = useState([]);
   const [conductors, setConductors] = useState([]);
   const [empreses, setEmpreses] = useState([]);
+  const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
-  const [showConfig, setShowConfig] = useState(null); // 'conductors' | 'empreses' | 'cost' | null
+  const [showConfig, setShowConfig] = useState(null); // 'conductors' | 'empreses' | 'cost' | 'locations' | null
   const [highlightId, setHighlightId] = useState(null);
   const [preselectedProject, setPreselectedProject] = useState({ id: null, name: '' });
 
@@ -108,14 +109,16 @@ export default function LogisticsDashboard() {
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [tRes, cRes, eRes] = await Promise.all([
+      const [tRes, cRes, eRes, lRes] = await Promise.all([
         api.get('/logistics/transports'),
         api.get('/logistics/conductors'),
         api.get('/logistics/empreses'),
+        api.get('/logistics/locations'),
       ]);
       setTransports(tRes.data);
       setConductors(cRes.data);
       setEmpreses(eRes.data);
+      setLocations(lRes.data);
     } catch (err) {
       console.error('Error carregant logística:', err);
     }
@@ -229,6 +232,9 @@ export default function LogisticsDashboard() {
           <button onClick={() => setShowConfig('empreses')} className="flex items-center gap-1.5 px-3 py-2 text-xs border rounded-lg text-gray-600 hover:bg-gray-50">
             <Building2 size={13} /> Empreses
           </button>
+          <button onClick={() => setShowConfig('locations')} className="flex items-center gap-1.5 px-3 py-2 text-xs border rounded-lg text-gray-600 hover:bg-gray-50">
+            <MapPin size={13} /> Ubicacions
+          </button>
           <button onClick={() => setShowConfig('cost')} className="flex items-center gap-1.5 px-3 py-2 text-xs border rounded-lg text-gray-600 hover:bg-gray-50">
             <Calculator size={13} /> Tarifes cost
           </button>
@@ -320,6 +326,7 @@ export default function LogisticsDashboard() {
                         t={t}
                         conductors={conductors}
                         empreses={empreses}
+                        locations={locations}
                         onUpdate={handleUpdate}
                         onDelete={handleDelete}
                         isHighlighted={highlightId === t.id}
@@ -354,6 +361,9 @@ export default function LogisticsDashboard() {
       {showConfig === 'cost' && (
         <CostConfigPanel onClose={() => setShowConfig(null)} onSaved={fetchAll} />
       )}
+      {showConfig === 'locations' && (
+        <LocationsPanel onClose={() => setShowConfig(null)} onRefresh={fetchAll} />
+      )}
     </div>
   );
 }
@@ -362,7 +372,7 @@ export default function LogisticsDashboard() {
 // Transport Row
 // ===========================================
 
-function TransportRow({ t, conductors, empreses, onUpdate, onDelete, isHighlighted }) {
+function TransportRow({ t, conductors, empreses, locations = [], onUpdate, onDelete, isHighlighted }) {
   const [expanded, setExpanded] = useState(false);
   const cancellat = t.estat === 'Cancel·lat';
   const minsExtres = t.minutsExtres;
@@ -395,20 +405,52 @@ function TransportRow({ t, conductors, empreses, onUpdate, onDelete, isHighlight
           </select>
         </td>
         <td className="px-3 py-2.5 min-w-[150px]">
-          <InlineEdit value={t.origen} onSave={v => onUpdate(t.id, { origen: v })} placeholder="Origen" />
+          <InlineEdit
+            value={t.origen}
+            onSave={v => onUpdate(t.id, { origen: v })}
+            placeholder="Origen"
+            datalistOptions={locations.map(l => ({ value: l.name, label: l.address || '' }))}
+          />
         </td>
         <td className="px-3 py-2.5 min-w-[150px]">
-          <InlineEdit value={t.desti} onSave={v => onUpdate(t.id, { desti: v })} placeholder="Destí" />
+          <InlineEdit
+            value={t.desti}
+            onSave={v => onUpdate(t.id, { desti: v })}
+            placeholder="Destí"
+            datalistOptions={locations.map(l => ({ value: l.name, label: l.address || '' }))}
+          />
           {t.desti && (
             <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(t.desti)}`} target="_blank" rel="noopener" className="text-[10px] text-blue-500 hover:underline flex items-center gap-0.5 mt-0.5">
               <MapPin size={10} /> Mapa
             </a>
           )}
         </td>
-        <td className="px-3 py-2.5 min-w-[120px]">
+        <td className="px-3 py-2.5 min-w-[140px]">
           <div className="flex flex-col gap-0.5 text-[11px]">
             <span className="text-gray-500">{formatDataCurta(t.dataCarrega)}</span>
-            <InlineEdit value={t.horaRecollida} onSave={v => onUpdate(t.id, { horaRecollida: v })} placeholder="HH:MM" type="time" className="text-gray-700" />
+            {/* Hora rellevant segons tipus de servei */}
+            {t.tipusServei === 'Recollida' ? (
+              <span className="inline-flex items-center gap-1">
+                <span className="text-[9px] uppercase tracking-wide text-gray-400">Recoll.</span>
+                <InlineEdit value={t.horaRecollida} onSave={v => onUpdate(t.id, { horaRecollida: v })} placeholder="HH:MM" type="time" className="text-gray-700" />
+              </span>
+            ) : t.tipusServei === 'Entrega' ? (
+              <span className="inline-flex items-center gap-1">
+                <span className="text-[9px] uppercase tracking-wide text-gray-400">Entr.</span>
+                <InlineEdit value={t.horaEntregaEstimada} onSave={v => onUpdate(t.id, { horaEntregaEstimada: v })} placeholder="HH:MM" type="time" className="text-gray-700" />
+              </span>
+            ) : (
+              <>
+                <span className="inline-flex items-center gap-1">
+                  <span className="text-[9px] uppercase tracking-wide text-gray-400">Recoll.</span>
+                  <InlineEdit value={t.horaRecollida} onSave={v => onUpdate(t.id, { horaRecollida: v })} placeholder="HH:MM" type="time" className="text-gray-700" />
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="text-[9px] uppercase tracking-wide text-gray-400">Entr.</span>
+                  <InlineEdit value={t.horaEntregaEstimada} onSave={v => onUpdate(t.id, { horaEntregaEstimada: v })} placeholder="HH:MM" type="time" className="text-gray-700" />
+                </span>
+              </>
+            )}
             <InlineEdit value={t.horaFiPrevista} onSave={v => onUpdate(t.id, { horaFiPrevista: v })} placeholder="Fi prev." type="time" className="text-gray-400" />
           </div>
         </td>
@@ -507,9 +549,21 @@ function TransportRow({ t, conductors, empreses, onUpdate, onDelete, isHighlight
                     <InlineEdit value={t.dataEntrega ? new Date(t.dataEntrega).toISOString().split('T')[0] : ''} onSave={v => onUpdate(t.id, { dataEntrega: v })} placeholder="AAAA-MM-DD" type="date" />
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-gray-500 w-32 shrink-0">Hora entrega est.:</span>
-                    <InlineEdit value={t.horaEntregaEstimada} onSave={v => onUpdate(t.id, { horaEntregaEstimada: v })} placeholder="HH:MM" type="time" className="text-gray-700" />
+                    <span className="text-gray-500 w-32 shrink-0">Hora càrrega:</span>
+                    <InlineEdit value={t.horaCarrega} onSave={v => onUpdate(t.id, { horaCarrega: v })} placeholder="HH:MM" type="time" className="text-gray-700" />
                   </div>
+                  {(t.tipusServei === 'Recollida' || t.tipusServei === 'Tot el dia') && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-500 w-32 shrink-0">Hora recollida:</span>
+                      <InlineEdit value={t.horaRecollida} onSave={v => onUpdate(t.id, { horaRecollida: v })} placeholder="HH:MM" type="time" className="text-gray-700" />
+                    </div>
+                  )}
+                  {(t.tipusServei === 'Entrega' || t.tipusServei === 'Tot el dia') && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-500 w-32 shrink-0">Hora entrega:</span>
+                      <InlineEdit value={t.horaEntregaEstimada} onSave={v => onUpdate(t.id, { horaEntregaEstimada: v })} placeholder="HH:MM" type="time" className="text-gray-700" />
+                    </div>
+                  )}
                   <div className="flex items-center gap-2">
                     <Phone size={11} className="text-gray-400" />
                     <span className="text-gray-500 w-28 shrink-0">Tel. responsable:</span>
@@ -703,9 +757,10 @@ function ProjectSelectEdit({ value, rentalProjectId, onSave }) {
   );
 }
 
-function InlineEdit({ value, onSave, placeholder, type = 'text', className = '', multiline = false }) {
+function InlineEdit({ value, onSave, placeholder, type = 'text', className = '', multiline = false, datalistOptions = null }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(value || '');
+  const datalistId = useRef(`dl-${Math.random().toString(36).slice(2, 9)}`).current;
 
   useEffect(() => { setVal(value || ''); }, [value]);
 
@@ -726,12 +781,25 @@ function InlineEdit({ value, onSave, placeholder, type = 'text', className = '',
       );
     }
     return (
-      <input
-        type={type} value={val} onChange={e => setVal(e.target.value)}
-        onBlur={save} onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
-        autoFocus
-        className={`w-full text-xs border rounded px-2 py-1 ${className}`}
-      />
+      <>
+        <input
+          type={type} value={val} onChange={e => setVal(e.target.value)}
+          onBlur={save} onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
+          autoFocus
+          autoComplete="off"
+          list={datalistOptions ? datalistId : undefined}
+          className={`w-full text-xs border rounded px-2 py-1 ${className}`}
+        />
+        {datalistOptions && (
+          <datalist id={datalistId}>
+            {datalistOptions.map((opt) => (
+              <option key={opt.value || opt} value={opt.value || opt}>
+                {opt.label || ''}
+              </option>
+            ))}
+          </datalist>
+        )}
+      </>
     );
   }
 
@@ -753,6 +821,44 @@ function InlineEdit({ value, onSave, placeholder, type = 'text', className = '',
 }
 
 // ===========================================
+// Location Combobox — input lliure + suggerencies de la BD
+// ===========================================
+
+/**
+ * Camp d'ubicació amb autocomplete: pots escriure qualsevol cosa o triar
+ * d'una llista predeterminada (LogisticsLocation). Usa <datalist> HTML5
+ * que dóna suggeriments natius del navegador (no cal portal/dropdown).
+ */
+function LocationCombobox({ value, onChange, locations = [], placeholder = '', className = '' }) {
+  // ID únic per al <datalist> — necessari per linkejar input ↔ datalist
+  const listId = useRef(`loc-list-${Math.random().toString(36).slice(2, 9)}`).current;
+  const sorted = [...locations].sort((a, b) => {
+    if (a.isFavorite && !b.isFavorite) return -1;
+    if (!a.isFavorite && b.isFavorite) return 1;
+    return a.name.localeCompare(b.name);
+  });
+  return (
+    <>
+      <input
+        list={listId}
+        value={value || ''}
+        onChange={(e) => onChange(e.target.value)}
+        className={`input-field ${className}`}
+        placeholder={placeholder}
+        autoComplete="off"
+      />
+      <datalist id={listId}>
+        {sorted.map((loc) => (
+          <option key={loc.id} value={loc.name}>
+            {loc.address || loc.name}{loc.isFavorite ? ' ★' : ''}
+          </option>
+        ))}
+      </datalist>
+    </>
+  );
+}
+
+// ===========================================
 // New Transport Modal
 // ===========================================
 
@@ -760,12 +866,14 @@ function NewTransportModal({ conductors, empreses, onClose, onCreate, defaultRen
   const [form, setForm] = useState({
     projecte: defaultRentalProjectName, rentalProjectId: defaultRentalProjectId || '',
     tipusServei: 'Entrega', origen: '', desti: '',
-    dataCarrega: '', dataEntrega: '', horaRecollida: '', horaFiPrevista: '',
-    horaEntregaEstimada: '', responsableProduccio: '', telefonResponsable: '',
+    dataCarrega: '', dataEntrega: '',
+    horaCarrega: '', horaRecollida: '', horaEntregaEstimada: '', horaFiPrevista: '',
+    responsableProduccio: '', telefonResponsable: '',
     conductorId: '', empresaId: '', notes: '',
     // Cost
     tipusServeiCategoria: '', foraBarcelona: false, kmAnadaTornada: '', costManual: '',
   });
+  const { data: locations } = useApiGet('/logistics/locations');
   const { data: rentalProjects } = useApiGet('/operations/projects', { limit: 200 });
   const allProjects = Array.isArray(rentalProjects) ? rentalProjects : (rentalProjects?.data || rentalProjects?.projects || []);
   // Mostrar només projectes amb sortida >= ahir (no té sentit vincular transports a projectes ja passats)
@@ -820,24 +928,60 @@ function NewTransportModal({ conductors, empreses, onClose, onCreate, defaultRen
           </div>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Origen">
-              <input value={form.origen} onChange={e => setForm({ ...form, origen: e.target.value })} className="input-field" placeholder="Lloc càrrega" />
+              <LocationCombobox
+                value={form.origen}
+                locations={locations || []}
+                onChange={(v) => setForm({ ...form, origen: v })}
+                placeholder="Lloc càrrega (escriu o tria)"
+              />
             </Field>
             <Field label="Destí">
-              <input value={form.desti} onChange={e => setForm({ ...form, desti: e.target.value })} className="input-field" placeholder="Lloc entrega" />
+              <LocationCombobox
+                value={form.desti}
+                locations={locations || []}
+                onChange={(v) => setForm({ ...form, desti: v })}
+                placeholder="Lloc entrega (escriu o tria)"
+              />
             </Field>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Data entrega">
               <input type="date" value={form.dataEntrega} onChange={e => setForm({ ...form, dataEntrega: e.target.value })} className="input-field" />
             </Field>
-            <Field label="Hora entrega estimada">
-              <input type="time" value={form.horaEntregaEstimada} onChange={e => setForm({ ...form, horaEntregaEstimada: e.target.value })} className="input-field" />
+            <Field label="Hora càrrega">
+              <input
+                type="time"
+                value={form.horaCarrega}
+                onChange={e => setForm({ ...form, horaCarrega: e.target.value })}
+                className="input-field"
+                title="Hora a la qual el conductor carrega al magatzem/origen"
+              />
             </Field>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Hora recollida">
-              <input type="time" value={form.horaRecollida} onChange={e => setForm({ ...form, horaRecollida: e.target.value })} className="input-field" />
-            </Field>
+            {/* Hora condicional segons tipus de servei */}
+            {(form.tipusServei === 'Recollida' || form.tipusServei === 'Tot el dia') && (
+              <Field label="Hora recollida">
+                <input
+                  type="time"
+                  value={form.horaRecollida}
+                  onChange={e => setForm({ ...form, horaRecollida: e.target.value })}
+                  className="input-field"
+                  title="Hora a la qual el conductor passa per casa del client a recollir"
+                />
+              </Field>
+            )}
+            {(form.tipusServei === 'Entrega' || form.tipusServei === 'Tot el dia') && (
+              <Field label="Hora entrega">
+                <input
+                  type="time"
+                  value={form.horaEntregaEstimada}
+                  onChange={e => setForm({ ...form, horaEntregaEstimada: e.target.value })}
+                  className="input-field"
+                  title="Hora d'arribada al destí"
+                />
+              </Field>
+            )}
             <Field label="Hora fi prevista">
               <input type="time" value={form.horaFiPrevista} onChange={e => setForm({ ...form, horaFiPrevista: e.target.value })} className="input-field" />
             </Field>
@@ -970,6 +1114,225 @@ function ConductorsPanel({ empreses, onClose, onRefresh }) {
                 </button>
               </div>
             ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ===========================================
+// Locations Panel — gestiona llocs predeterminats per origen/destí
+// ===========================================
+
+const LOCATION_KINDS = [
+  { value: 'HQ',     label: 'Magatzem propi (HQ)' },
+  { value: 'STUDIO', label: 'Plató / estudi' },
+  { value: 'CLIENT', label: 'Client' },
+  { value: 'OTHER',  label: 'Altre' },
+];
+
+const KIND_BADGES = {
+  HQ:     'bg-emerald-100 text-emerald-800',
+  STUDIO: 'bg-purple-100 text-purple-800',
+  CLIENT: 'bg-blue-100 text-blue-800',
+  OTHER:  'bg-slate-100 text-slate-700',
+};
+
+function LocationsPanel({ onClose, onRefresh }) {
+  const [locations, setLocations] = useState([]);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState({ name: '', address: '', kind: 'OTHER', isFavorite: false, notes: '' });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const reload = async () => {
+    try {
+      const r = await api.get('/logistics/locations');
+      setLocations(r.data);
+    } catch (e) {
+      setErr(e?.response?.data?.error || 'Error carregant ubicacions');
+    }
+  };
+
+  useEffect(() => { reload(); }, []);
+
+  const resetForm = () => setForm({ name: '', address: '', kind: 'OTHER', isFavorite: false, notes: '' });
+
+  const handleSave = async (e) => {
+    e?.preventDefault();
+    if (!form.name.trim()) return;
+    setSaving(true);
+    setErr(null);
+    try {
+      if (editingId) {
+        await api.put(`/logistics/locations/${editingId}`, form);
+      } else {
+        await api.post('/logistics/locations', form);
+      }
+      resetForm();
+      setEditingId(null);
+      await reload();
+      onRefresh?.();
+    } catch (e) {
+      setErr(e?.response?.data?.error || 'Error guardant');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleEdit = (loc) => {
+    setEditingId(loc.id);
+    setForm({
+      name: loc.name,
+      address: loc.address || '',
+      kind: loc.kind || 'OTHER',
+      isFavorite: !!loc.isFavorite,
+      notes: loc.notes || '',
+    });
+  };
+
+  const handleDelete = async (id) => {
+    if (!confirm('Eliminar aquesta ubicació? Els transports que l\'estaven utilitzant mantindran el text però no podran usar-la al combobox.')) return;
+    try {
+      await api.delete(`/logistics/locations/${id}`);
+      await reload();
+      onRefresh?.();
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Error eliminant');
+    }
+  };
+
+  const toggleFavorite = async (loc) => {
+    try {
+      await api.put(`/logistics/locations/${loc.id}`, { isFavorite: !loc.isFavorite });
+      await reload();
+    } catch (e) { /* ignore */ }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b">
+          <h2 className="text-sm font-semibold flex items-center gap-2">
+            <MapPin size={16} /> Ubicacions predeterminades
+          </h2>
+          <button onClick={onClose} className="p-1 rounded hover:bg-gray-100"><X size={18} /></button>
+        </div>
+        <div className="px-5 py-4 space-y-4">
+          {/* Formulari nou/editar */}
+          <form onSubmit={handleSave} className="bg-gray-50 border rounded-lg p-3 space-y-2">
+            <div className="text-xs font-medium text-gray-700 mb-1">
+              {editingId ? `Editant: ${form.name || '...'}` : 'Nova ubicació'}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="Nom (ex: Servicevision Plató 1)"
+                className="input-field text-xs"
+                required
+              />
+              <select
+                value={form.kind}
+                onChange={(e) => setForm({ ...form, kind: e.target.value })}
+                className="input-field text-xs"
+              >
+                {LOCATION_KINDS.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
+              </select>
+            </div>
+            <input
+              value={form.address}
+              onChange={(e) => setForm({ ...form, address: e.target.value })}
+              placeholder="Adreça completa (per Google Maps i càlcul de km)"
+              className="input-field text-xs"
+            />
+            <input
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              placeholder="Notes (opcional, ex: contacte de seguretat, codi pàrquing...)"
+              className="input-field text-xs"
+            />
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2 text-xs text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={form.isFavorite}
+                  onChange={(e) => setForm({ ...form, isFavorite: e.target.checked })}
+                />
+                ★ Favorita (apareix primer al combobox)
+              </label>
+              <div className="flex items-center gap-2">
+                {editingId && (
+                  <button
+                    type="button"
+                    onClick={() => { resetForm(); setEditingId(null); }}
+                    className="px-3 py-1 text-xs border rounded"
+                  >
+                    Cancel·lar
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  disabled={saving || !form.name.trim()}
+                  className="px-3 py-1 text-xs rounded text-white disabled:opacity-50"
+                  style={{ background: '#00617F' }}
+                >
+                  {saving ? 'Desant…' : editingId ? 'Guardar' : '+ Afegir'}
+                </button>
+              </div>
+            </div>
+            {err && <div className="text-xs text-rose-600 bg-rose-50 border border-rose-100 rounded p-1.5">{err}</div>}
+          </form>
+
+          {/* Llistat */}
+          <div className="space-y-1">
+            <div className="text-[11px] uppercase tracking-wide text-gray-400 font-medium px-1">
+              {locations.length} ubicacions
+            </div>
+            {locations.length === 0 ? (
+              <p className="text-xs text-gray-400 italic text-center py-4">Cap ubicació encara — afegeix-ne per agilitzar la creació de transports.</p>
+            ) : (
+              locations.map((loc) => (
+                <div key={loc.id} className={`flex items-start justify-between px-3 py-2 rounded-lg border text-xs gap-2 ${editingId === loc.id ? 'border-blue-300 bg-blue-50/30' : ''}`}>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        onClick={() => toggleFavorite(loc)}
+                        className={`text-base leading-none ${loc.isFavorite ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400'}`}
+                        title={loc.isFavorite ? 'Treure favorita' : 'Marcar com a favorita'}
+                      >
+                        ★
+                      </button>
+                      <span className="font-medium">{loc.name}</span>
+                      {loc.kind && (
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${KIND_BADGES[loc.kind] || KIND_BADGES.OTHER}`}>
+                          {LOCATION_KINDS.find(k => k.value === loc.kind)?.label || loc.kind}
+                        </span>
+                      )}
+                    </div>
+                    {loc.address && <div className="text-gray-500 text-[11px] mt-0.5 ml-6">{loc.address}</div>}
+                    {loc.notes && <div className="text-gray-400 italic text-[10px] mt-0.5 ml-6">{loc.notes}</div>}
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <button
+                      onClick={() => handleEdit(loc)}
+                      className="p-1 rounded hover:bg-blue-50 text-gray-400 hover:text-blue-600"
+                      title="Editar"
+                    >
+                      <Calculator size={13} />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(loc.id)}
+                      className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500"
+                      title="Eliminar"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>

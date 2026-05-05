@@ -1760,6 +1760,24 @@ model EmpresaLogistica {
   @@map("empreses_logistica")
 }
 
+/// Llocs predeterminats per origen/destí de transports.
+/// Manté reutilitzables ubicacions habituals (SeitoCamera HQ, platos
+/// concrets, magatzems de clients...). Els camps `origen` i `desti` del
+/// Transport segueixen sent text lliure — això només alimenta l'autocomplete.
+model LogisticsLocation {
+  id          String   @id @default(cuid())
+  name        String   @unique           // "SeitoCamera", "Servicevision Plató 1"
+  address     String?                    // adreça per Google Maps (km auto)
+  kind        String?  @default("OTHER") // HQ / STUDIO / CLIENT / OTHER
+  isFavorite  Boolean  @default(false)   // marcades surten primer al combobox
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isFavorite])
+  @@map("logistics_locations")
+}
+
 model Conductor {
   id          String   @id @default(cuid())
   nom         String
@@ -1796,8 +1814,9 @@ model Transport {
   notesDesti           String?
   dataCarrega          DateTime? @db.Date
   dataEntrega          DateTime? @db.Date
-  horaRecollida        String?
-  horaEntregaEstimada  String?
+  horaCarrega          String?     // Hora a la qual el conductor carrega al magatzem/origen
+  horaRecollida        String?     // Si tipusServei=Recollida → hora a casa client
+  horaEntregaEstimada  String?     // Si tipusServei=Entrega → hora d'arribada al destí (UI: "Hora d'entrega")
   horaFiPrevista       String?
   horaIniciReal        String?
   horaFiReal           String?
