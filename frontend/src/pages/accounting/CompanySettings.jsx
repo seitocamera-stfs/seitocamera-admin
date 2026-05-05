@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Save, Building2 } from 'lucide-react';
+import { Save, Building2, Plus } from 'lucide-react';
 import { useApiGet } from '../../hooks/useApi';
 import api from '../../lib/api';
 
@@ -15,7 +15,7 @@ const VAT_PERIOD_OPTIONS = [
 ];
 
 export default function CompanySettings() {
-  const { data: company, loading, refetch } = useApiGet('/companies');
+  const { data: company, loading, error, refetch } = useApiGet('/companies');
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState(null);
@@ -53,7 +53,11 @@ export default function CompanySettings() {
   };
 
   if (loading) return <div className="p-6">Carregant...</div>;
-  if (!form) return <div className="p-6">No s'ha trobat cap empresa configurada.</div>;
+
+  // Si no hi ha empresa configurada (típic en deploy nou), mostrar formulari de creació
+  if (!form) {
+    return <CompanyCreateForm onCreated={() => refetch()} />;
+  }
 
   return (
     <div className="p-6 max-w-4xl">
@@ -172,5 +176,150 @@ function Field({ label, full, children }) {
       <span className="text-xs text-muted-foreground">{label}</span>
       {children}
     </label>
+  );
+}
+
+/**
+ * Formulari per crear la primera empresa quan la BD està buida (típic
+ * després d'un deploy nou). Un cop creada, la pàgina principal mostra el
+ * formulari complet d'edició amb totes les configuracions fiscals.
+ */
+function CompanyCreateForm({ onCreated }) {
+  const [form, setForm] = useState({
+    legalName: '',
+    commercialName: '',
+    nif: '',
+    address: '',
+    postalCode: '',
+    city: '',
+    province: '',
+    country: 'ES',
+    phone: '',
+    email: '',
+    website: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  const onChange = (field) => (e) => {
+    setForm({ ...form, [field]: e.target.value });
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!form.legalName.trim() || !form.nif.trim()) {
+      setError('La raó social i el NIF són obligatoris');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      // Netegem strings buits perquè el backend no els validi com a tipus erroni
+      const payload = Object.fromEntries(
+        Object.entries(form).filter(([, v]) => v !== '' && v != null)
+      );
+      await api.post('/companies', payload);
+      onCreated?.();
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Error creant l\'empresa');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="p-6 max-w-2xl">
+      <div className="flex items-center gap-3 mb-2">
+        <Building2 size={24} className="text-primary" />
+        <h1 className="text-xl font-semibold">Configurar empresa</h1>
+      </div>
+      <p className="text-sm text-muted-foreground mb-6">
+        No hi ha cap empresa configurada al sistema. Omple les dades bàsiques per començar.
+        Podràs editar la resta de configuracions fiscals (IVA, IRPF, exercici, etc.) un cop creada.
+      </p>
+
+      <form onSubmit={handleSubmit} className="space-y-5 bg-card border rounded-lg p-6">
+        <Section title="Identificació *">
+          <Field label="Raó social *">
+            <input
+              className="input-field"
+              required
+              value={form.legalName}
+              onChange={onChange('legalName')}
+              placeholder="ex: SeitoCamera SL"
+              autoFocus
+            />
+          </Field>
+          <Field label="NIF *">
+            <input
+              className="input-field"
+              required
+              value={form.nif}
+              onChange={onChange('nif')}
+              placeholder="ex: B12345678"
+            />
+          </Field>
+          <Field label="Nom comercial" full>
+            <input
+              className="input-field"
+              value={form.commercialName}
+              onChange={onChange('commercialName')}
+              placeholder="Si és diferent de la raó social"
+            />
+          </Field>
+        </Section>
+
+        <Section title="Adreça">
+          <Field label="Adreça" full>
+            <input className="input-field" value={form.address} onChange={onChange('address')} placeholder="Carrer i número" />
+          </Field>
+          <Field label="Codi postal">
+            <input className="input-field" value={form.postalCode} onChange={onChange('postalCode')} />
+          </Field>
+          <Field label="Ciutat">
+            <input className="input-field" value={form.city} onChange={onChange('city')} />
+          </Field>
+          <Field label="Província">
+            <input className="input-field" value={form.province} onChange={onChange('province')} />
+          </Field>
+          <Field label="País">
+            <input className="input-field" maxLength={2} value={form.country} onChange={onChange('country')} />
+          </Field>
+        </Section>
+
+        <Section title="Contacte (opcional)">
+          <Field label="Telèfon">
+            <input className="input-field" value={form.phone} onChange={onChange('phone')} />
+          </Field>
+          <Field label="Email">
+            <input className="input-field" type="email" value={form.email} onChange={onChange('email')} />
+          </Field>
+          <Field label="Web" full>
+            <input className="input-field" type="url" value={form.website} onChange={onChange('website')} placeholder="https://..." />
+          </Field>
+        </Section>
+
+        {error && (
+          <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md p-3">
+            {error}
+          </div>
+        )}
+
+        <div className="flex justify-end pt-2 border-t">
+          <button
+            type="submit"
+            disabled={saving || !form.legalName.trim() || !form.nif.trim()}
+            className="inline-flex items-center gap-2 bg-primary text-primary-foreground px-5 py-2 rounded-md text-sm font-medium hover:opacity-90 disabled:opacity-50"
+          >
+            <Plus size={16} />
+            {saving ? 'Creant…' : 'Crear empresa'}
+          </button>
+        </div>
+
+        <p className="text-[11px] text-muted-foreground italic">
+          ℹ️ Després de crear-la, podràs configurar IVA, IRPF, règim AEAT, exercici fiscal i la resta de paràmetres comptables.
+        </p>
+      </form>
+    </div>
   );
 }

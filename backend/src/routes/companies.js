@@ -33,6 +33,12 @@ const companyUpdateSchema = z.object({
   vatPeriod: z.enum(['QUARTERLY', 'MONTHLY']).optional(),
 });
 
+// Per crear la primera empresa: legalName + NIF obligatoris, la resta opcional
+const companyCreateSchema = companyUpdateSchema.extend({
+  legalName: z.string().min(1, 'Raó social requerida'),
+  nif: z.string().min(1, 'NIF requerit'),
+});
+
 // ===========================================
 // GET /api/companies — Retorna l'empresa principal (única al MVP)
 // ===========================================
@@ -46,6 +52,47 @@ router.get('/', async (req, res, next) => {
     }
     res.json(company);
   } catch (err) {
+    next(err);
+  }
+});
+
+// ===========================================
+// POST /api/companies — Crea la primera empresa (només si no n'hi ha cap)
+// MVP single-tenant: el sistema només admet una empresa.
+// ===========================================
+router.post('/', requireLevel('accounting', 'admin'), validate(companyCreateSchema), async (req, res, next) => {
+  try {
+    const existing = await prisma.company.findFirst();
+    if (existing) {
+      return res.status(409).json({
+        error: 'Ja hi ha una empresa configurada. Usa PUT per actualitzar-la.',
+        code: 'COMPANY_EXISTS',
+        existing: { id: existing.id, legalName: existing.legalName },
+      });
+    }
+
+    const company = await prisma.company.create({
+      data: {
+        ...req.body,
+        // Defaults segurs per camps no enviats
+        country: req.body.country || 'ES',
+        defaultCurrency: req.body.defaultCurrency || 'EUR',
+      },
+    });
+
+    await logAudit(req, {
+      companyId: company.id,
+      entityType: 'Company',
+      entityId: company.id,
+      action: 'CREATE',
+      after: company,
+    });
+
+    res.status(201).json(company);
+  } catch (err) {
+    if (err.code === 'P2002') {
+      return res.status(409).json({ error: 'Ja existeix una empresa amb aquest NIF' });
+    }
     next(err);
   }
 });
