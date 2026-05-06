@@ -1,79 +1,107 @@
 #!/bin/bash
 # ===========================================
 # Deploy SeitoCamera Admin a producció
-# Ús: ssh root@213.210.20.138 "cd /opt/seitocamera && bash deploy.sh"
-# O des del Mac: bash deploy.sh (amb SSH)
+# ===========================================
+#
+# Flux real (descobert maig 2026):
+#   1. Tu fas `git push origin main` des del Mac
+#   2. GitHub Actions construeix les imatges Docker (~3-5 min) i les puja
+#      a ghcr.io/seitocamera-stfs/seitocamera-admin/{backend,frontend,nginx}
+#   3. Aquest script (al servidor) fa `docker compose pull` per baixar les
+#      imatges noves del registry, recrea els containers, aplica migracions
+#      Prisma i fa healthcheck.
+#
+# IMPORTANT: el `docker-compose.yml` usa `image: ghcr.io/...` (NO `build:`).
+# Per tant el codi al servidor (`/opt/seitocamera/backend/src/...`) NO s'usa
+# en runtime — només el de la imatge. NO té sentit `docker compose build`
+# ni `git pull` (el directori no és repo git).
+#
+# Ús:
+#   bash deploy.sh                  # mode normal (espera 0s)
+#   bash deploy.sh --wait            # espera 4 min abans de pull (per donar
+#                                    # temps al GitHub Actions a construir)
+#   bash deploy.sh --no-migrate      # salta `prisma migrate deploy`
+#
+# Si el GitHub Actions encara està construint, el `pull` baixarà la imatge
+# anterior. Solució: esperar i tornar a fer `bash deploy.sh`.
 # ===========================================
 
 set -e
 
-SERVER="root@213.210.20.138"
-REMOTE_DIR="/opt/seitocamera"
+WAIT=0
+SKIP_MIGRATE=0
+for arg in "$@"; do
+  case "$arg" in
+    --wait)        WAIT=240 ;;
+    --no-migrate)  SKIP_MIGRATE=1 ;;
+    --help|-h)
+      sed -n '2,30p' "$0" | sed 's/^# *//'
+      exit 0 ;;
+  esac
+done
+
+cd /opt/seitocamera
 
 echo "🚀 Desplegant SeitoCamera Admin..."
 
-# Si estem al servidor directament
-if [ -d "$REMOTE_DIR" ] && [ "$(pwd)" = "$REMOTE_DIR" -o -f "./docker-compose.yml" ]; then
-  cd "$REMOTE_DIR"
+if [ "$WAIT" -gt 0 ]; then
+  echo "⏳ Esperant $WAIT s perquè el GitHub Actions acabi de construir..."
+  sleep "$WAIT"
+fi
 
-  echo "📥 Actualitzant codi..."
-  git pull origin main
+echo ""
+echo "📥 Baixant imatges noves de ghcr.io..."
+docker compose pull backend frontend nginx 2>&1 | grep -E "Pull|Error|already" | tail -10 || true
 
-  echo "📦 Baixant imatges base (postgres, redis, nginx)..."
-  docker compose pull postgres redis nginx
+echo ""
+echo "🔄 Recreant containers (force-recreate per re-llegir env_file)..."
+docker compose up -d --force-recreate --no-deps backend frontend nginx
 
-  echo "🔨 Construint backend i frontend..."
-  docker compose build --no-cache backend frontend
-
-  echo "🔄 Reiniciant serveis..."
-  docker compose up -d
-
-  echo "⏳ Esperant que els containers estiguin llests..."
-  sleep 10
-
-  # Verificar que tot funciona
-  echo "🔍 Verificant serveis..."
-
-  # Backend health
-  if docker compose exec -T backend wget -qO- http://localhost:4000/api/health > /dev/null 2>&1; then
-    echo "✅ Backend: OK"
-  else
-    echo "⚠️  Backend: encara arrencant, esperant 10s més..."
-    sleep 10
-    if docker compose exec -T backend wget -qO- http://localhost:4000/api/health > /dev/null 2>&1; then
-      echo "✅ Backend: OK"
-    else
-      echo "❌ Backend: ERROR — comprova: docker compose logs backend"
-    fi
+echo ""
+echo "⏳ Esperant que el backend estigui llest..."
+for i in $(seq 1 30); do
+  if docker compose exec -T backend wget -qO- http://localhost:4000/api/health >/dev/null 2>&1; then
+    echo "✅ Backend healthy (esperat ${i}×2 s)"
+    break
   fi
-
-  # Traefik routing (sense reiniciar coolify-proxy)
-  echo "🔍 Verificant routing Traefik..."
   sleep 2
-  if docker exec coolify-proxy wget -qO- --timeout=5 http://seitocamera-nginx:80/ > /dev/null 2>&1; then
+  if [ "$i" = "30" ]; then
+    echo "❌ Backend NO respon després de 60s. Comprova:"
+    echo "   docker compose logs --tail=50 backend"
+    exit 1
+  fi
+done
+
+# Migracions Prisma
+if [ "$SKIP_MIGRATE" = "0" ]; then
+  echo ""
+  echo "🗄️  Aplicant migracions Prisma..."
+  MIGRATE_OUT=$(docker compose exec -T backend npx prisma migrate deploy 2>&1)
+  echo "$MIGRATE_OUT" | grep -E "migration|Applied|already in sync|No pending|error" | tail -5
+
+  # Si hi ha hagut migracions noves, regenerar Prisma Client + restart
+  if echo "$MIGRATE_OUT" | grep -qE "Applying migration|migrations have been"; then
+    echo ""
+    echo "🔧 Migracions noves aplicades — regenerant Prisma Client..."
+    docker compose exec -T backend npx prisma generate >/dev/null 2>&1
+    docker compose restart backend >/dev/null 2>&1
+    sleep 5
+  fi
+fi
+
+# Verificació Traefik (Coolify proxy) — opcional, no crítica
+if docker ps --format '{{.Names}}' | grep -q '^coolify-proxy$'; then
+  if docker exec coolify-proxy wget -qO- --timeout=5 http://seitocamera-nginx:80/ >/dev/null 2>&1; then
     echo "✅ Traefik → Nginx: OK"
   else
-    echo "⚠️  Traefik → Nginx: esperant que detecti el container..."
-    sleep 10
-    if docker exec coolify-proxy wget -qO- --timeout=5 http://seitocamera-nginx:80/ > /dev/null 2>&1; then
-      echo "✅ Traefik → Nginx: OK"
-    else
-      echo "❌ Traefik → Nginx: ERROR"
-      echo "   Comprova: docker logs coolify-proxy 2>&1 | tail -20"
-      echo "   Si cal: docker restart coolify-proxy"
-    fi
+    echo "⚠️  Traefik no troba nginx encara. Pot tardar 10-30s. Si persisteix:"
+    echo "   docker restart coolify-proxy"
   fi
-
-  # Aplicar migracions pendents
-  echo "🗄️  Aplicant migracions Prisma..."
-  docker compose exec -T backend npx prisma migrate deploy 2>&1 | tail -3
-
-  echo ""
-  echo "✅ Deploy completat!"
-  docker compose ps --format "table {{.Name}}\t{{.Status}}"
-
-else
-  # Estem al Mac, executar via SSH
-  echo "📡 Connectant al servidor..."
-  ssh "$SERVER" "cd $REMOTE_DIR && bash deploy.sh"
 fi
+
+echo ""
+echo "✅ Deploy completat!"
+docker compose ps --format "table {{.Name}}\t{{.Status}}"
+
+echo ""
+echo "💡 Logs en directe del backend:  docker compose logs -f backend"
