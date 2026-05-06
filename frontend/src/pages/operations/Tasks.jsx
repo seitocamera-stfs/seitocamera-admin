@@ -5,7 +5,9 @@ import {
   Loader2, Package, CalendarDays, Tag, Bell, Repeat, ChevronDown,
   ChevronUp, X, AlertTriangle, MessageSquare, History,
   GripVertical, LayoutGrid, List, Send, Trash2, ArrowUp,
-  ArrowDown, Minus, FileText, Zap, Check,
+  ArrowDown, Minus, FileText, Zap, Check, Users as UsersIcon,
+  Pencil, Paperclip, Download, Image as ImageIcon, FileType,
+  Upload as UploadIcon,
 } from 'lucide-react';
 import { useApiGet } from '../../hooks/useApi';
 import api from '../../lib/api';
@@ -72,6 +74,8 @@ const ACTIVITY_LABELS = {
   checklist_done: 'ha completat',
   checklist_undone: 'ha desmarcat',
   checklist_added: 'ha afegit al checklist',
+  attachment_added: 'ha afegit un adjunt',
+  attachment_removed: 'ha eliminat un adjunt',
 };
 
 // ===========================================
@@ -316,7 +320,7 @@ function KanbanBoard({ tasks, onStatusChange, onToggleDone, onEdit, onSelect, se
             <div className="p-1.5 space-y-1.5">
               {columnTasks.map(task => (
                 <KanbanCard key={task.id} task={task} onSelect={onSelect} selectedTaskId={selectedTaskId}
-                  onDragStart={handleDragStart} onToggleDone={onToggleDone} onDelete={onDelete} refetch={refetch} />
+                  onDragStart={handleDragStart} onToggleDone={onToggleDone} onEdit={onEdit} onDelete={onDelete} refetch={refetch} />
               ))}
             </div>
           </div>
@@ -326,7 +330,7 @@ function KanbanBoard({ tasks, onStatusChange, onToggleDone, onEdit, onSelect, se
   );
 }
 
-function KanbanCard({ task, onSelect, selectedTaskId, onDragStart, onToggleDone, onDelete, refetch }) {
+function KanbanCard({ task, onSelect, selectedTaskId, onDragStart, onToggleDone, onEdit, onDelete, refetch }) {
   const cat = CATEGORY_CONFIG[task.category] || CATEGORY_CONFIG.GENERAL;
   const prio = PRIORITY_CONFIG[task.priority] || PRIORITY_CONFIG.NORMAL;
   const PrioIcon = prio.icon;
@@ -346,9 +350,19 @@ function KanbanCard({ task, onSelect, selectedTaskId, onDragStart, onToggleDone,
     >
       <div className="flex items-start gap-1.5">
         <PrioIcon size={12} className={`mt-0.5 flex-shrink-0 ${prio.color}`} />
-        <span className={`text-xs font-medium leading-tight ${isDone ? 'line-through text-muted-foreground' : ''}`}>
+        <span className={`text-xs font-medium leading-tight flex-1 ${isDone ? 'line-through text-muted-foreground' : ''}`}>
           {task.title}
         </span>
+        {onEdit && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onEdit(task); }}
+            className="opacity-50 hover:opacity-100 p-0.5 rounded hover:bg-muted text-gray-500 hover:text-primary"
+            title="Editar tasca"
+          >
+            <Pencil size={11} />
+          </button>
+        )}
       </div>
 
       <div className="flex items-center gap-1.5 mt-2 flex-wrap">
@@ -359,11 +373,15 @@ function KanbanCard({ task, onSelect, selectedTaskId, onDragStart, onToggleDone,
             {new Date(task.dueAt).toLocaleDateString('ca-ES', { day: 'numeric', month: 'short' })}
           </span>
         )}
-        {task.assignedTo && (
+        {task.assignees?.length > 0 ? (
+          <span className="flex items-center gap-1">
+            <AssigneeAvatars assignees={task.assignees} size={14} />
+          </span>
+        ) : task.assignedTo ? (
           <span className="text-[9px] text-muted-foreground flex items-center gap-0.5">
             <User size={8} /> {task.assignedTo.name?.split(' ')[0]}
           </span>
-        )}
+        ) : null}
         {checklistTotal > 0 && (
           <span className={`text-[9px] flex items-center gap-0.5 ${checklistDone === checklistTotal ? 'text-green-600' : 'text-muted-foreground'}`}>
             <CheckCircle2 size={8} /> {checklistDone}/{checklistTotal}
@@ -433,11 +451,18 @@ function TaskCard({ task, currentUser, isAdmin, teamUsers, onToggleDone, onStatu
                 {task.dueTime && ` ${task.dueTime}`}
               </span>
             )}
-            {task.assignedTo && (
+            {task.assignees?.length > 0 ? (
+              <span className="flex items-center gap-1">
+                <AssigneeAvatars assignees={task.assignees} size={16} />
+                {task.assignees.length === 1 && (
+                  <span className="text-[10px] text-muted-foreground">{task.assignees[0].user?.name}</span>
+                )}
+              </span>
+            ) : task.assignedTo ? (
               <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
                 <User size={9} /> {task.assignedTo.name}
               </span>
-            )}
+            ) : null}
             {task.project && (
               <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
                 <Package size={9} /> {task.project.name}
@@ -469,6 +494,18 @@ function TaskCard({ task, currentUser, isAdmin, teamUsers, onToggleDone, onStatu
             <option key={k} value={k}>{v.label}</option>
           ))}
         </select>
+
+        {/* Botó editar */}
+        {onEdit && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onEdit(task); }}
+            className="flex-shrink-0 p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-primary"
+            title="Editar tasca"
+          >
+            <Pencil size={13} />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -486,6 +523,9 @@ function TaskDetailPanel({ task, currentUser, onClose, refetch }) {
   const [newCheckItem, setNewCheckItem] = useState('');
   const [loadingComments, setLoadingComments] = useState(false);
   const [loadingActivities, setLoadingActivities] = useState(false);
+  const [uploadingFiles, setUploadingFiles] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     if (activeTab === 'comments') loadComments();
@@ -549,11 +589,83 @@ function TaskDetailPanel({ task, currentUser, onClose, refetch }) {
     } catch { alert('Error eliminant item'); }
   };
 
+  // ============================
+  // Adjunts (attachments)
+  // ============================
+  const handleUploadFiles = async (files) => {
+    if (!files || files.length === 0) return;
+    const fileArray = Array.from(files);
+    // Validar mides (25 MB / fitxer)
+    const oversized = fileArray.filter(f => f.size > 25 * 1024 * 1024);
+    if (oversized.length > 0) {
+      alert(`Aquests fitxers superen 25 MB:\n${oversized.map(f => f.name).join('\n')}`);
+      return;
+    }
+    setUploadingFiles(true);
+    try {
+      const formData = new FormData();
+      fileArray.forEach(f => formData.append('files', f));
+      await api.post(`/operations/tasks/${task.id}/attachments`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      refetch();
+    } catch (err) {
+      alert(`Error pujant fitxers: ${err.response?.data?.error || err.message}`);
+    } finally {
+      setUploadingFiles(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleDeleteAttachment = async (attachmentId) => {
+    if (!confirm('Eliminar aquest adjunt?')) return;
+    try {
+      await api.delete(`/operations/tasks/attachments/${attachmentId}`);
+      refetch();
+    } catch (err) {
+      alert(`Error eliminant adjunt: ${err.response?.data?.error || err.message}`);
+    }
+  };
+
+  const handleDownloadAttachment = async (att, inline = false) => {
+    try {
+      const res = await api.get(
+        `/operations/tasks/attachments/${att.id}/download${inline ? '?inline=1' : ''}`,
+        { responseType: 'blob' }
+      );
+      const url = window.URL.createObjectURL(res.data);
+      if (inline) {
+        window.open(url, '_blank');
+        // Allow time to open
+        setTimeout(() => window.URL.revokeObjectURL(url), 30000);
+      } else {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = att.originalName;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      alert(`Error descarregant: ${err.response?.data?.error || err.message}`);
+    }
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (e.dataTransfer.files?.length > 0) {
+      handleUploadFiles(e.dataTransfer.files);
+    }
+  };
+
   const cat = CATEGORY_CONFIG[task.category] || CATEGORY_CONFIG.GENERAL;
   const prio = PRIORITY_CONFIG[task.priority] || PRIORITY_CONFIG.NORMAL;
   const checkItems = task.checklistItems || [];
   const checkDone = checkItems.filter(i => i.isCompleted).length;
   const checkPercent = checkItems.length > 0 ? Math.round((checkDone / checkItems.length) * 100) : 0;
+  const attachments = task.attachments || [];
 
   return (
     <div className="bg-card border rounded-lg overflow-hidden">
@@ -573,7 +685,18 @@ function TaskDetailPanel({ task, currentUser, onClose, refetch }) {
         {task.description && <p className="text-muted-foreground whitespace-pre-wrap">{task.description}</p>}
         {task.notes && <p className="text-muted-foreground whitespace-pre-wrap">{task.notes}</p>}
         <div className="flex items-center gap-3 text-muted-foreground flex-wrap">
-          {task.assignedTo && <span className="flex items-center gap-1"><User size={10} /> {task.assignedTo.name}</span>}
+          {task.assignees?.length > 0 ? (
+            <span className="flex items-center gap-1.5">
+              <AssigneeAvatars assignees={task.assignees} size={16} />
+              <span className="text-[11px]">
+                {task.assignees.length === 1
+                  ? task.assignees[0].user?.name
+                  : `${task.assignees.length} assignats`}
+              </span>
+            </span>
+          ) : task.assignedTo ? (
+            <span className="flex items-center gap-1"><User size={10} /> {task.assignedTo.name}</span>
+          ) : null}
           {task.project && <span className="flex items-center gap-1"><Package size={10} /> {task.project.name}</span>}
           {task.dueAt && (
             <span className="flex items-center gap-1">
@@ -584,11 +707,12 @@ function TaskDetailPanel({ task, currentUser, onClose, refetch }) {
         </div>
       </div>
 
-      {/* Tabs: Checklist / Comentaris / Activitat */}
+      {/* Tabs: Checklist / Comentaris / Adjunts / Activitat */}
       <div className="flex border-b">
         {[
           { id: 'checklist', label: 'Checklist', icon: CheckCircle2, count: checkItems.length },
           { id: 'comments', label: 'Comentaris', icon: MessageSquare, count: task._count?.comments || 0 },
+          { id: 'attachments', label: 'Adjunts', icon: Paperclip, count: attachments.length },
           { id: 'activity', label: 'Historial', icon: History, count: task._count?.activities || 0 },
         ].map(tab => (
           <button
@@ -704,6 +828,95 @@ function TaskDetailPanel({ task, currentUser, onClose, refetch }) {
           </div>
         )}
 
+        {activeTab === 'attachments' && (
+          <div className="space-y-2">
+            {/* Drop zone / botó upload */}
+            <div
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors ${
+                dragOver ? 'border-primary bg-primary/5' : 'border-muted-foreground/30 hover:border-primary/50 hover:bg-muted/30'
+              }`}
+            >
+              {uploadingFiles ? (
+                <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 size={14} className="animate-spin" /> Pujant...
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-1 text-xs text-muted-foreground">
+                  <UploadIcon size={18} />
+                  <span>Arrossega fitxers aquí o <span className="text-primary font-medium">fes clic per seleccionar</span></span>
+                  <span className="text-[10px] opacity-70">Imatges, PDFs, Office, ZIP — màx 25 MB / fitxer</span>
+                </div>
+              )}
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => handleUploadFiles(e.target.files)}
+                accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.rar,.7z"
+              />
+            </div>
+
+            {/* Llista d'adjunts */}
+            {attachments.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-4">Cap adjunt</p>
+            ) : (
+              <div className="space-y-1.5">
+                {attachments.map(att => {
+                  const isImage = att.mimeType?.startsWith('image/');
+                  const isPdf = att.mimeType === 'application/pdf';
+                  const Icon = isImage ? ImageIcon : (isPdf ? FileText : FileType);
+                  const sizeKb = (att.sizeBytes / 1024).toFixed(0);
+                  const sizeMb = (att.sizeBytes / (1024 * 1024)).toFixed(1);
+                  const sizeStr = att.sizeBytes >= 1024 * 1024 ? `${sizeMb} MB` : `${sizeKb} KB`;
+                  return (
+                    <div key={att.id} className="flex items-center gap-2 p-1.5 border rounded hover:bg-muted/40 group">
+                      <Icon size={16} className={`flex-shrink-0 ${isImage ? 'text-purple-500' : isPdf ? 'text-red-500' : 'text-blue-500'}`} />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-medium truncate" title={att.originalName}>{att.originalName}</div>
+                        <div className="text-[10px] text-muted-foreground flex items-center gap-1.5">
+                          <span>{sizeStr}</span>
+                          <span>·</span>
+                          <span>{new Date(att.uploadedAt).toLocaleDateString('ca-ES', { day: 'numeric', month: 'short' })}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100">
+                        {(isImage || isPdf) && (
+                          <button
+                            onClick={() => handleDownloadAttachment(att, true)}
+                            title="Veure"
+                            className="text-muted-foreground hover:text-primary p-1"
+                          >
+                            <ImageIcon size={12} />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDownloadAttachment(att, false)}
+                          title="Descarregar"
+                          className="text-muted-foreground hover:text-primary p-1"
+                        >
+                          <Download size={12} />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteAttachment(att.id)}
+                          title="Eliminar"
+                          className="text-muted-foreground hover:text-red-500 p-1"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {activeTab === 'activity' && (
           <div className="space-y-2">
             {loadingActivities ? (
@@ -752,9 +965,13 @@ function TaskDetailPanel({ task, currentUser, onClose, refetch }) {
 
 function TaskForm({ teamUsers, onClose, onSaved, task }) {
   const isEdit = !!task;
+  // Inicialitza assignedToIds: prefereix `assignees` (M:N), fallback a assignedToId singular
+  const initialAssignees = task?.assignees?.length > 0
+    ? task.assignees.map((a) => a.userId || a.user?.id).filter(Boolean)
+    : (task?.assignedToId ? [task.assignedToId] : []);
   const [form, setForm] = useState({
     title: task?.title || '',
-    assignedToId: task?.assignedToId || '',
+    assignedToIds: initialAssignees,
     category: task?.category || 'GENERAL',
     priority: task?.priority || 'NORMAL',
     dueAt: task?.dueAt ? task.dueAt.substring(0, 10) : '',
@@ -796,7 +1013,8 @@ function TaskForm({ teamUsers, onClose, onSaved, task }) {
     try {
       const body = {
         title: form.title.trim(),
-        assignedToId: form.assignedToId || undefined,
+        // Enviem com a array (preferent); el backend manté compat amb singular
+        assignedToIds: form.assignedToIds,
         category: form.category,
         priority: form.priority,
         dueAt: form.dueAt || undefined,
@@ -862,12 +1080,11 @@ function TaskForm({ teamUsers, onClose, onSaved, task }) {
             ))}
           </select>
 
-          <select value={form.assignedToId} onChange={(e) => set('assignedToId', e.target.value)} className="border rounded-lg px-2 py-1.5 text-xs bg-background">
-            <option value="">Sense assignar</option>
-            {teamUsers?.map((u) => (
-              <option key={u.id} value={u.id}>{u.name}</option>
-            ))}
-          </select>
+          <MultiUserSelect
+            users={teamUsers || []}
+            selectedIds={form.assignedToIds}
+            onChange={(ids) => set('assignedToIds', ids)}
+          />
 
           <input type="date" value={form.dueAt} onChange={(e) => set('dueAt', e.target.value)} className="border rounded-lg px-2 py-1.5 text-xs bg-background" />
 
@@ -977,5 +1194,127 @@ function TaskForm({ teamUsers, onClose, onSaved, task }) {
         </div>
       </form>
     </div>
+  );
+}
+
+// ===========================================
+// MultiUserSelect — selector multi-usuari amb dropdown de checkboxes.
+// Mostra avatars stack o "Sense assignar" / "+N més" segons selecció.
+// ===========================================
+function MultiUserSelect({ users, selectedIds, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    if (open) document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const selected = users.filter((u) => selectedIds.includes(u.id));
+  const toggle = (id) => {
+    if (selectedIds.includes(id)) onChange(selectedIds.filter((x) => x !== id));
+    else onChange([...selectedIds, id]);
+  };
+
+  // Render del label del botó: 0 → "Sense assignar", 1 → nom, 2+ → noms separats per coma o "+N"
+  const renderLabel = () => {
+    if (selected.length === 0) return <span className="text-muted-foreground">Sense assignar</span>;
+    if (selected.length <= 2) return selected.map((u) => u.name?.split(' ')[0]).join(', ');
+    return `${selected[0].name?.split(' ')[0]} +${selected.length - 1}`;
+  };
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="border rounded-lg px-2 py-1.5 text-xs bg-background flex items-center gap-1.5 min-w-[120px] hover:bg-muted/30"
+      >
+        <UsersIcon size={11} className="text-muted-foreground" />
+        {renderLabel()}
+        <ChevronDown size={11} className="text-muted-foreground ml-auto" />
+      </button>
+
+      {open && (
+        <div className="absolute z-50 mt-1 left-0 min-w-[200px] max-h-64 overflow-y-auto bg-card border rounded-lg shadow-lg py-1">
+          {users.length === 0 ? (
+            <div className="px-3 py-2 text-xs text-muted-foreground italic">Cap usuari</div>
+          ) : (
+            users.map((u) => {
+              const checked = selectedIds.includes(u.id);
+              return (
+                <button
+                  key={u.id}
+                  type="button"
+                  onClick={() => toggle(u.id)}
+                  className={`w-full text-left px-3 py-1.5 text-xs hover:bg-muted/40 flex items-center gap-2 ${checked ? 'bg-primary/5' : ''}`}
+                >
+                  <input type="checkbox" checked={checked} readOnly className="pointer-events-none" />
+                  {u.color && (
+                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: u.color }} />
+                  )}
+                  <span className={checked ? 'font-medium' : ''}>{u.name}</span>
+                </button>
+              );
+            })
+          )}
+          {selectedIds.length > 0 && (
+            <>
+              <div className="border-t my-1" />
+              <button
+                type="button"
+                onClick={() => onChange([])}
+                className="w-full text-left px-3 py-1.5 text-xs text-rose-600 hover:bg-rose-50"
+              >
+                ✗ Esborrar selecció
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ===========================================
+// AssigneeAvatars — stack de fins a 3 avatars amb "+N" si n'hi ha més
+// ===========================================
+function AssigneeAvatars({ assignees, size = 18 }) {
+  if (!assignees || assignees.length === 0) return null;
+  const visible = assignees.slice(0, 3);
+  const extra = assignees.length - visible.length;
+  return (
+    <span className="inline-flex items-center -space-x-1.5">
+      {visible.map((a, idx) => {
+        const u = a.user || a;
+        const initials = (u.name || '?').split(' ').map(s => s[0]).slice(0, 2).join('').toUpperCase();
+        return (
+          <span
+            key={u.id || idx}
+            className="inline-flex items-center justify-center rounded-full border border-white text-[9px] font-semibold text-white"
+            style={{
+              background: u.color || '#9ca3af',
+              width: size, height: size,
+              zIndex: visible.length - idx,
+            }}
+            title={u.name}
+          >
+            {initials}
+          </span>
+        );
+      })}
+      {extra > 0 && (
+        <span
+          className="inline-flex items-center justify-center rounded-full border border-white text-[9px] font-semibold bg-gray-200 text-gray-700"
+          style={{ width: size, height: size }}
+          title={`${extra} més`}
+        >
+          +{extra}
+        </span>
+      )}
+    </span>
   );
 }

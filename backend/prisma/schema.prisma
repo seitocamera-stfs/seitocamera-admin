@@ -58,6 +58,7 @@ model User {
   returnLeadProjects    RentalProject[]   @relation("ProjectReturnLead")
   createdTasks          ProjectTask[]     @relation("TaskCreator")
   assignedTasks         ProjectTask[]     @relation("TaskAssignee")
+  taskAssignments       ProjectTaskAssignee[] @relation("TaskAssigneeMulti")
   completedTasks        ProjectTask[]     @relation("TaskCompleter")
   checklistsCompleted   TaskChecklistItem[] @relation("ChecklistCompleter")
   createdTemplates      TaskTemplate[]    @relation("TemplateCreator")
@@ -1217,6 +1218,9 @@ model ProjectTask {
   notes           String?        // Notes addicionals
 
   // Responsables
+  // assignedToId = "responsable principal" (legacy + UX). Per a co-assignacions
+  // múltiples vegeu la relació `assignees` (ProjectTaskAssignee). El principal
+  // es manté sincronitzat amb el primer de la llista.
   createdById     String?
   assignedToId    String?
   completedById   String?
@@ -1258,6 +1262,8 @@ model ProjectTask {
   checklistItems  TaskChecklistItem[]
   comments        TaskComment[]
   activities      TaskActivity[]
+  assignees       ProjectTaskAssignee[]
+  attachments     TaskAttachment[]
 
   @@index([projectId])
   @@index([assignedToId])
@@ -1267,6 +1273,42 @@ model ProjectTask {
   @@index([category])
   @@index([priority])
   @@map("project_tasks")
+}
+
+/// Arxius adjunts a una tasca (imatges, PDFs, docs).
+/// Storage: filesystem local (uploads/task-attachments/{taskId}/{filename}).
+/// Accés: backend serveix via endpoint amb auth.
+model TaskAttachment {
+  id              String      @id @default(cuid())
+  taskId          String
+  filename        String      // Nom intern al disc (únic, ex: 1736...-abc.pdf)
+  originalName    String      // Nom amb què l'usuari el va pujar (per mostrar)
+  mimeType        String
+  sizeBytes       Int
+  uploadedById    String?
+  uploadedAt      DateTime    @default(now()) @db.Timestamptz()
+
+  task            ProjectTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@map("task_attachments")
+}
+
+/// Co-assignació de tasques a múltiples usuaris.
+/// Una tasca pot tenir N assignees; el primer (per `assignedAt`) sincronitza
+/// amb `ProjectTask.assignedToId` per backward-compat.
+model ProjectTaskAssignee {
+  taskId        String
+  userId        String
+  assignedAt    DateTime  @default(now()) @db.Timestamptz()
+  assignedById  String?   // qui ha fet l'assignació (per auditoria)
+
+  task          ProjectTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user          User        @relation("TaskAssigneeMulti", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, userId])
+  @@index([userId])
+  @@map("project_task_assignees")
 }
 
 // ===========================================

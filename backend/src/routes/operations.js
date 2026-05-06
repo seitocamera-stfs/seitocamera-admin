@@ -1,8 +1,83 @@
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const { prisma } = require('../config/database');
 const { authenticate, authorize } = require('../middleware/auth');
 const { requireSection } = require('../middleware/sectionAccess');
 const { logger } = require('../config/logger');
+const { taskAttachmentUpload } = require('../config/upload');
+
+/**
+ * Sincronitza la llista d'assignees d'una tasca (M:N).
+ *
+ * - Manté `ProjectTask.assignedToId` apuntant al PRIMER de la llista
+ *   (compatibilitat amb la lògica existent — notificacions, filtres, etc.)
+ * - Esborra assignees que ja no hi siguin
+ * - Afegeix els nous (sense duplicar)
+ *
+ * @param {string} taskId
+ * @param {string[]} userIds - llista ordenada (el primer és el "principal")
+ * @param {string} assignedById - qui fa l'operació (per auditoria)
+ * @returns {Object} { addedIds: string[], removedIds: string[], primaryUserId: string|null }
+ */
+async function setTaskAssignees(taskId, userIds, assignedById) {
+  const cleanIds = Array.isArray(userIds)
+    ? [...new Set(userIds.filter(Boolean))]
+    : [];
+  const primaryUserId = cleanIds[0] || null;
+
+  // Llegir actuals
+  const current = await prisma.projectTaskAssignee.findMany({
+    where: { taskId },
+    select: { userId: true },
+  });
+  const currentIds = new Set(current.map(c => c.userId));
+  const wantedIds = new Set(cleanIds);
+
+  const toAdd = cleanIds.filter(id => !currentIds.has(id));
+  const toRemove = [...currentIds].filter(id => !wantedIds.has(id));
+
+  await prisma.$transaction([
+    // Elimina els que ja no hi són
+    ...(toRemove.length
+      ? [prisma.projectTaskAssignee.deleteMany({
+          where: { taskId, userId: { in: toRemove } },
+        })]
+      : []),
+    // Afegeix els nous
+    ...(toAdd.length
+      ? [prisma.projectTaskAssignee.createMany({
+          data: toAdd.map(userId => ({ taskId, userId, assignedById })),
+          skipDuplicates: true,
+        })]
+      : []),
+    // Sincronitza assignedToId amb el primer
+    prisma.projectTask.update({
+      where: { id: taskId },
+      data: { assignedToId: primaryUserId },
+    }),
+  ]);
+
+  return { addedIds: toAdd, removedIds: toRemove, primaryUserId };
+}
+
+// Include comú per a tasques (assignees a més del principal + attachments)
+const TASK_INCLUDE_FULL = {
+  project: { select: { id: true, name: true } },
+  createdBy: { select: { id: true, name: true, color: true } },
+  assignedTo: { select: { id: true, name: true, color: true } },
+  assignees: {
+    orderBy: { assignedAt: 'asc' },
+    include: { user: { select: { id: true, name: true, color: true } } },
+  },
+  attachments: {
+    orderBy: { uploadedAt: 'desc' },
+    select: {
+      id: true, originalName: true, mimeType: true,
+      sizeBytes: true, uploadedAt: true, uploadedById: true,
+    },
+  },
+};
 
 const router = express.Router();
 
@@ -764,52 +839,70 @@ router.post('/projects/:id/default-tasks', async (req, res, next) => {
 });
 
 // POST /api/operations/projects/:id/tasks — Crear tasca
+// Accepta `assignedToIds: string[]` (preferent) o `assignedToId: string` (legacy)
 router.post('/projects/:id/tasks', async (req, res, next) => {
   try {
-    const { title, description, assignedToId, dueAt, requiresSupervision = false } = req.body;
+    const { title, description, assignedToId, assignedToIds, dueAt, requiresSupervision = false } = req.body;
+
+    // Normalitza a array — preferent assignedToIds; fallback a assignedToId singular
+    const wantedAssignees = Array.isArray(assignedToIds) && assignedToIds.length > 0
+      ? assignedToIds.filter(Boolean)
+      : (assignedToId ? [assignedToId] : []);
+    const primaryAssignee = wantedAssignees[0] || null;
+
     const task = await prisma.projectTask.create({
       data: {
         projectId: req.params.id,
         title,
         description,
         createdById: req.user.id,
-        assignedToId,
+        assignedToId: primaryAssignee,
         dueAt: dueAt ? new Date(dueAt) : null,
         requiresSupervision,
       },
-      include: {
-        createdBy: { select: { id: true, name: true } },
-        assignedTo: { select: { id: true, name: true } },
-      },
     });
 
-    // Notificar si s'assigna a algú (delegació)
-    if (assignedToId && assignedToId !== req.user.id) {
+    // Sincronitza M:N (encara que només n'hi hagi 1)
+    if (wantedAssignees.length > 0) {
+      await setTaskAssignees(task.id, wantedAssignees, req.user.id);
+    }
+
+    // Notificar a cada co-assignat (excepte el creador)
+    if (wantedAssignees.length > 0) {
       const project = await prisma.rentalProject.findUnique({
         where: { id: req.params.id },
         select: { name: true },
       });
-      await createNotificationForUser(assignedToId, {
+      const otherAssignees = wantedAssignees.filter(uid => uid !== req.user.id);
+      await Promise.all(otherAssignees.map(uid =>
+        createNotificationForUser(uid, {
           type: 'task_assigned',
           title: `Tasca delegada per ${req.user.name || 'un company'}`,
-          message: `${title}${project ? ` — Projecte: ${project.name}` : ''}`,
+          message: `${title}${project ? ` — Projecte: ${project.name}` : ''}${wantedAssignees.length > 1 ? ` (compartida amb ${wantedAssignees.length - 1} més)` : ''}`,
           entityType: 'rental_project',
           entityId: req.params.id,
           priority: requiresSupervision ? 'high' : 'normal',
-      });
+        }).catch(e => logger.warn(`Notif task ${task.id} a ${uid} fallida: ${e.message}`))
+      ));
     }
 
-    res.json(task);
+    // Re-llegir amb include complet per a la resposta
+    const fullTask = await prisma.projectTask.findUnique({
+      where: { id: task.id },
+      include: TASK_INCLUDE_FULL,
+    });
+    res.json(fullTask);
   } catch (err) {
     next(err);
   }
 });
 
 // PUT /api/operations/tasks/:id — Actualitzar tasca
+// Accepta `assignedToIds: string[]` (preferent) o `assignedToId: string` (legacy)
 router.put('/tasks/:id', async (req, res, next) => {
   try {
     const {
-      title, description, notes, assignedToId, status,
+      title, description, notes, assignedToId, assignedToIds, status,
       category, priority, dueAt, dueTime,
       reminder, reminderCustom,
       recurrence, recurrenceCustom, recurrenceEndAt,
@@ -820,7 +913,6 @@ router.put('/tasks/:id', async (req, res, next) => {
     if (title !== undefined) data.title = title;
     if (description !== undefined) data.description = description;
     if (notes !== undefined) data.notes = notes;
-    if (assignedToId !== undefined) data.assignedToId = assignedToId;
     if (category !== undefined) data.category = category;
     if (priority !== undefined) data.priority = priority;
     if (dueAt !== undefined) data.dueAt = dueAt ? new Date(dueAt) : null;
@@ -835,7 +927,10 @@ router.put('/tasks/:id', async (req, res, next) => {
 
     const currentTask = await prisma.projectTask.findUnique({
       where: { id: req.params.id },
-      select: { assignedToId: true, title: true, projectId: true, status: true, priority: true },
+      select: {
+        assignedToId: true, title: true, projectId: true, status: true, priority: true,
+        assignees: { select: { userId: true } },
+      },
     });
 
     if (status !== undefined) {
@@ -849,13 +944,36 @@ router.put('/tasks/:id', async (req, res, next) => {
       }
     }
 
-    const task = await prisma.projectTask.update({
+    // Determinar canvi d'assignees: preferent array, fallback singular
+    let assigneesChanged = false;
+    let newAssigneeIds = null;
+    if (assignedToIds !== undefined) {
+      newAssigneeIds = Array.isArray(assignedToIds) ? assignedToIds.filter(Boolean) : [];
+      assigneesChanged = true;
+    } else if (assignedToId !== undefined) {
+      newAssigneeIds = assignedToId ? [assignedToId] : [];
+      assigneesChanged = true;
+    }
+
+    // Actualitzar la tasca (sense touch a assignedToId — el sincronitza setTaskAssignees)
+    await prisma.projectTask.update({
       where: { id: req.params.id },
       data,
+    });
+
+    // Sincronitzar assignees si han canviat
+    let addedIds = [], removedIds = [];
+    if (assigneesChanged && newAssigneeIds !== null) {
+      const result = await setTaskAssignees(req.params.id, newAssigneeIds, req.user.id);
+      addedIds = result.addedIds;
+      removedIds = result.removedIds;
+    }
+
+    // Re-llegir amb include complet
+    const task = await prisma.projectTask.findUnique({
+      where: { id: req.params.id },
       include: {
-        project: { select: { id: true, name: true } },
-        createdBy: { select: { id: true, name: true } },
-        assignedTo: { select: { id: true, name: true } },
+        ...TASK_INCLUDE_FULL,
         checklistItems: {
           orderBy: { sortOrder: 'asc' },
           include: { completedBy: { select: { id: true, name: true } } },
@@ -869,8 +987,11 @@ router.put('/tasks/:id', async (req, res, next) => {
     if (status !== undefined && status !== currentTask?.status) {
       activities.push({ taskId: task.id, userId: req.user.id, action: 'status_change', details: { from: currentTask?.status, to: status } });
     }
-    if (assignedToId !== undefined && assignedToId !== currentTask?.assignedToId) {
-      activities.push({ taskId: task.id, userId: req.user.id, action: 'assigned', details: { to: assignedToId } });
+    if (assigneesChanged && (addedIds.length || removedIds.length)) {
+      activities.push({
+        taskId: task.id, userId: req.user.id, action: 'assigned',
+        details: { added: addedIds, removed: removedIds, current: newAssigneeIds },
+      });
     }
     if (priority !== undefined && priority !== currentTask?.priority) {
       activities.push({ taskId: task.id, userId: req.user.id, action: 'priority_change', details: { from: currentTask?.priority, to: priority } });
@@ -879,17 +1000,20 @@ router.put('/tasks/:id', async (req, res, next) => {
       await prisma.taskActivity.createMany({ data: activities });
     }
 
-    // Notificar + push si es reassigna
-    if (assignedToId && assignedToId !== currentTask?.assignedToId && assignedToId !== req.user.id) {
-      logger.info(`Tasca ${task.id} reassignada a ${assignedToId} per ${req.user.id}`);
-      await createNotificationForUser(assignedToId, {
-        type: 'task_assigned',
-        title: `Tasca de ${req.user.name || 'un company'}`,
-        message: `${task.title}${task.project ? ` — ${task.project.name}` : ''}`,
-        entityType: 'task',
-        entityId: task.id,
-        priority: (priority || currentTask?.priority) === 'URGENT' ? 'high' : 'normal',
-      });
+    // Notificar als nous co-assignats (no als ja existents ni al propi creador)
+    if (addedIds.length > 0) {
+      const newOnes = addedIds.filter(uid => uid !== req.user.id);
+      logger.info(`Tasca ${task.id}: nous assignees ${newOnes.join(',')} per ${req.user.id}`);
+      await Promise.all(newOnes.map(uid =>
+        createNotificationForUser(uid, {
+          type: 'task_assigned',
+          title: `Tasca de ${req.user.name || 'un company'}`,
+          message: `${task.title}${task.project ? ` — ${task.project.name}` : ''}${newAssigneeIds.length > 1 ? ` (co-assignada amb ${newAssigneeIds.length - 1} més)` : ''}`,
+          entityType: 'task',
+          entityId: task.id,
+          priority: (priority || currentTask?.priority) === 'URGENT' ? 'high' : 'normal',
+        }).catch(e => logger.warn(`Notif task ${task.id} a ${uid} fallida: ${e.message}`))
+      ));
     }
 
     res.json(task);
@@ -1513,18 +1637,21 @@ router.get('/tasks', async (req, res, next) => {
     // Filtre per projecte
     if (projectId) where.projectId = projectId;
 
-    // Filtre per assignat / visibilitat
+    // Filtre per assignat / visibilitat (inclou co-assignacions M:N)
     if (assignedToId) {
-      where.assignedToId = assignedToId;
+      // Quan filtrem per un usuari concret, busquem tant el principal com els co-assignats
+      where.OR = (where.OR || []).concat([
+        { assignedToId: assignedToId },
+        { assignees: { some: { userId: assignedToId } } },
+      ]);
     } else if (!isAdmin) {
-      // Combinar amb filtre de vista (pot tenir OR)
       const userFilter = [
         { assignedToId: req.user.id },
+        { assignees: { some: { userId: req.user.id } } },
         { createdById: req.user.id },
         { assignedToId: null }, // tasques sense assignar les veu tothom
       ];
       if (where.OR) {
-        // La vista ja té OR → AND amb el filtre d'usuari
         where.AND = [{ OR: where.OR }, { OR: userFilter }];
         delete where.OR;
       } else {
@@ -1532,15 +1659,23 @@ router.get('/tasks', async (req, res, next) => {
       }
     }
 
+    // Helper de comptadors: filtre d'usuari incloent M:N
+    const userVisibilityFilter = isAdmin ? {} : {
+      OR: [
+        { assignedToId: req.user.id },
+        { assignees: { some: { userId: req.user.id } } },
+        { createdById: req.user.id },
+        { assignedToId: null },
+      ],
+    };
+
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const [tasks, total] = await Promise.all([
       prisma.projectTask.findMany({
         where,
         include: {
-          project: { select: { id: true, name: true } },
-          createdBy: { select: { id: true, name: true } },
-          assignedTo: { select: { id: true, name: true } },
+          ...TASK_INCLUDE_FULL,
           completedBy: { select: { id: true, name: true } },
           checklistItems: {
             orderBy: { sortOrder: 'asc' },
@@ -1562,16 +1697,10 @@ router.get('/tasks', async (req, res, next) => {
     // Comptadors per les vistes (sempre retornar-los per al badge)
     const [pendingCount, blockedCount, todayCount] = await Promise.all([
       prisma.projectTask.count({
-        where: {
-          status: { in: ['OP_PENDING', 'OP_IN_PROGRESS'] },
-          ...(isAdmin ? {} : { OR: [{ assignedToId: req.user.id }, { createdById: req.user.id }, { assignedToId: null }] }),
-        },
+        where: { status: { in: ['OP_PENDING', 'OP_IN_PROGRESS'] }, ...userVisibilityFilter },
       }),
       prisma.projectTask.count({
-        where: {
-          status: 'OP_BLOCKED',
-          ...(isAdmin ? {} : { OR: [{ assignedToId: req.user.id }, { createdById: req.user.id }, { assignedToId: null }] }),
-        },
+        where: { status: 'OP_BLOCKED', ...userVisibilityFilter },
       }),
       prisma.projectTask.count({
         where: {
@@ -1580,7 +1709,7 @@ router.get('/tasks', async (req, res, next) => {
             { dueAt: { gte: todayStart, lte: todayEnd } },
             { dueAt: null, status: { in: ['OP_PENDING', 'OP_IN_PROGRESS'] } },
           ],
-          ...(isAdmin ? {} : { AND: [{ OR: [{ assignedToId: req.user.id }, { createdById: req.user.id }, { assignedToId: null }] }] }),
+          ...(isAdmin ? {} : { AND: [userVisibilityFilter] }),
         },
       }),
     ]);
@@ -2937,6 +3066,130 @@ router.delete('/absences/:id', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// ===========================================
+// TASK ATTACHMENTS — adjunts d'arxius (imatges, PDFs, docs)
+// ===========================================
+
+/**
+ * POST /api/operations/tasks/:id/attachments
+ * Multipart upload — fins a 5 fitxers per request, 25 MB cadascun.
+ * Camp: 'files' (array) o 'file' (singular).
+ */
+router.post('/tasks/:id/attachments',
+  taskAttachmentUpload.array('files', 5),
+  async (req, res, next) => {
+    try {
+      const taskId = req.params.id;
+      const task = await prisma.projectTask.findUnique({
+        where: { id: taskId }, select: { id: true },
+      });
+      if (!task) {
+        // Esborrem els fitxers pujats si la tasca no existeix
+        (req.files || []).forEach(f => fs.unlink(f.path, () => {}));
+        return res.status(404).json({ error: 'Tasca no trobada' });
+      }
+
+      const files = req.files || [];
+      if (files.length === 0) {
+        return res.status(400).json({ error: 'Cap fitxer rebut' });
+      }
+
+      const created = await prisma.$transaction(
+        files.map((f) => prisma.taskAttachment.create({
+          data: {
+            taskId,
+            filename: f.filename,
+            originalName: f.originalname,
+            mimeType: f.mimetype,
+            sizeBytes: f.size,
+            uploadedById: req.user?.id || null,
+          },
+        }))
+      );
+
+      // Activitat
+      await prisma.taskActivity.create({
+        data: {
+          taskId, userId: req.user.id,
+          action: 'attachment_added',
+          details: { count: created.length, names: files.map(f => f.originalname) },
+        },
+      });
+
+      res.status(201).json({ attachments: created });
+    } catch (err) {
+      // Si peta, neteja els fitxers
+      (req.files || []).forEach(f => fs.unlink(f.path, () => {}));
+      next(err);
+    }
+  }
+);
+
+/**
+ * GET /api/operations/tasks/attachments/:attachmentId/download
+ * Streamed file download. Usa el query ?inline=1 per veure dins el navegador.
+ */
+router.get('/tasks/attachments/:attachmentId/download', async (req, res, next) => {
+  try {
+    const att = await prisma.taskAttachment.findUnique({
+      where: { id: req.params.attachmentId },
+    });
+    if (!att) return res.status(404).json({ error: 'Adjunt no trobat' });
+
+    const { TASK_ATTACHMENTS_DIR } = require('../config/upload');
+    const taskDir = path.join(TASK_ATTACHMENTS_DIR, att.taskId.replace(/[^a-zA-Z0-9]/g, ''));
+    const filePath = path.join(taskDir, att.filename);
+
+    if (!fs.existsSync(filePath)) {
+      logger.warn(`Adjunt ${att.id} marcat a BD però no existeix al disc: ${filePath}`);
+      return res.status(404).json({ error: 'Fitxer no trobat al disc' });
+    }
+
+    const inline = req.query.inline === '1';
+    const disposition = inline ? 'inline' : 'attachment';
+    res.setHeader('Content-Type', att.mimeType);
+    res.setHeader('Content-Disposition', `${disposition}; filename="${encodeURIComponent(att.originalName)}"`);
+    res.setHeader('Content-Length', att.sizeBytes);
+    fs.createReadStream(filePath).pipe(res);
+  } catch (err) { next(err); }
+});
+
+/**
+ * DELETE /api/operations/tasks/attachments/:attachmentId
+ */
+router.delete('/tasks/attachments/:attachmentId', async (req, res, next) => {
+  try {
+    const att = await prisma.taskAttachment.findUnique({
+      where: { id: req.params.attachmentId },
+    });
+    if (!att) return res.status(404).json({ error: 'Adjunt no trobat' });
+
+    const { TASK_ATTACHMENTS_DIR } = require('../config/upload');
+    const filePath = path.join(
+      TASK_ATTACHMENTS_DIR,
+      att.taskId.replace(/[^a-zA-Z0-9]/g, ''),
+      att.filename
+    );
+
+    await prisma.taskAttachment.delete({ where: { id: att.id } });
+
+    // Esborrar del disc (no crítico si falla — log warning)
+    fs.unlink(filePath, (err) => {
+      if (err) logger.warn(`No s'ha pogut esborrar ${filePath}: ${err.message}`);
+    });
+
+    await prisma.taskActivity.create({
+      data: {
+        taskId: att.taskId, userId: req.user.id,
+        action: 'attachment_removed',
+        details: { name: att.originalName },
+      },
+    });
+
+    res.json({ ok: true });
+  } catch (err) { next(err); }
 });
 
 module.exports = router;
