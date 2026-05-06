@@ -291,6 +291,21 @@ async function syncAllInvoices({ fetchProjects = true, onlyRecentDays = null } =
 // EXPLÍCITAMENT — millor saltar i loggar que importar a cegues.
 // =============================================================
 
+// IMPORTANT: a Rentman v3, l'estat NO es troba a /projects sinó a
+// /subprojects. Cada projecte té 1+ subprojects, cadascun amb un camp
+// `status: "/statuses/N"` que apunta a un dels valors del catàleg
+// /statuses (Confirmado, Cancelado, Devuelto, Pendiente, etc.).
+//
+// Ho resolem fent prefetch a /statuses + /subprojects al començament del
+// sync, construint un map projectId → statusName, i passant-lo a
+// filterCurrentAndFutureProjects/syncOneProject.
+
+// IDs típics observats al nostre catàleg Rentman (data 2026-05):
+//   1=Pendiente  2=Cancelado  3=Confirmado  4=Preparado
+//   5=En localización  6=Devuelto  7=Consulta  8=Concepto
+// El nom es resol dinàmicament a fetchStatusNamesById() per evitar
+// hardcoded mappings que es desincronitzin si Rentman canvia ids.
+
 const RENTMAN_STATUS_MAP = {
   // Confirmat — backend confirma la reserva, comencem preparació
   'confirmed':           'IN_PREPARATION',
@@ -304,6 +319,7 @@ const RENTMAN_STATUS_MAP = {
   'on_location':         'OUT',
   'on location':         'OUT',
   'en localización':     'OUT',
+  'en localizacion':     'OUT',
   'en_localizacion':     'OUT',
   // Retardat / esperant retorn = encara fora
   'delayed':             'OUT',
@@ -332,6 +348,75 @@ function mapRentmanStatusToProjectStatus(rentmanStatus) {
 }
 
 /**
+ * Carrega el catàleg /statuses i retorna un map id (string) → name (string).
+ * Ex: { "1": "Pendiente", "3": "Confirmado", ... }
+ */
+async function fetchStatusNamesById() {
+  const res = await rentman.rentmanGet('/statuses', { limit: 200 });
+  const data = res.data || res;
+  const map = {};
+  for (const s of data || []) {
+    map[String(s.id)] = s.name || s.displayname || `unknown_${s.id}`;
+  }
+  return map;
+}
+
+/**
+ * Carrega tots els /subprojects (paginat). Retorna un Map projectId → statusName
+ * fent servir el catàleg /statuses prèviament resolt.
+ *
+ * Si un projecte té múltiples subprojects, ens quedem amb l'estat MÉS AVANÇAT
+ * dins del cicle de vida (PENDING < QUOTE < CONFIRMED < PREPARED < OUT < RETURNED).
+ */
+const STATUS_LIFECYCLE_PRIORITY = [
+  // Pendiente, Cancelado, Concepto, Consulta = no-whitelist (prioritat 0)
+  'pendiente', 'cancelado', 'cancelled', 'concepto', 'concept', 'consulta', 'quotation', 'option', 'draft',
+  // Confirmado (1)
+  'confirmado', 'confirmed',
+  // Preparado (2)
+  'preparado', 'prepared', 'active',
+  // En localización (3)
+  'en localización', 'en localizacion', 'on_location', 'on location', 'out',
+  // Devuelto (4)
+  'devuelto', 'returned', 'retornado',
+  // Closed (5)
+  'closed', 'archived',
+];
+function statusPriority(name) {
+  const idx = STATUS_LIFECYCLE_PRIORITY.indexOf((name || '').toLowerCase());
+  return idx === -1 ? -1 : idx;
+}
+
+async function fetchProjectStatusMap() {
+  const statusNames = await fetchStatusNamesById();
+
+  const result = new Map(); // projectIdStr → statusName
+  let offset = 0;
+  const pageSize = 500;
+  while (true) {
+    const batch = await rentman.rentmanGet('/subprojects', { limit: pageSize, offset });
+    const items = batch.data || batch || [];
+    for (const sp of items) {
+      // sp.project = "/projects/180", sp.status = "/statuses/3"
+      const pidMatch = String(sp.project || '').match(/\/projects\/(\d+)/);
+      const sidMatch = String(sp.status || '').match(/\/statuses\/(\d+)/);
+      if (!pidMatch || !sidMatch) continue;
+      const projectId = pidMatch[1];
+      const statusName = statusNames[sidMatch[1]];
+      if (!statusName) continue;
+
+      const existing = result.get(projectId);
+      if (!existing || statusPriority(statusName) > statusPriority(existing)) {
+        result.set(projectId, statusName);
+      }
+    }
+    if (items.length < pageSize) break;
+    offset += pageSize;
+  }
+  return result;
+}
+
+/**
  * Carrega tots els projectes de Rentman (amb paginació)
  */
 async function fetchAllRentmanProjects({ pageSize = 500 } = {}) {
@@ -352,11 +437,15 @@ async function fetchAllRentmanProjects({ pageSize = 500 } = {}) {
 
 /**
  * Filtra projectes Rentman: només importem els CONFIRMATS-i-posteriors
- * dins del rang temporal acceptat. Treballa amb whitelist via
- * RENTMAN_STATUS_MAP — qualsevol estat fora del mapeig (option, quotation,
- * draft, cancelled, o desconegut) queda fora.
+ * dins del rang temporal acceptat. L'estat es resol via `statusMap`
+ * (resultat de fetchProjectStatusMap) — qualsevol projecte sense entrada
+ * o amb estat fora del whitelist queda fora.
+ *
+ * Mutàcia útil: enriqueix cada projecte acceptat amb `_rentmanStatus`
+ * (el nom del status, ex: "Confirmado") perquè syncOneProject pugui
+ * usar-lo sense cridar de nou.
  */
-function filterCurrentAndFutureProjects(projects) {
+function filterCurrentAndFutureProjects(projects, statusMap) {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - 7);
 
@@ -364,12 +453,12 @@ function filterCurrentAndFutureProjects(projects) {
   const accepted = [];
 
   for (const p of projects) {
-    const rawStatus = (p.status || '').toLowerCase().trim();
-    const mapped = RENTMAN_STATUS_MAP[rawStatus];
+    const projectId = String(p.id);
+    const statusName = statusMap?.get(projectId) || null;
+    const mapped = mapRentmanStatusToProjectStatus(statusName);
 
     if (!mapped) {
-      // Estat no confirmat / no whitelistejat → saltar
-      const key = rawStatus || '(buit)';
+      const key = (statusName || '').toLowerCase() || '(sense subproject/buit)';
       skippedByStatus[key] = (skippedByStatus[key] || 0) + 1;
       continue;
     }
@@ -381,6 +470,8 @@ function filterCurrentAndFutureProjects(projects) {
       if (end < cutoff) continue;
     }
 
+    // Adjuntem l'status resolt per evitar re-lookup després
+    p._rentmanStatus = statusName;
     accepted.push(p);
   }
 
@@ -450,9 +541,11 @@ async function syncOneProject(rmProject) {
     clientId = await findOrCreateClientFromRentman(rmProject.customer);
   }
 
-  // Estat
-  const status = mapRentmanStatusToProjectStatus(rmProject.status);
-  const rentmanStatus = rmProject.status || null; // Estat natiu de Rentman (confirmed, out, etc.)
+  // Estat — vingut o bé del filterCurrentAndFutureProjects (preferit, ja ha
+  // resolt el subproject i el catàleg /statuses), o si no, prova el camp
+  // rmProject.status (per compatibilitat) abans de donar-se per vençut.
+  const rentmanStatus = rmProject._rentmanStatus || rmProject.status || null;
+  const status = mapRentmanStatusToProjectStatus(rentmanStatus);
 
   // Defensa-en-profunditat: si arribem aquí amb un estat fora del whitelist
   // (no hauria de passar — el filtre ja l'hauria saltat), no creem projecte
@@ -593,10 +686,15 @@ async function syncProjects() {
   const start = Date.now();
   logger.info('Rentman project sync: iniciant...');
 
-  const allProjects = await fetchAllRentmanProjects();
-  const projectsToSync = filterCurrentAndFutureProjects(allProjects);
+  // Carregar catàleg /statuses + /subprojects per resoldre l'estat de cada
+  // projecte (a Rentman v3 l'estat NO viu a /projects sinó a /subprojects).
+  const statusMap = await fetchProjectStatusMap();
+  logger.info(`Rentman project sync: status carregats per ${statusMap.size} projectes`);
 
-  logger.info(`Rentman project sync: ${projectsToSync.length}/${allProjects.length} projectes actuals/futurs`);
+  const allProjects = await fetchAllRentmanProjects();
+  const projectsToSync = filterCurrentAndFutureProjects(allProjects, statusMap);
+
+  logger.info(`Rentman project sync: ${projectsToSync.length}/${allProjects.length} projectes actuals/futurs (whitelist)`);
 
   let created = 0;
   let updated = 0;
@@ -644,5 +742,7 @@ module.exports = {
   syncProjects,
   syncOneProject,
   mapRentmanStatusToProjectStatus,
+  fetchProjectStatusMap,
+  fetchStatusNamesById,
   RENTMAN_STATUS_MAP,
 };

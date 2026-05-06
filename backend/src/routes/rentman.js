@@ -343,6 +343,10 @@ router.post('/reconcile/projects', authorize('ADMIN'), async (req, res, next) =>
   try {
     const archive = req.query.archive === '1';
 
+    // Carregar el catàleg /statuses + /subprojects una sola vegada per
+    // resoldre l'estat actual de cada projecte (a Rentman v3 NO viu a /projects).
+    const statusMap = await rentmanSync.fetchProjectStatusMap();
+
     const internalProjects = await prisma.rentalProject.findMany({
       where: { rentmanProjectId: { not: null } },
       select: {
@@ -356,32 +360,38 @@ router.post('/reconcile/projects', authorize('ADMIN'), async (req, res, next) =>
       refreshed: 0,
       stillConfirmed: 0,
       nowOrphan: [],   // existeixen al sistema però ja no son confirmats a Rentman
-      notFoundOnRentman: [], // existeixen al sistema però Rentman no els troba
+      notFoundOnRentman: [], // existeixen al sistema però Rentman no els troba (sense subproject)
       archived: 0,
       errors: [],
     };
 
     for (const p of internalProjects) {
       try {
-        const rmProject = await rentman.getProject(p.rentmanProjectId);
+        const statusName = statusMap.get(String(p.rentmanProjectId)) || null;
+        const mapped = rentmanSync.mapRentmanStatusToProjectStatus(statusName);
         report.refreshed++;
 
-        const rawStatus = (rmProject?.status || '').toLowerCase().trim();
-        const mapped = rentmanSync.mapRentmanStatusToProjectStatus(rmProject?.status);
-
         // Refrescar rentmanStatus al sistema
-        if (rmProject?.status && p.rentmanStatus !== rmProject.status) {
+        if (statusName && p.rentmanStatus !== statusName) {
           await prisma.rentalProject.update({
             where: { id: p.id },
-            data: { rentmanStatus: rmProject.status },
+            data: { rentmanStatus: statusName },
           });
         }
 
-        if (!mapped) {
-          // No confirmat segons whitelist
+        if (!statusName) {
+          report.notFoundOnRentman.push({ id: p.id, name: p.name });
+          if (archive && p.status !== 'CLOSED') {
+            await prisma.rentalProject.update({
+              where: { id: p.id },
+              data: { status: 'CLOSED' },
+            });
+            report.archived++;
+          }
+        } else if (!mapped) {
           report.nowOrphan.push({
             id: p.id, name: p.name, internalStatus: p.status,
-            rentmanStatus: rawStatus || '(buit)',
+            rentmanStatus: statusName,
           });
           if (archive && p.status !== 'CLOSED') {
             await prisma.rentalProject.update({
@@ -394,12 +404,7 @@ router.post('/reconcile/projects', authorize('ADMIN'), async (req, res, next) =>
           report.stillConfirmed++;
         }
       } catch (err) {
-        // 404 → projecte esborrat a Rentman
-        if (/404/.test(err.message)) {
-          report.notFoundOnRentman.push({ id: p.id, name: p.name });
-        } else {
-          report.errors.push({ id: p.id, name: p.name, error: err.message });
-        }
+        report.errors.push({ id: p.id, name: p.name, error: err.message });
       }
     }
 
