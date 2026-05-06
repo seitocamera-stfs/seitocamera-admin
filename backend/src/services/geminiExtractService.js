@@ -29,16 +29,21 @@ const aiCostTracker = require('./aiCostTracker');
 const company = require('../config/company');
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-// 2.0-flash és multimodal i barat. 2.0-flash-lite encara més barat però menor qualitat.
-const EXTRACT_MODEL = process.env.GEMINI_EXTRACT_MODEL || 'gemini-2.0-flash';
+// 2.5-flash: multimodal, qualitat top, barat (thinking-mode opcional via thinkingBudget)
+// Nota: 2.0-flash queda discontinuat per nous comptes des de finals 2025.
+const EXTRACT_MODEL = process.env.GEMINI_EXTRACT_MODEL || 'gemini-2.5-flash';
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
-// Pricing aproximat (Mar 2025) per a tracking de cost
+// Pricing aproximat (2025) per a tracking de cost — USD per M tokens
 const PRICING_PER_M_TOKENS = {
+  'gemini-2.5-pro':         { input: 1.25, output: 10.00 },
+  'gemini-2.5-flash':       { input: 0.30, output: 2.50 },  // fins 200K input; >200K dobla
+  'gemini-2.5-flash-lite':  { input: 0.10, output: 0.40 },
+  'gemini-flash-latest':    { input: 0.30, output: 2.50 },  // alias
+  // Legacy (no disponibles per nous comptes)
   'gemini-2.0-flash':       { input: 0.10, output: 0.40 },
   'gemini-2.0-flash-lite':  { input: 0.075, output: 0.30 },
   'gemini-1.5-flash':       { input: 0.075, output: 0.30 },
-  'gemini-1.5-flash-8b':    { input: 0.0375, output: 0.15 },
   'gemini-1.5-pro':         { input: 1.25, output: 5.00 },
 };
 
@@ -125,6 +130,9 @@ async function callGemini({ pdfBase64, text, model = EXTRACT_MODEL, maxTokens = 
       maxOutputTokens: maxTokens,
       responseMimeType: 'application/json',
       responseSchema: RESPONSE_SCHEMA,
+      // Desactiva thinking-mode (2.5-flash el té per defecte). Per extracció
+      // estructurada no afegeix valor i consumeix output tokens.
+      thinkingConfig: { thinkingBudget: 0 },
     },
   };
 
