@@ -279,21 +279,56 @@ async function syncAllInvoices({ fetchProjects = true, onlyRecentDays = null } =
 // Sincronització de PROJECTES Rentman → RentalProject
 // ===========================================
 
+// =============================================================
+// Estats Rentman → ProjectStatus intern
+// =============================================================
+//
+// WHITELIST estricte: només importem projectes "confirmats" cap endavant.
+// Tot el que estigui en fase de pressupost/consulta (option, quotation,
+// draft) o cancel·lat NO entra al sistema. Estats desconeguts → es saltan.
+//
+// Si Rentman afegeix un estat nou que volem importar, cal afegir-lo aquí
+// EXPLÍCITAMENT — millor saltar i loggar que importar a cegues.
+// =============================================================
+
+const RENTMAN_STATUS_MAP = {
+  // Confirmat — backend confirma la reserva, comencem preparació
+  'confirmed':           'IN_PREPARATION',
+  'confirmado':          'IN_PREPARATION',
+  // Preparat / actiu
+  'active':              'READY',
+  'prepared':            'READY',
+  'preparado':           'READY',
+  // En localització / fora del magatzem
+  'out':                 'OUT',
+  'on_location':         'OUT',
+  'on location':         'OUT',
+  'en localización':     'OUT',
+  'en_localizacion':     'OUT',
+  // Retardat / esperant retorn = encara fora
+  'delayed':             'OUT',
+  'retrasado':           'OUT',
+  'overdue':             'OUT',
+  'expected_return':     'OUT',
+  'expected return':     'OUT',
+  'expected back':       'OUT',
+  'esperado de regreso': 'OUT',
+  // Tornat
+  'returned':            'RETURNED',
+  'retornado':           'RETURNED',
+  'devuelto':            'RETURNED',
+  // Tancat / arxivat
+  'closed':              'CLOSED',
+  'archived':            'CLOSED',
+};
+
 /**
- * Mapeig d'estat Rentman → ProjectStatus intern.
- * Estats Rentman típics: "option", "confirmed", "quotation", etc.
+ * Mapeja un estat de Rentman al ProjectStatus intern, o `null` si l'estat
+ * no està a la whitelist (no confirmat, cancel·lat, o desconegut).
  */
 function mapRentmanStatusToProjectStatus(rentmanStatus) {
-  const s = (rentmanStatus || '').toLowerCase();
-  if (['option', 'quotation', 'draft'].includes(s)) return 'PENDING_PREP';
-  if (['confirmed', 'confirmado'].includes(s)) return 'IN_PREPARATION';
-  if (['active', 'prepared', 'preparado'].includes(s)) return 'READY';
-  if (['out', 'on_location', 'en localización', 'en_localizacion', 'on location'].includes(s)) return 'OUT';
-  if (['delayed', 'retrasado', 'overdue'].includes(s)) return 'OUT'; // Retardat = encara fora
-  if (['esperado de regreso', 'expected_return', 'expected return', 'expected back'].includes(s)) return 'OUT'; // Esperant retorn = encara fora
-  if (['returned', 'retornado', 'devuelto'].includes(s)) return 'RETURNED';
-  if (['closed', 'cancelled', 'archived'].includes(s)) return 'CLOSED';
-  return 'PENDING_PREP';
+  if (!rentmanStatus) return null;
+  return RENTMAN_STATUS_MAP[String(rentmanStatus).toLowerCase()] || null;
 }
 
 /**
@@ -316,31 +351,47 @@ async function fetchAllRentmanProjects({ pageSize = 500 } = {}) {
 }
 
 /**
- * Filtra projectes Rentman per obtenir només els actuals i futurs.
- * Exclou:
- *   - Projectes cancel·lats (cancelled)
- *   - Projectes en estat de consulta (quotation, option, draft)
- *   - Projectes amb data de retorn anterior a fa 7 dies
+ * Filtra projectes Rentman: només importem els CONFIRMATS-i-posteriors
+ * dins del rang temporal acceptat. Treballa amb whitelist via
+ * RENTMAN_STATUS_MAP — qualsevol estat fora del mapeig (option, quotation,
+ * draft, cancelled, o desconegut) queda fora.
  */
 function filterCurrentAndFutureProjects(projects) {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - 7);
 
-  // Estats que NO volem importar
-  const excludedStatuses = ['cancelled', 'quotation', 'option', 'draft'];
+  const skippedByStatus = {}; // per logging
+  const accepted = [];
 
-  return projects.filter((p) => {
-    // Excloure cancel·lats i consultes
-    const status = (p.status || '').toLowerCase();
-    if (excludedStatuses.includes(status)) return false;
+  for (const p of projects) {
+    const rawStatus = (p.status || '').toLowerCase().trim();
+    const mapped = RENTMAN_STATUS_MAP[rawStatus];
 
-    // Excloure projectes antics
+    if (!mapped) {
+      // Estat no confirmat / no whitelistejat → saltar
+      const key = rawStatus || '(buit)';
+      skippedByStatus[key] = (skippedByStatus[key] || 0) + 1;
+      continue;
+    }
+
+    // Excloure projectes antics (fi del període > 7 dies enrere)
     const endDate = p.planperiod_end || p.end;
-    if (!endDate) return true;
+    if (endDate) {
+      const end = new Date(endDate);
+      if (end < cutoff) continue;
+    }
 
-    const end = new Date(endDate);
-    return end >= cutoff;
-  });
+    accepted.push(p);
+  }
+
+  if (Object.keys(skippedByStatus).length > 0) {
+    const summary = Object.entries(skippedByStatus)
+      .map(([s, n]) => `${s}=${n}`)
+      .join(', ');
+    logger.info(`Rentman sync: saltats per estat no-confirmat → ${summary}`);
+  }
+
+  return accepted;
 }
 
 /**
@@ -403,6 +454,20 @@ async function syncOneProject(rmProject) {
   const status = mapRentmanStatusToProjectStatus(rmProject.status);
   const rentmanStatus = rmProject.status || null; // Estat natiu de Rentman (confirmed, out, etc.)
 
+  // Defensa-en-profunditat: si arribem aquí amb un estat fora del whitelist
+  // (no hauria de passar — el filtre ja l'hauria saltat), no creem projecte
+  // nou. Si ja existeix, deixem que l'actualització segueixi (per refrescar
+  // dates/nom/etc.) sense canviar l'status.
+  if (!status) {
+    const existing = await prisma.rentalProject.findFirst({
+      where: { rentmanProjectId }, select: { id: true },
+    });
+    if (!existing) {
+      logger.warn(`Rentman: projecte ${rentmanProjectId} (${name}) saltat — estat "${rmProject.status}" no whitelistejat`);
+      return 'skipped';
+    }
+  }
+
   // Buscar si ja existeix
   const existing = await prisma.rentalProject.findFirst({
     where: { rentmanProjectId },
@@ -432,17 +497,17 @@ async function syncOneProject(rmProject) {
     if (shootEndTime && existing.shootEndTime !== shootEndTime) updates.shootEndTime = shootEndTime;
     if (returnTime && existing.returnTime !== returnTime) updates.returnTime = returnTime;
 
-    // Només actualitzem l'estat si encara no s'ha tocat internament
-    // (si l'estat intern ha avançat més enllà del mapeig Rentman, no el retrocedim)
-    const internalStatusOrder = [
-      'PENDING_PREP', 'IN_PREPARATION', 'READY', 'OUT', 'RETURNED', 'CLOSED',
-    ];
-    const currentIdx = internalStatusOrder.indexOf(existing.status);
-    const newIdx = internalStatusOrder.indexOf(status);
-    // Actualitzar si Rentman avança l'estat
-    // Permet avançar: PENDING_PREP→IN_PREPARATION, →READY, →OUT, →RETURNED, →CLOSED
-    if (newIdx > currentIdx) {
-      updates.status = status;
+    // Només actualitzem l'estat si tenim un mapeig vàlid i si Rentman avança
+    // l'estat (no retrocedim mai un estat intern que ja s'ha mogut endavant).
+    if (status) {
+      const internalStatusOrder = [
+        'PENDING_PREP', 'IN_PREPARATION', 'READY', 'OUT', 'RETURNED', 'CLOSED',
+      ];
+      const currentIdx = internalStatusOrder.indexOf(existing.status);
+      const newIdx = internalStatusOrder.indexOf(status);
+      if (newIdx > currentIdx) {
+        updates.status = status;
+      }
     }
 
     if (existing.budgetReference !== (rmProject.reference || null) && rmProject.reference) {
@@ -563,4 +628,6 @@ module.exports = {
   fetchAllRentmanInvoices,
   syncProjects,
   syncOneProject,
+  mapRentmanStatusToProjectStatus,
+  RENTMAN_STATUS_MAP,
 };
