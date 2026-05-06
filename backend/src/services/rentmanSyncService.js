@@ -497,16 +497,31 @@ async function syncOneProject(rmProject) {
     if (shootEndTime && existing.shootEndTime !== shootEndTime) updates.shootEndTime = shootEndTime;
     if (returnTime && existing.returnTime !== returnTime) updates.returnTime = returnTime;
 
-    // Només actualitzem l'estat si tenim un mapeig vàlid i si Rentman avança
-    // l'estat (no retrocedim mai un estat intern que ja s'ha mogut endavant).
-    if (status) {
-      const internalStatusOrder = [
-        'PENDING_PREP', 'IN_PREPARATION', 'READY', 'OUT', 'RETURNED', 'CLOSED',
-      ];
-      const currentIdx = internalStatusOrder.indexOf(existing.status);
-      const newIdx = internalStatusOrder.indexOf(status);
-      if (newIdx > currentIdx) {
+    // ============================================
+    // Sincronització d'estat Rentman → intern
+    // ============================================
+    // Rentman és la font de veritat per al cicle de vida del projecte. Si
+    // canvia l'estat allà (cap endavant o cap enrere), reflectim el canvi
+    // automàticament al sistema. Excepcions:
+    //   - Si l'estat intern és CLOSED i ja no ho és a Rentman, no
+    //     "ressuscitem" el projecte automàticament (segurament algú l'ha
+    //     arxivat manualment) — quedem-nos com està.
+    //   - Si l'estat intern és OUT/RETURNED i Rentman tira enrere a
+    //     IN_PREPARATION, ho permetem (pot ser una correcció a Rentman).
+    if (status && existing.status !== status) {
+      const isInternalClosed = existing.status === 'CLOSED';
+      const isRentmanReopening = isInternalClosed && status !== 'CLOSED';
+      if (!isRentmanReopening) {
         updates.status = status;
+        if (existing.status !== status) {
+          logger.info(
+            `Rentman: projecte ${rentmanProjectId} (${name}) — canvi d'estat ${existing.status} → ${status} (Rentman: ${rentmanStatus})`
+          );
+        }
+      } else {
+        logger.info(
+          `Rentman: projecte ${rentmanProjectId} (${name}) està CLOSED localment però Rentman diu "${rentmanStatus}" — no es ressuscita automàticament`
+        );
       }
     }
 
@@ -514,7 +529,7 @@ async function syncOneProject(rmProject) {
       updates.budgetReference = rmProject.reference;
     }
 
-    // Actualitzar estat Rentman natiu
+    // Actualitzar estat Rentman natiu (per a auditoria/reconcile)
     if (rentmanStatus && existing.rentmanStatus !== rentmanStatus) {
       updates.rentmanStatus = rentmanStatus;
     }

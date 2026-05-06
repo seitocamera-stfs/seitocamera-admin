@@ -91,6 +91,38 @@ async function runNightlyFullSync() {
 }
 
 /**
+ * Sync incremental de PROJECTES (no factures): refresca estats des de Rentman.
+ * Captura canvis de status (option→confirmed, confirmed→out, out→returned, ...)
+ * i els reflecteix automàticament al sistema. Lleuger — es pot executar
+ * freqüentment dins l'horari laboral.
+ */
+let isProjectSyncRunning = false;
+async function runProjectStatusSync() {
+  if (isProjectSyncRunning) {
+    logger.info('Rentman project sync: ja s\'està executant, s\'omet');
+    return;
+  }
+  if (!process.env.RENTMAN_API_TOKEN) return;
+
+  isProjectSyncRunning = true;
+  try {
+    const result = await rentmanSync.syncProjects();
+    await redis.set('rentman:lastProjectSync', Date.now().toString());
+    await redis.set('rentman:lastProjectSyncResult', JSON.stringify(result), 'EX', 7 * 24 * 3600);
+
+    if (result.created > 0 || result.updated > 0 || result.errors > 0) {
+      logger.info(
+        `Rentman cron projectes: +${result.created} creats, ~${result.updated} actualitzats, ${result.skipped} saltats, ${result.errors} errors`
+      );
+    }
+  } catch (err) {
+    logger.error(`Rentman cron projectes: error: ${err.message}`);
+  } finally {
+    isProjectSyncRunning = false;
+  }
+}
+
+/**
  * Sync setmanal amb projecte: una vegada per setmana sincronitza-ho tot
  * consultant els projectes (per si alguna referència ha canviat).
  */
@@ -130,24 +162,36 @@ function startRentmanSyncJob() {
     return null;
   }
 
-  // 1. Incremental: cada hora en horari laboral (9-21h), dl-ds
+  // 1. Incremental factures: cada hora en horari laboral (9-21h), dl-ds
   const incrementalTask = cron.schedule('0 9-21 * * 1-6', runIncrementalSync, {
     timezone: 'Europe/Madrid',
   });
 
-  // 2. Complet nocturn: cada dia a les 03:30
+  // 2. Complet nocturn factures: cada dia a les 03:30
   const nightlyTask = cron.schedule('30 3 * * *', runNightlyFullSync, {
     timezone: 'Europe/Madrid',
   });
 
-  // 3. Amb projectes: diumenges a les 04:00
+  // 3. Amb projectes (factures): diumenges a les 04:00
   const weeklyTask = cron.schedule('0 4 * * 0', runWeeklyProjectSync, {
     timezone: 'Europe/Madrid',
   });
 
-  logger.info('Rentman sync: crons activats — incremental cada hora 9-21h (dl-ds), complet 03:30/dia, amb projectes diumenges 04:00');
+  // 4. PROJECTES (estat): cada 30 min entre 8h-22h, tots els dies — captura
+  //    canvis d'estat a Rentman ràpidament (option→confirmed→out→returned)
+  const projectStatusTask = cron.schedule('*/30 8-22 * * *', runProjectStatusSync, {
+    timezone: 'Europe/Madrid',
+  });
 
-  return { incrementalTask, nightlyTask, weeklyTask };
+  // Execució inicial dels projectes amb un petit delay (perquè la BD i
+  // Redis estiguin ben muntats)
+  setTimeout(() => {
+    runProjectStatusSync().catch(err => logger.error(`Rentman initial project sync: ${err.message}`));
+  }, 30_000);
+
+  logger.info('Rentman sync: crons activats — factures: incremental 9-21h (dl-ds), complet 03:30/dia, amb projectes diumenges 04:00. Projectes (estat): cada 30 min 8-22h (tots els dies)');
+
+  return { incrementalTask, nightlyTask, weeklyTask, projectStatusTask };
 }
 
 module.exports = {
@@ -155,4 +199,5 @@ module.exports = {
   runIncrementalSync,
   runNightlyFullSync,
   runWeeklyProjectSync,
+  runProjectStatusSync,
 };
