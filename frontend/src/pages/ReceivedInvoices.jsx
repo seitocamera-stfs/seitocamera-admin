@@ -1170,8 +1170,13 @@ export default function ReceivedInvoices() {
                     </td>
                     <td className="p-3">{inv.supplier?.name || (<span className="text-xs text-red-400 italic">Sense proveïdor</span>)}</td>
                     <td className="p-3 text-muted-foreground">
-                      {formatDate(inv.issueDate)}
-                      {inv.isDateEstimated && <span className="ml-1 text-xs text-amber-500" title="Data estimada (no extreta del PDF)">~</span>}
+                      {inv.isDateEstimated ? (
+                        <span className="inline-flex items-center gap-1 text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 text-xs" title="Data NO extreta del PDF — cal revisar manualment. La que es mostra és estimada (data del fitxer al Drive).">
+                          <AlertTriangle size={10} /> {formatDate(inv.issueDate)} (estimada)
+                        </span>
+                      ) : (
+                        formatDate(inv.issueDate)
+                      )}
                     </td>
                     <td className="p-3 text-muted-foreground text-xs">{formatDate(inv.createdAt)}</td>
                     <td className="p-3 text-right font-medium">{formatCurrency(inv.totalAmount)}</td>

@@ -72,6 +72,7 @@ const MAX_RUN_MINUTES = 15; // Safety timeout
 // Cache dels IDs de carpetes per no buscar-los cada cop
 let inboxFolderId = null;
 let duplicadesFolderId = null;
+let pendentsRevisioFolderId = null;
 
 /**
  * Obté l'ID de la carpeta inbox dins de factures-rebudes/
@@ -93,6 +94,44 @@ async function getDuplicadesFolderId() {
   const dup = await gdrive.findOrCreateFolder('duplicades', facturesRebudesId);
   duplicadesFolderId = dup.id;
   return duplicadesFolderId;
+}
+
+/**
+ * Obté l'ID de la carpeta pendents-revisio/ dins de factures-rebudes/.
+ * Aquí van els PDFs amb extracció parcial (sense data, sense número, sense
+ * import...) — així NO contaminen les carpetes de mes amb dates inventades.
+ */
+async function getPendentsRevisioFolderId() {
+  if (pendentsRevisioFolderId) return pendentsRevisioFolderId;
+  const facturesRebudesId = await gdrive.getSubfolderId('factures-rebudes');
+  const folder = await gdrive.findOrCreateFolder('pendents-revisio', facturesRebudesId);
+  pendentsRevisioFolderId = folder.id;
+  return pendentsRevisioFolderId;
+}
+
+/**
+ * Helper: valida i normalitza la data extreta del PDF.
+ * Accepta dates de qualsevol any (poden ser factures antigues importades).
+ * Rebutja: dates futures llunyanes (>30 dies endavant) o invàlides.
+ *
+ * @param {Date|null|undefined} extractedDate
+ * @returns {{ date: Date|null, isReliable: boolean }}
+ */
+function validateExtractedDate(extractedDate) {
+  if (!(extractedDate instanceof Date) || isNaN(extractedDate)) {
+    return { date: null, isReliable: false };
+  }
+  // Rebutgem dates futures > 30 dies (clarament errònies)
+  const maxFuture = new Date();
+  maxFuture.setDate(maxFuture.getDate() + 30);
+  if (extractedDate > maxFuture) {
+    return { date: null, isReliable: false };
+  }
+  // Rebutgem dates absurdes anteriors a 1990 (probablement OCR mal interpretat)
+  if (extractedDate.getFullYear() < 1990) {
+    return { date: null, isReliable: false };
+  }
+  return { date: extractedDate, isReliable: true };
 }
 
 /**
@@ -277,9 +316,12 @@ async function syncGdriveFiles() {
           subtotal = totalAmount ? Math.round((totalAmount / (1 + taxRate / 100)) * 100) / 100 : null;
           taxAmount = (totalAmount && subtotal) ? Math.round((totalAmount - subtotal) * 100) / 100 : null;
         }
-        const dateFromPdf = !!pdfAnalysis.invoiceDate;
-        const isDateEstimated = !dateFromPdf; // true si la data és fallback (no extreta del PDF)
-        const issueDate = pdfAnalysis.invoiceDate || (file.createdTime ? new Date(file.createdTime) : new Date());
+        // Validar data extreta. Si no és fiable, marcar isDateEstimated=true
+        // i fallback al createdTime del fitxer GDrive (mai 'avui' inventat).
+        const { date: validDate, isReliable: dateFromPdf } = validateExtractedDate(pdfAnalysis.invoiceDate);
+        const isDateEstimated = !dateFromPdf;
+        const issueDate = validDate
+          || (file.createdTime ? new Date(file.createdTime) : new Date());
         const dueDate = pdfAnalysis.dueDate || null;
         const needsReview = !pdfAnalysis.invoiceNumber || !pdfAnalysis.totalAmount || !dateFromPdf;
         const needsAmount = !pdfAnalysis.totalAmount; // import 0€ no és acceptable
@@ -331,7 +373,13 @@ async function syncGdriveFiles() {
 
         {
           // ===== NO DUPLICAT: primer crear a BD, després moure =====
-          const destFolderId = await gdrive.getDateBasedFolderId('factures-rebudes', issueDate);
+          // Si la factura té dades parcials (sense data fiable, sense número
+          // o sense import), la portem a pendents-revisio/ en lloc de la
+          // carpeta de mes — així evitem contaminar arxius fiscals amb
+          // dates inventades. L'usuari les processa manualment des de la UI.
+          const destFolderId = needsReview
+            ? await getPendentsRevisioFolderId()
+            : await gdrive.getDateBasedFolderId('factures-rebudes', issueDate);
 
           // Extreure metadata Zoho de la descripció del fitxer (si ve de zohoEmailSync)
           let zohoMeta = null;
@@ -559,6 +607,16 @@ async function getLogistikDateFolderId(date) {
   return monthFolder.id;
 }
 
+let logistikPendentsFolderId = null;
+async function getLogistikPendentsRevisioFolderId() {
+  if (logistikPendentsFolderId) return logistikPendentsFolderId;
+  const facturesRebudesId = await gdrive.getSubfolderId('factures-rebudes');
+  const logistikFolder = await gdrive.findOrCreateFolder('Seito-logistik', facturesRebudesId);
+  const folder = await gdrive.findOrCreateFolder('pendents-revisio', logistikFolder.id);
+  logistikPendentsFolderId = folder.id;
+  return logistikPendentsFolderId;
+}
+
 async function syncLogistikFiles() {
   if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY && !process.env.GOOGLE_CREDENTIALS_JSON && !process.env.GOOGLE_REFRESH_TOKEN) {
     return { processed: 0, errors: 0 };
@@ -653,9 +711,11 @@ async function syncLogistikFiles() {
           taxAmount = (totalAmount && subtotal) ? Math.round((totalAmount - subtotal) * 100) / 100 : null;
         }
 
-        const dateFromPdf = !!pdfAnalysis.invoiceDate;
-        const isDateEstimated = !dateFromPdf; // true si la data és fallback (no extreta del PDF)
-        const issueDate = pdfAnalysis.invoiceDate || (file.createdTime ? new Date(file.createdTime) : new Date());
+        // Validació estricta de la data extreta (vegeu validateExtractedDate)
+        const { date: validDate2, isReliable: dateFromPdf } = validateExtractedDate(pdfAnalysis.invoiceDate);
+        const isDateEstimated = !dateFromPdf;
+        const issueDate = validDate2
+          || (file.createdTime ? new Date(file.createdTime) : new Date());
         const dueDate = pdfAnalysis.dueDate || null;
         const needsReview = !pdfAnalysis.invoiceNumber || !pdfAnalysis.totalAmount || !dateFromPdf;
         const needsAmount = !pdfAnalysis.totalAmount;
@@ -729,7 +789,11 @@ async function syncLogistikFiles() {
         }
 
         // Moure a carpeta organitzada: Seito-logistik/{any}/{trimestre}/{mes}
-        const destFolderId = await getLogistikDateFolderId(issueDate);
+        // Si la factura té dades parcials (sense data fiable, sense núm o
+        // sense import), la portem a Seito-logistik/pendents-revisio/.
+        const destFolderId = needsReview
+          ? await getLogistikPendentsRevisioFolderId()
+          : await getLogistikDateFolderId(issueDate);
         await gdrive.moveFile(file.id, destFolderId, inboxId);
 
         // Renombrar fitxer: Proveidor_NumeroFactura.pdf
