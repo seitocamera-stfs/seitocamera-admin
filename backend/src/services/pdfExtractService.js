@@ -1338,16 +1338,25 @@ async function ocrPdf(filePathOrBuffer) {
  *
  * Flux:
  *   1. Extreure text amb pdf-parse (o OCR si escanejat)
- *   2. Enviar text a Claude API per extracció intel·ligent
- *   3. Si Claude no disponible → fallback a regex
- *   4. Combinar resultats: Claude té prioritat, regex omple buits
+ *   2. Provar Gemini 2.0 Flash multimodal (passa el PDF directament,
+ *      ~50× més barat que Claude i millor amb estructures complexes)
+ *   3. Fallback a Claude (només-text) si Gemini falla o no està configurat
+ *   4. Fallback a regex si cap IA està disponible
+ *   5. Combinar: AI té prioritat, regex omple buits
  *
  * @param {string|Buffer} filePathOrBuffer - Camí al fitxer o buffer
- * @returns {Object} { text, invoiceNumber, nifCif, totalAmount, invoiceDate, hasText, ocrUsed, aiExtracted }
+ * @returns {Object} { text, invoiceNumber, nifCif, totalAmount, invoiceDate, hasText, ocrUsed, aiExtracted, aiProvider }
  */
 async function analyzePdf(filePathOrBuffer) {
   let text = null;
   let ocrUsed = false;
+  // Buffer del PDF: necessari per a Gemini multimodal (passa el binari directe)
+  let pdfBuffer = null;
+  if (Buffer.isBuffer(filePathOrBuffer)) {
+    pdfBuffer = filePathOrBuffer;
+  } else if (typeof filePathOrBuffer === 'string') {
+    try { pdfBuffer = fs.readFileSync(filePathOrBuffer); } catch { /* extractText ja gestiona error */ }
+  }
 
   // 1) Intentar extracció de text natiu amb pdf-parse
   if (Buffer.isBuffer(filePathOrBuffer)) {
@@ -1383,20 +1392,46 @@ async function analyzePdf(filePathOrBuffer) {
     };
   }
 
-  // 4) Intentar extracció amb Claude API (prioritat)
+  // 4) Extracció amb IA: Gemini multimodal primer (millor + més barat),
+  //    fallback a Claude només-text si Gemini falla o no està configurat.
   let aiResult = null;
   let aiExtracted = false;
+  let aiProvider = null;
+
+  // 4a) Gemini Flash multimodal (preferent — entén disposició visual del PDF)
   try {
-    const claudeExtract = require('./claudeExtractService');
-    if (claudeExtract.isAvailable()) {
-      aiResult = await claudeExtract.extractInvoiceData(text);
+    const geminiExtract = require('./geminiExtractService');
+    if (geminiExtract.isAvailable()) {
+      if (pdfBuffer) {
+        aiResult = await geminiExtract.extractInvoiceFromPdf(pdfBuffer, { fallbackText: text });
+      } else {
+        aiResult = await geminiExtract.extractInvoiceData(text);
+      }
       if (aiResult) {
         aiExtracted = true;
-        logger.info('analyzePdf: Extracció amb Claude API completada');
+        aiProvider = pdfBuffer ? 'gemini-pdf' : 'gemini-text';
+        logger.info(`analyzePdf: Extracció amb Gemini (${aiProvider}) completada`);
       }
     }
   } catch (err) {
-    logger.warn(`analyzePdf: Claude Extract no disponible: ${err.message}`);
+    logger.warn(`analyzePdf: Gemini Extract error: ${err.message}`);
+  }
+
+  // 4b) Fallback Claude (només-text) si Gemini ha fallat o no està disponible
+  if (!aiResult) {
+    try {
+      const claudeExtract = require('./claudeExtractService');
+      if (claudeExtract.isAvailable()) {
+        aiResult = await claudeExtract.extractInvoiceData(text);
+        if (aiResult) {
+          aiExtracted = true;
+          aiProvider = 'claude';
+          logger.info('analyzePdf: Extracció amb Claude API completada (fallback)');
+        }
+      }
+    } catch (err) {
+      logger.warn(`analyzePdf: Claude Extract no disponible: ${err.message}`);
+    }
   }
 
   // 5) Fallback a regex per camps que Claude no ha pogut extreure
@@ -1431,6 +1466,7 @@ async function analyzePdf(filePathOrBuffer) {
       hasText: true,
       ocrUsed,
       aiExtracted: true,
+      aiProvider,
     };
   }
 
