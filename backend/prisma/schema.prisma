@@ -40,6 +40,14 @@ model User {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  // Telegram — vinculació opcional per rebre recordatoris al xat personal
+  telegramChatId       String?    // chat_id retornat pel webhook quan envia /start
+  telegramUsername     String?    // @username de Telegram (informatiu)
+  telegramLinkCode     String?    @unique  // Codi temporal per fer /start <code>
+  telegramLinkExpires  DateTime?  @db.Timestamptz()
+  telegramLinkedAt     DateTime?  @db.Timestamptz()
+  notifyTelegram       Boolean    @default(true)  // Toggle per usuari
+
   // Relacions
   notes             Note[]
   reminders         Reminder[]
@@ -1264,6 +1272,7 @@ model ProjectTask {
   activities      TaskActivity[]
   assignees       ProjectTaskAssignee[]
   attachments     TaskAttachment[]
+  remindersSent   TaskReminderSent[]
 
   @@index([projectId])
   @@index([assignedToId])
@@ -1292,6 +1301,27 @@ model TaskAttachment {
 
   @@index([taskId])
   @@map("task_attachments")
+}
+
+/// Registre dels recordatoris ja enviats per una tasca + usuari + canal,
+/// per evitar duplicats si el cron es repeteix.
+/// `kind` identifica el tipus de recordatori segons TaskReminder
+/// (per ex. AT_TIME, HOUR_BEFORE, DAY_BEFORE, CUSTOM).
+/// Si la tasca canvia de data o de recordatori, esborrem les entrades
+/// associades per permetre re-enviar.
+model TaskReminderSent {
+  id            String      @id @default(cuid())
+  taskId        String
+  userId        String
+  channel       String      // 'telegram' | 'push' | 'email'
+  kind          String      // TaskReminder enum value (AT_TIME, HOUR_BEFORE, ...)
+  sentAt        DateTime    @default(now()) @db.Timestamptz()
+
+  task          ProjectTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, userId, channel, kind])
+  @@index([taskId])
+  @@map("task_reminder_sent")
 }
 
 /// Co-assignació de tasques a múltiples usuaris.

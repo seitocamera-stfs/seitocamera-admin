@@ -280,16 +280,22 @@ export default function Sidebar({ onClose }) {
       {/* Footer usuari */}
       <div className="px-3 py-3" style={{ borderTop: '1px solid rgba(255,255,255,0.1)' }}>
         <div className="flex items-center gap-2.5 px-2 py-1.5">
-          <div
-            className="w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-medium text-white"
-            style={{ background: 'rgba(255,255,255,0.2)' }}
+          <button
+            onClick={() => navigate('/profile')}
+            className="flex items-center gap-2.5 flex-1 min-w-0 hover:opacity-90 transition-opacity"
+            title="Perfil i notificacions"
           >
-            {initials}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="text-[11px] font-medium text-white truncate">{user?.name}</div>
-            <div className="text-[9px]" style={{ color: 'rgba(255,255,255,0.45)' }}>{user?.role}</div>
-          </div>
+            <div
+              className="w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-medium text-white"
+              style={{ background: 'rgba(255,255,255,0.2)' }}
+            >
+              {initials}
+            </div>
+            <div className="flex-1 min-w-0 text-left">
+              <div className="text-[11px] font-medium text-white truncate">{user?.name}</div>
+              <div className="text-[9px]" style={{ color: 'rgba(255,255,255,0.45)' }}>{user?.role}</div>
+            </div>
+          </button>
           <button
             onClick={handleLogout}
             className="p-2 rounded-md hover:bg-white/10 active:bg-white/20 transition-colors"

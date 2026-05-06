@@ -147,6 +147,7 @@ app.use('/api/shelly', require('./routes/shelly'));
 app.use('/api/push', require('./routes/push'));
 app.use('/api/logistics', require('./routes/logistics'));
 app.use('/api/team', require('./routes/team'));
+app.use('/api/telegram', require('./routes/telegram'));
 
 // Mòdul Comptabilitat formal (Sprint 1)
 app.use('/api/companies', require('./routes/companies'));
@@ -333,6 +334,10 @@ async function start() {
     startShellySyncJob();
     const { startQontoDropzoneJob } = require('./jobs/qontoDropzoneJob');
     startQontoDropzoneJob();
+    const { startTaskReminderJob } = require('./jobs/taskReminderJob');
+    startTaskReminderJob();
+    const { startTelegramPollingJob } = require('./jobs/telegramPollingJob');
+    startTelegramPollingJob();
     // accountingReviewJob desactivat — agentJobsService ja fa classify + anomalies
     // const { startAccountingReviewJob } = require('./jobs/accountingReviewJob');
     // startAccountingReviewJob();

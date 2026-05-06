@@ -56,6 +56,7 @@ import MarketingSettings from './pages/marketing/MarketingSettings';
 import MarketingRuns from './pages/marketing/MarketingRuns';
 import MarketingRunDetail from './pages/marketing/MarketingRunDetail';
 import WarehouseAgent from './pages/warehouse/WarehouseAgent';
+import Profile from './pages/Profile';
 import useAuthStore from './stores/authStore';
 
 function App() {
@@ -142,6 +143,8 @@ function App() {
         <Route path="marketing/runs/:id" element={<RoleGuard section="agent"><MarketingRunDetail /></RoleGuard>} />
         {/* Magatzem IA — chat operatiu */}
         <Route path="warehouse/agent" element={<RoleGuard section="agent"><WarehouseAgent /></RoleGuard>} />
+        {/* Perfil personal — accés des de l'avatar al sidebar */}
+        <Route path="profile" element={<Profile />} />
       </Route>
     </Routes>
   );
