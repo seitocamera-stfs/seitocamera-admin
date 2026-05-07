@@ -85,11 +85,14 @@ router.get('/briefing', async (req, res, next) => {
     });
 
     // ---- 4) Devolucions endarrerides (returnDate < avui i no encara tornades) ----
+    // Excluïm projectes ja RETURNED o CLOSED (estats finals del cicle de vida).
+    // Si Rentman ha marcat el projecte com "Devuelto" → status=RETURNED i no
+    // hauria d'aparèixer aquí encara que actualReturnDate sigui null.
     const overdue_returns = await prisma.rentalProject.findMany({
       where: {
         returnDate: { lt: today },
         actualReturnDate: null,
-        status: { not: 'CLOSED' },
+        status: { notIn: ['CLOSED', 'RETURNED'] },
       },
       select: projectFields,
       orderBy: { returnDate: 'asc' },

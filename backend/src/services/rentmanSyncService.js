@@ -606,6 +606,12 @@ async function syncOneProject(rmProject) {
       const isRentmanReopening = isInternalClosed && status !== 'CLOSED';
       if (!isRentmanReopening) {
         updates.status = status;
+        // Si Rentman acaba de marcar el projecte com a Devuelto/Closed i el
+        // sistema no en té actualReturnDate, omplim-la amb avui per evitar
+        // que el dashboard segueixi mostrant-lo com a "devolució endarrerida".
+        if ((status === 'RETURNED' || status === 'CLOSED') && !existing.actualReturnDate) {
+          updates.actualReturnDate = new Date();
+        }
         if (existing.status !== status) {
           logger.info(
             `Rentman: projecte ${rentmanProjectId} (${name}) — canvi d'estat ${existing.status} → ${status} (Rentman: ${rentmanStatus})`

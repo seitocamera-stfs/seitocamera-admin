@@ -51,11 +51,12 @@ async function runWarehouseDailyBriefing() {
   }
 
   // ---- 2) Devolucions endarrerides ----
+  // Excluïm els ja RETURNED/CLOSED (estats finals).
   const overdue = await prisma.rentalProject.findMany({
     where: {
       returnDate: { lt: today },
       actualReturnDate: null,
-      status: { not: 'CLOSED' },
+      status: { notIn: ['CLOSED', 'RETURNED'] },
     },
     select: {
       id: true, name: true, returnDate: true, returnLeadUserId: true,
