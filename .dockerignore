@@ -1,0 +1,55 @@
+# ============================================================
+# Docker build context filtering — repo root
+# ============================================================
+# Estem fent build des de l'arrel per accedir a backend/ + marketing/.
+# Aquí marquem coses pesades / sensibles que NO han de pujar a l'imatge.
+
+# Secrets — mai!
+**/.env
+**/.env.*
+!**/.env.example
+google-service-account.json
+
+# Backend
+backend/node_modules
+backend/.next
+backend/logs
+backend/dist
+backend/uploads
+backend/coverage
+
+# Frontend (no l'usa el backend Dockerfile, però per si de cas)
+frontend/node_modules
+frontend/dist
+frontend/coverage
+frontend/.vite
+
+# Marketing
+marketing/.venv
+marketing/build
+marketing/dist
+marketing/*.egg-info
+marketing/__pycache__
+marketing/**/__pycache__
+marketing/.pytest_cache
+marketing/out/*
+!marketing/out/.gitkeep
+marketing/dry_runs
+marketing/evals_legacy
+marketing/test
+marketing/tests
+marketing/logs
+
+# Git + IDE + temp
+.git
+.github
+.vscode
+.idea
+.DS_Store
+**/*.log
+**/.cache
+docs
+
+# Documentació pesada que no necessita el container
+*.md
+!README.md
