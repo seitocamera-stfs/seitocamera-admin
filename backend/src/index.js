@@ -148,6 +148,7 @@ app.use('/api/push', require('./routes/push'));
 app.use('/api/logistics', require('./routes/logistics'));
 app.use('/api/team', require('./routes/team'));
 app.use('/api/telegram', require('./routes/telegram'));
+app.use('/api/chat', require('./routes/chat'));
 
 // Mòdul Comptabilitat formal (Sprint 1)
 app.use('/api/companies', require('./routes/companies'));

@@ -97,4 +97,59 @@ const taskAttachmentUpload = multer({
   },
 });
 
-module.exports = { upload, UPLOAD_DIR, taskAttachmentUpload, TASK_ATTACHMENTS_DIR };
+// ===========================================
+// Storage / upload per a adjunts del XAT (mateix patró que tasques)
+// ===========================================
+const CHAT_ATTACHMENTS_DIR = path.join(__dirname, '../../uploads/chat-attachments');
+if (!fs.existsSync(CHAT_ATTACHMENTS_DIR)) fs.mkdirSync(CHAT_ATTACHMENTS_DIR, { recursive: true });
+
+const chatAttachmentStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const channelId = req.params.channelId || 'shared';
+    const channelDir = path.join(CHAT_ATTACHMENTS_DIR, channelId.replace(/[^a-zA-Z0-9]/g, ''));
+    if (!fs.existsSync(channelDir)) fs.mkdirSync(channelDir, { recursive: true });
+    cb(null, channelDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueName = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${path.extname(file.originalname)}`;
+    cb(null, uniqueName);
+  },
+});
+
+// Filtre permissiu per adjunts de xat
+const chatAttachmentFilter = (req, file, cb) => {
+  const allowed = [
+    'application/pdf',
+    'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic', 'image/heif',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'text/plain', 'text/csv', 'text/markdown',
+    'application/zip', 'application/x-zip-compressed', 'application/x-7z-compressed',
+    'application/x-rar-compressed',
+    'video/mp4', 'video/quicktime', 'video/webm',
+    'audio/mpeg', 'audio/mp4', 'audio/webm',
+  ];
+  if (allowed.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error(`Tipus de fitxer no permès: ${file.mimetype}`), false);
+  }
+};
+
+const chatAttachmentUpload = multer({
+  storage: chatAttachmentStorage,
+  fileFilter: chatAttachmentFilter,
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50 MB per als adjunts del xat (vídeos curts)
+  },
+});
+
+module.exports = {
+  upload, UPLOAD_DIR,
+  taskAttachmentUpload, TASK_ATTACHMENTS_DIR,
+  chatAttachmentUpload, CHAT_ATTACHMENTS_DIR,
+};

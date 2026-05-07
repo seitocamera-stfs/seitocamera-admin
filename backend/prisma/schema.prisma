@@ -81,6 +81,12 @@ model User {
   transportsCreated     Transport[]        @relation("transportCreatedBy")
   conductorProfile      Conductor?         @relation("ConductorUser")
 
+  // Xat intern
+  chatChannelsCreated   ChatChannel[]      @relation("ChatChannelCreator")
+  chatMemberships       ChatMember[]
+  chatMessages          ChatMessage[]      @relation("ChatMessageAuthor")
+  chatMentions          ChatMessageMention[] @relation("ChatMentionUser")
+
   // Mòdul Comptabilitat formal
   fiscalYearsLocked     FiscalYear[]       @relation("fiscalYearLocked")
   auditLogs             AuditLog[]
@@ -2319,4 +2325,109 @@ model JournalLine {
   @@index([accountId])
   @@index([projectId])
   @@map("journal_lines")
+}
+
+// =============================================================
+// XAT INTERN
+// =============================================================
+// Canals d'equip on els usuaris parlen entre ells. Cada canal té N
+// membres explícits i N missatges. Els missatges poden tenir
+// @mencions a usuaris (relació explícita per facilitar notificació).
+
+enum ChatChannelType {
+  TEAM      // Canal d'equip general (multi-usuari)
+  PROJECT   // Canal lligat a un projecte
+  DM        // Direct message 1-a-1 (futur)
+}
+
+model ChatChannel {
+  id            String          @id @default(cuid())
+  name          String          // Ex: "general", "tècnica", "magatzem"
+  description   String?
+  type          ChatChannelType @default(TEAM)
+  color         String?         // Color hex per a UI
+  icon          String?         // Emoji o icon name
+  isArchived    Boolean         @default(false)
+  createdById   String?
+  createdBy     User?           @relation("ChatChannelCreator", fields: [createdById], references: [id])
+  createdAt     DateTime        @default(now()) @db.Timestamptz()
+  updatedAt     DateTime        @updatedAt @db.Timestamptz()
+
+  members       ChatMember[]
+  messages      ChatMessage[]
+
+  @@index([type])
+  @@index([isArchived])
+  @@map("chat_channels")
+}
+
+model ChatMember {
+  channelId     String
+  userId        String
+  role          String          @default("MEMBER") // MEMBER | ADMIN
+  joinedAt      DateTime        @default(now()) @db.Timestamptz()
+  lastReadAt    DateTime?       @db.Timestamptz()  // Per saber missatges sense llegir
+  notifyMentionsOnly Boolean    @default(false)    // Si true, no rep notif de tots els missatges (campana ja ho gestiona)
+
+  channel       ChatChannel     @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([channelId, userId])
+  @@index([userId])
+  @@map("chat_members")
+}
+
+model ChatMessage {
+  id            String          @id @default(cuid())
+  channelId     String
+  userId        String          // Autor
+  content       String          // Text amb format markdown light
+  attachmentId  String?         // Reutilitzem la infra TaskAttachment? Per simplicitat, fem nostre.
+
+  // Soft-delete + edicions
+  editedAt      DateTime?       @db.Timestamptz()
+  deletedAt     DateTime?       @db.Timestamptz()
+
+  createdAt     DateTime        @default(now()) @db.Timestamptz()
+
+  channel       ChatChannel     @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  user          User            @relation("ChatMessageAuthor", fields: [userId], references: [id], onDelete: Cascade)
+  mentions      ChatMessageMention[]
+  attachment    ChatAttachment? @relation(fields: [attachmentId], references: [id], onDelete: SetNull)
+
+  @@index([channelId, createdAt])
+  @@index([userId])
+  @@map("chat_messages")
+}
+
+/// @mencions explícites — facilita query "missatges on em mencionen" i
+/// dispara notificacions a Telegram + push.
+model ChatMessageMention {
+  messageId  String
+  userId     String
+
+  message    ChatMessage  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user       User         @relation("ChatMentionUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([messageId, userId])
+  @@index([userId])
+  @@map("chat_message_mentions")
+}
+
+/// Adjunts a missatges del xat. Reutilitzem la mateixa estructura de
+/// TaskAttachment per evitar duplicar lògica de multer/storage.
+model ChatAttachment {
+  id            String        @id @default(cuid())
+  channelId     String        // Per organitzar al disc i poder esborrar tot d'un canal
+  filename      String        // Nom intern al disc (únic)
+  originalName  String        // Nom amb què l'usuari el va pujar
+  mimeType      String
+  sizeBytes     Int
+  uploadedById  String?
+  uploadedAt    DateTime      @default(now()) @db.Timestamptz()
+
+  messages      ChatMessage[]
+
+  @@index([channelId])
+  @@map("chat_attachments")
 }

@@ -1,4 +1,6 @@
+import { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
+import api from '../../lib/api';
 import {
   LayoutDashboard,
   FileInput,
@@ -48,6 +50,7 @@ import {
   Map,
   Warehouse,
   LineChart,
+  MessageCircle,
 } from 'lucide-react';
 import useAuthStore from '../../stores/authStore';
 import useCompanyStore from '../../stores/companyStore';
@@ -84,6 +87,7 @@ const sections = [
     key: 'team',
     label: 'Equip',
     items: [
+      { to: '/chat', icon: MessageCircle, label: 'Xat', badgeKey: 'chat' },
       { to: '/team/clock', icon: Timer, label: 'Control horari', section: 'operations' },
       { to: '/team/entries', icon: ClipboardList, label: 'Registres horaris', section: 'operations' },
       { to: '/team/absences', icon: CalendarOff, label: 'Absències', section: 'operations' },
@@ -207,6 +211,21 @@ export default function Sidebar({ onClose }) {
     ? user.name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()
     : '??';
 
+  // Badge de missatges sense llegir al xat
+  const [unreadChat, setUnreadChat] = useState(0);
+  useEffect(() => {
+    if (!user) return;
+    const refresh = async () => {
+      try {
+        const res = await api.get('/chat/unread-counts');
+        setUnreadChat(res.data?.total || 0);
+      } catch { /* silent */ }
+    };
+    refresh();
+    const id = setInterval(refresh, 15000);
+    return () => clearInterval(id);
+  }, [user]);
+
   return (
     <aside
       className="w-60 h-full flex flex-col flex-shrink-0"
@@ -250,7 +269,7 @@ export default function Sidebar({ onClose }) {
                 {section.label}
               </p>
               <div className="space-y-0.5">
-                {visibleItems.map(({ to, icon: Icon, label }) => (
+                {visibleItems.map(({ to, icon: Icon, label, badgeKey }) => (
                   <NavLink
                     key={to}
                     to={to}
@@ -268,7 +287,12 @@ export default function Sidebar({ onClose }) {
                     })}
                   >
                     <Icon size={16} style={{ opacity: 0.85 }} />
-                    {label}
+                    <span className="flex-1">{label}</span>
+                    {badgeKey === 'chat' && unreadChat > 0 && (
+                      <span className="text-[9px] bg-red-500 text-white px-1.5 rounded-full font-semibold min-w-[16px] text-center">
+                        {unreadChat > 99 ? '99+' : unreadChat}
+                      </span>
+                    )}
                   </NavLink>
                 ))}
               </div>
