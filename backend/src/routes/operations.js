@@ -1916,21 +1916,64 @@ router.post('/tasks/:id/comments', async (req, res, next) => {
       data: { taskId: req.params.id, userId: req.user.id, action: 'comment', details: { commentId: comment.id } },
     });
 
-    // Notificar a l'assignat si no és qui comenta
+    // Notificar tots els implicats (creador + assignat principal + co-assignats M:N)
+    // excloent qui escriu el comentari.
     const task = await prisma.projectTask.findUnique({
       where: { id: req.params.id },
-      select: { assignedToId: true, title: true, createdById: true },
+      select: {
+        assignedToId: true, title: true, createdById: true,
+        assignees: { select: { userId: true } },
+      },
     });
-    const notifyUsers = [task.assignedToId, task.createdById].filter(uid => uid && uid !== req.user.id);
-    for (const uid of [...new Set(notifyUsers)]) {
-      await createNotificationForUser(uid, {
+    const allRecipients = new Set();
+    if (task.assignedToId) allRecipients.add(task.assignedToId);
+    if (task.createdById)  allRecipients.add(task.createdById);
+    for (const a of task.assignees || []) allRecipients.add(a.userId);
+    allRecipients.delete(req.user.id);  // mai s'auto-notifica
+
+    const preview = content.trim().length > 100
+      ? content.trim().slice(0, 100) + '...'
+      : content.trim();
+
+    // Resoldre destinataris amb dades Telegram (per enviar avís personal si vinculat)
+    const recipientUsers = await prisma.user.findMany({
+      where: { id: { in: [...allRecipients] }, isActive: true },
+      select: {
+        id: true, name: true,
+        telegramChatId: true, notifyTelegram: true,
+      },
+    });
+
+    const front = process.env.FRONTEND_URL?.replace(/\/$/, '') || '';
+    const taskUrl = `${front}/operations/tasks?taskId=${req.params.id}`;
+    const tg = require('../services/telegramService');
+
+    for (const u of recipientUsers) {
+      // 1) In-app + push
+      await createNotificationForUser(u.id, {
         type: 'task_comment',
         title: `Comentari de ${req.user.name}`,
-        message: `${content.trim().substring(0, 100)}${content.length > 100 ? '...' : ''} — ${task.title}`,
+        message: `${preview} — ${task.title}`,
         entityType: 'task',
         entityId: req.params.id,
         priority: 'normal',
+        url: `/operations/tasks?taskId=${req.params.id}`,
       });
+
+      // 2) Telegram (si vinculat i toggle ON)
+      if (u.telegramChatId && u.notifyTelegram && tg.isEnabled()) {
+        const e = tg.mdv2Escape;
+        try {
+          const text =
+            `💬 *Comentari nou* a tasca\n\n` +
+            `📋 ${e(task.title)}\n` +
+            `👤 ${e(req.user.name)}: ${e(preview)}\n\n` +
+            (front ? `[Obrir tasca](${taskUrl})` : '');
+          await tg.sendMessage(u.telegramChatId, text);
+        } catch (err) {
+          logger.warn(`Telegram notif comment error per ${u.id}: ${err.message}`);
+        }
+      }
     }
 
     res.status(201).json(comment);
@@ -2711,13 +2754,17 @@ router.get('/dashboard', async (req, res, next) => {
  */
 async function createNotificationForUser(userId, notifData) {
   try {
-    await prisma.opNotification.create({ data: { userId, ...notifData } });
+    // OpNotification només té els camps definits al schema; descartem `url`
+    // (no és persistible) però el reenviem al push perquè el navegador obri
+    // la pàgina correcta en clicar-hi.
+    const { url, ...persistable } = notifData;
+    await prisma.opNotification.create({ data: { userId, ...persistable } });
     try {
       const pushService = require('../services/pushService');
       pushService.sendToUser(userId, {
         title: notifData.title || 'SeitoCamera',
         body: notifData.message || '',
-        url: '/',
+        url: url || '/',
         tag: notifData.type || 'notification',
       }).catch(() => {});
     } catch { /* */ }
