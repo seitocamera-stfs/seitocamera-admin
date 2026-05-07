@@ -11,6 +11,7 @@ const { prisma } = require('../config/database');
 const { logger } = require('../config/logger');
 const { chatAttachmentUpload, CHAT_ATTACHMENTS_DIR } = require('../config/upload');
 const chatService = require('../services/chatService');
+const tg = require('../services/telegramService');
 
 const router = express.Router();
 
@@ -482,6 +483,90 @@ router.get('/attachments/:attachmentId/download', async (req, res, next) => {
     res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${encodeURIComponent(att.originalName)}"`);
     res.setHeader('Content-Length', att.sizeBytes);
     fs.createReadStream(filePath).pipe(res);
+  } catch (err) { next(err); }
+});
+
+// ====================================================================
+// Bridge bidireccional Telegram (vincular canal amb un grup TG)
+// ====================================================================
+
+/**
+ * GET /api/chat/channels/:channelId/telegram-status
+ *   Estat actual del bridge + codi pendent (si hi és)
+ */
+router.get('/channels/:channelId/telegram-status', assertMember, async (req, res, next) => {
+  try {
+    const c = await prisma.chatChannel.findUnique({
+      where: { id: req.params.channelId },
+      select: {
+        telegramGroupChatId: true,
+        telegramGroupTitle: true,
+        telegramLinkCode: true,
+        telegramLinkExpires: true,
+      },
+    });
+    if (!c) return res.status(404).json({ error: 'Canal no trobat' });
+    res.json({
+      enabled: tg.isEnabled(),
+      botUsername: tg.getBotUsername(),
+      linked: Boolean(c.telegramGroupChatId),
+      groupTitle: c.telegramGroupTitle,
+      pendingCode: c.telegramLinkCode,
+      pendingExpires: c.telegramLinkExpires,
+    });
+  } catch (err) { next(err); }
+});
+
+/**
+ * POST /api/chat/channels/:channelId/telegram-link/start
+ *   Genera codi temporal i instruccions per vincular el grup TG
+ */
+router.post('/channels/:channelId/telegram-link/start', assertMember, async (req, res, next) => {
+  try {
+    if (!tg.isEnabled()) return res.status(503).json({ error: 'Telegram bot no configurat' });
+    const isChannelAdmin = req.chatMember?.role === 'ADMIN' || req.user.role === 'ADMIN';
+    if (!isChannelAdmin) return res.status(403).json({ error: 'Cal ser admin del canal' });
+
+    const code = tg.generateLinkCode();
+    const expires = new Date(Date.now() + 30 * 60 * 1000); // 30 min
+    await prisma.chatChannel.update({
+      where: { id: req.params.channelId },
+      data: { telegramLinkCode: code, telegramLinkExpires: expires },
+    });
+    res.json({
+      code,
+      expires,
+      botUsername: tg.getBotUsername(),
+      command: `/link ${code}`,
+      instructions: [
+        '1. Crea un grup a Telegram amb els membres del canal',
+        `2. Afegeix el bot @${tg.getBotUsername()} al grup`,
+        `3. Envia aquesta comanda al grup: /link ${code}`,
+        '4. El bot confirmarà la vinculació',
+      ],
+    });
+  } catch (err) { next(err); }
+});
+
+/**
+ * POST /api/chat/channels/:channelId/telegram-link/cancel
+ *   Esborra el codi pendent o desvincula el grup
+ */
+router.post('/channels/:channelId/telegram-link/cancel', assertMember, async (req, res, next) => {
+  try {
+    const isChannelAdmin = req.chatMember?.role === 'ADMIN' || req.user.role === 'ADMIN';
+    if (!isChannelAdmin) return res.status(403).json({ error: 'Cal ser admin del canal' });
+
+    await prisma.chatChannel.update({
+      where: { id: req.params.channelId },
+      data: {
+        telegramGroupChatId: null,
+        telegramGroupTitle: null,
+        telegramLinkCode: null,
+        telegramLinkExpires: null,
+      },
+    });
+    res.json({ ok: true });
   } catch (err) { next(err); }
 });
 

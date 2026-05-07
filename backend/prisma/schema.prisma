@@ -41,7 +41,8 @@ model User {
   updatedAt     DateTime @updatedAt
 
   // Telegram — vinculació opcional per rebre recordatoris al xat personal
-  telegramChatId       String?    // chat_id retornat pel webhook quan envia /start
+  telegramChatId       String?    // chat_id retornat pel webhook quan envia /start (igual a userId per a xats privats)
+  telegramUserId       String?    @unique  // ID numèric d'usuari Telegram — necessari per identificar autors de missatges en grups
   telegramUsername     String?    // @username de Telegram (informatiu)
   telegramLinkCode     String?    @unique  // Codi temporal per fer /start <code>
   telegramLinkExpires  DateTime?  @db.Timestamptz()
@@ -2353,6 +2354,12 @@ model ChatChannel {
   createdAt     DateTime        @default(now()) @db.Timestamptz()
   updatedAt     DateTime        @updatedAt @db.Timestamptz()
 
+  // Bridge bidireccional amb un grup de Telegram (opcional)
+  telegramGroupChatId   String?    @unique  // Ex: "-1001234567890" (supergrups)
+  telegramGroupTitle    String?    // Nom del grup a Telegram (informatiu)
+  telegramLinkCode      String?    @unique  // Codi temporal per al setup
+  telegramLinkExpires   DateTime?  @db.Timestamptz()
+
   members       ChatMember[]
   messages      ChatMessage[]
 
@@ -2383,6 +2390,10 @@ model ChatMessage {
   userId        String          // Autor
   content       String          // Text amb format markdown light
   attachmentId  String?         // Reutilitzem la infra TaskAttachment? Per simplicitat, fem nostre.
+
+  // Tracking pel bridge bidireccional amb Telegram
+  telegramMessageId   String?    // ID del missatge a Telegram (per evitar reimports)
+  source              String     @default("APP")  // 'APP' | 'TELEGRAM'
 
   // Soft-delete + edicions
   editedAt      DateTime?       @db.Timestamptz()

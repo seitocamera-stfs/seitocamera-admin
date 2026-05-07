@@ -77,7 +77,39 @@ async function resolveMentionUserIds(channelId, text) {
 //   - Mencionats explícitament: notificació in-app + push + Telegram (opt-in).
 //   - L'autor mai rep notificació del seu propi missatge.
 
-async function notifyNewMessage({ message, channel, mentionUserIds, authorName }) {
+async function notifyNewMessage({ message, channel, mentionUserIds, authorName, skipTelegramForward = false }) {
+  const channelLabel = channel.name;
+  const previewText = message.content.length > 200
+    ? message.content.slice(0, 200) + '...'
+    : message.content;
+  const front = process.env.FRONTEND_URL?.replace(/\/$/, '') || '';
+  const link = `${front}/chat/${channel.id}`;
+
+  // ============================================
+  // 1) Bridge App → grup Telegram (si està vinculat)
+  // ============================================
+  // Important: si la font del missatge és TELEGRAM, NO el repliquem cap al grup
+  // (sinó faríem ping-pong infinit). El handler del webhook passa skipTelegramForward=true.
+  if (!skipTelegramForward) {
+    try {
+      const fullChannel = await prisma.chatChannel.findUnique({
+        where: { id: channel.id },
+        select: { telegramGroupChatId: true },
+      });
+      if (fullChannel?.telegramGroupChatId) {
+        const e = tg.mdv2Escape;
+        // Format minimal: *Nom:* missatge
+        const tgText = `*${e(authorName)}:* ${e(message.content)}`;
+        await tg.sendMessage(fullChannel.telegramGroupChatId, tgText);
+      }
+    } catch (err) {
+      logger.warn(`Chat bridge App→TG group error: ${err.message}`);
+    }
+  }
+
+  // ============================================
+  // 2) Notificar mencionats (in-app + push + Telegram personal)
+  // ============================================
   if (!mentionUserIds || mentionUserIds.length === 0) return;
 
   const targets = await prisma.user.findMany({
@@ -87,13 +119,6 @@ async function notifyNewMessage({ message, channel, mentionUserIds, authorName }
       telegramChatId: true, notifyTelegram: true,
     },
   });
-
-  const channelLabel = channel.name;
-  const previewText = message.content.length > 200
-    ? message.content.slice(0, 200) + '...'
-    : message.content;
-  const front = process.env.FRONTEND_URL?.replace(/\/$/, '') || '';
-  const link = `${front}/chat/${channel.id}`;
 
   // 1) In-app notification (OpNotification)
   try {

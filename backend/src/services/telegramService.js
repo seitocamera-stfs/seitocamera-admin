@@ -136,6 +136,14 @@ async function getUpdates(offset = 0) {
   return tg('getUpdates', { offset, timeout: 0 });
 }
 
+/**
+ * Obté info bàsica d'un xat (privat o grup) — útil per saber el títol.
+ */
+async function getChat(chatId) {
+  if (!isEnabled()) return null;
+  return tg('getChat', { chat_id: chatId });
+}
+
 module.exports = {
   isEnabled,
   getBotUsername,
@@ -146,4 +154,5 @@ module.exports = {
   deleteWebhook,
   getWebhookInfo,
   getUpdates,
+  getChat,
 };

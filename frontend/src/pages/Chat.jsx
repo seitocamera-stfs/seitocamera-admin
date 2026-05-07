@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   MessageCircle, Plus, Send, Hash, Users as UsersIcon, Settings,
   Paperclip, Image as ImageIcon, FileText, Download, Trash2, X,
-  Edit2, Check, Search, ChevronLeft, Loader2, Smile,
+  Edit2, Check, Search, ChevronLeft, Loader2, Smile, Copy,
 } from 'lucide-react';
 import api from '../lib/api';
 import { useApiGet } from '../hooks/useApi';
@@ -714,9 +714,10 @@ function CreateChannelModal({ onClose, onCreated }) {
 }
 
 // =============================================================
-// Members modal
+// Members modal (amb pestanya Telegram bridge)
 // =============================================================
 function MembersModal({ channelId, isAdmin, onClose }) {
+  const [tab, setTab] = useState('members');
   const { data: members, refetch } = useApiGet(`/chat/channels/${channelId}/members`);
   const { data: users } = useApiGet('/users');
   const usersList = Array.isArray(users) ? users : (users?.users || []);
@@ -743,61 +744,251 @@ function MembersModal({ channelId, isAdmin, onClose }) {
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className="bg-card border rounded-lg w-full max-w-md max-h-[85vh] overflow-hidden flex flex-col">
         <div className="p-4 border-b flex items-center justify-between">
-          <h2 className="font-semibold flex items-center gap-2"><UsersIcon size={16} /> Membres</h2>
+          <h2 className="font-semibold flex items-center gap-2">
+            <Settings size={16} /> Configuració del canal
+          </h2>
           <button onClick={onClose} className="text-muted-foreground"><X size={16} /></button>
         </div>
-        <div className="p-3 space-y-1 overflow-y-auto">
-          {(members || []).map(m => (
-            <div key={m.userId} className="flex items-center gap-2 p-1.5 hover:bg-muted/50 rounded text-sm">
-              <div
-                className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-semibold text-white"
-                style={{ background: m.user?.color || '#888' }}
-              >
-                {m.user?.name?.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() || '??'}
-              </div>
-              <span className="flex-1">{m.user?.name}</span>
-              {m.role === 'ADMIN' && <span className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded">Admin</span>}
-              {isAdmin && (
-                <button
-                  onClick={() => handleRemove(m.userId)}
-                  className="text-muted-foreground hover:text-red-500 p-1"
-                >
-                  <X size={12} />
-                </button>
-              )}
-            </div>
-          ))}
+
+        {/* Tabs */}
+        <div className="flex border-b">
+          <button
+            onClick={() => setTab('members')}
+            className={`flex-1 py-2 text-xs font-medium ${tab === 'members' ? 'text-primary border-b-2 border-primary' : 'text-muted-foreground'}`}
+          >
+            <UsersIcon size={12} className="inline mr-1" /> Membres
+          </button>
+          <button
+            onClick={() => setTab('telegram')}
+            className={`flex-1 py-2 text-xs font-medium ${tab === 'telegram' ? 'text-primary border-b-2 border-primary' : 'text-muted-foreground'}`}
+          >
+            <MessageCircle size={12} className="inline mr-1" /> Telegram
+          </button>
         </div>
-        {isAdmin && availableUsers.length > 0 && (
-          <div className="border-t p-3">
-            <button
-              onClick={() => setAdding(!adding)}
-              className="text-xs flex items-center gap-1 text-primary"
-            >
-              <Plus size={12} /> Afegir membre
-            </button>
-            {adding && (
-              <div className="mt-2 space-y-1 max-h-40 overflow-y-auto">
-                {availableUsers.map(u => (
-                  <button
-                    key={u.id}
-                    onClick={() => handleAdd(u.id)}
-                    className="w-full flex items-center gap-2 p-1.5 text-sm hover:bg-muted/50 rounded"
+
+        {tab === 'members' && (
+          <>
+            <div className="p-3 space-y-1 overflow-y-auto flex-1">
+              {(members || []).map(m => (
+                <div key={m.userId} className="flex items-center gap-2 p-1.5 hover:bg-muted/50 rounded text-sm">
+                  <div
+                    className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-semibold text-white"
+                    style={{ background: m.user?.color || '#888' }}
                   >
-                    <div
-                      className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-semibold text-white"
-                      style={{ background: u.color || '#888' }}
+                    {m.user?.name?.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() || '??'}
+                  </div>
+                  <span className="flex-1">{m.user?.name}</span>
+                  {m.role === 'ADMIN' && <span className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded">Admin</span>}
+                  {isAdmin && (
+                    <button
+                      onClick={() => handleRemove(m.userId)}
+                      className="text-muted-foreground hover:text-red-500 p-1"
                     >
-                      {u.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}
-                    </div>
-                    <span>{u.name}</span>
-                  </button>
-                ))}
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            {isAdmin && availableUsers.length > 0 && (
+              <div className="border-t p-3">
+                <button
+                  onClick={() => setAdding(!adding)}
+                  className="text-xs flex items-center gap-1 text-primary"
+                >
+                  <Plus size={12} /> Afegir membre
+                </button>
+                {adding && (
+                  <div className="mt-2 space-y-1 max-h-40 overflow-y-auto">
+                    {availableUsers.map(u => (
+                      <button
+                        key={u.id}
+                        onClick={() => handleAdd(u.id)}
+                        className="w-full flex items-center gap-2 p-1.5 text-sm hover:bg-muted/50 rounded"
+                      >
+                        <div
+                          className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-semibold text-white"
+                          style={{ background: u.color || '#888' }}
+                        >
+                          {u.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}
+                        </div>
+                        <span>{u.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
-          </div>
+          </>
+        )}
+
+        {tab === 'telegram' && (
+          <TelegramBridgePanel channelId={channelId} isAdmin={isAdmin} />
         )}
       </div>
+    </div>
+  );
+}
+
+// =============================================================
+// Telegram bridge — panel dins MembersModal
+// =============================================================
+function TelegramBridgePanel({ channelId, isAdmin }) {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [pulling, setPulling] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const reload = useCallback(async () => {
+    try {
+      const res = await api.get(`/chat/channels/${channelId}/telegram-status`);
+      setStatus(res.data);
+    } catch (err) {
+      console.error('Bridge status error:', err);
+    } finally { setLoading(false); }
+  }, [channelId]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  // Polling mentre hi ha codi pendent
+  useEffect(() => {
+    if (!status?.pendingCode || status.linked) return;
+    const id = setInterval(reload, 3000);
+    return () => clearInterval(id);
+  }, [status?.pendingCode, status?.linked, reload]);
+
+  const handleStart = async () => {
+    setPulling(true);
+    try {
+      await api.post(`/chat/channels/${channelId}/telegram-link/start`);
+      reload();
+    } catch (err) {
+      alert(`Error: ${err.response?.data?.error || err.message}`);
+    } finally { setPulling(false); }
+  };
+
+  const handleUnlink = async () => {
+    if (!confirm('Desvincular el grup de Telegram?')) return;
+    try {
+      await api.post(`/chat/channels/${channelId}/telegram-link/cancel`);
+      reload();
+    } catch (err) { alert(err.response?.data?.error || err.message); }
+  };
+
+  const copy = (text) => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  if (loading) {
+    return <div className="p-6 flex justify-center"><Loader2 size={18} className="animate-spin text-muted-foreground" /></div>;
+  }
+
+  if (!status?.enabled) {
+    return (
+      <div className="p-4 text-xs text-muted-foreground">
+        Telegram bot no està configurat al servidor.
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-4 space-y-3 overflow-y-auto flex-1">
+      {!isAdmin && (
+        <p className="text-xs text-muted-foreground italic">
+          Cal ser admin del canal per gestionar el bridge.
+        </p>
+      )}
+
+      {status.linked && (
+        <div className="bg-green-50 border border-green-200 rounded p-3 text-sm">
+          <p className="font-medium text-green-800">✓ Bridge actiu</p>
+          {status.groupTitle && (
+            <p className="text-xs text-green-700 mt-1">
+              Grup vinculat: <strong>{status.groupTitle}</strong>
+            </p>
+          )}
+          <p className="text-[11px] text-green-600 mt-2">
+            Els missatges es repliquen entre l'app i el grup en les dues direccions.
+          </p>
+          {isAdmin && (
+            <button
+              onClick={handleUnlink}
+              className="mt-3 text-xs text-red-600 hover:underline"
+            >
+              Desvincular grup
+            </button>
+          )}
+        </div>
+      )}
+
+      {!status.linked && status.pendingCode && (
+        <div className="space-y-3">
+          <div className="bg-amber-50 border border-amber-200 rounded p-3">
+            <p className="text-xs text-amber-800 font-medium">Esperant la confirmació al grup de Telegram...</p>
+            <p className="text-[11px] text-amber-700 mt-1">
+              Caduca: {new Date(status.pendingExpires).toLocaleString('ca-ES')}
+            </p>
+          </div>
+
+          <div className="space-y-2 text-xs">
+            <p className="font-medium">Pasos:</p>
+            <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+              <li>Crea un grup a Telegram amb els membres del canal</li>
+              <li>Afegeix el bot <code className="bg-muted px-1 rounded">@{status.botUsername}</code> al grup (com a <strong>admin</strong> recomanat, perquè llegeixi tots els missatges)</li>
+              <li>Envia aquesta comanda al grup:</li>
+            </ol>
+
+            <div className="bg-muted/60 rounded p-2 flex items-center gap-2">
+              <code className="flex-1 text-xs font-mono">/link {status.pendingCode}</code>
+              <button
+                onClick={() => copy(`/link ${status.pendingCode}`)}
+                className="text-muted-foreground hover:text-foreground p-1"
+                title="Copiar"
+              >
+                {copied ? <Check size={12} className="text-green-500" /> : <Copy size={12} />}
+              </button>
+            </div>
+
+            <p className="text-[11px] text-muted-foreground italic">
+              Quan el bot rebi la comanda, vincularà el grup automàticament.
+            </p>
+          </div>
+
+          {isAdmin && (
+            <button onClick={handleUnlink} className="text-xs text-muted-foreground hover:text-red-500">
+              Cancel·lar codi pendent
+            </button>
+          )}
+        </div>
+      )}
+
+      {!status.linked && !status.pendingCode && (
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Aquest canal encara no està vinculat amb cap grup de Telegram.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            El bridge replica missatges en les dues direccions: el que escriviu a l'app arriba al grup, i a l'inrevés.
+          </p>
+          <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-800">
+            <strong>⚠️ Requisit previ:</strong> al BotFather, desactiva el "Group Privacy" del bot
+            (<code className="bg-amber-100 px-1 rounded">/mybots → @{status.botUsername} → Bot Settings → Group Privacy → Turn off</code>),
+            o fes el bot admin del grup. Sense això, el bot només llegirà comandes <code className="bg-amber-100 px-1 rounded">/</code>.
+          </div>
+          {isAdmin && (
+            <button
+              onClick={handleStart}
+              disabled={pulling}
+              className="w-full inline-flex items-center justify-center gap-2 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium px-3 py-2 rounded disabled:opacity-50"
+            >
+              {pulling ? <Loader2 size={14} className="animate-spin" /> : <MessageCircle size={14} />}
+              Connectar grup Telegram
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
