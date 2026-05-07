@@ -660,19 +660,28 @@ async function syncOneProject(rmProject) {
     },
   });
 
-  // Crear tasques predeterminades per al nou projecte
+  // Crear UNA SOLA tasca "Preparació tècnica" amb checklist intern
+  // (abans creàvem 5 tasques, generava massa soroll al llistat global)
   try {
-    await prisma.projectTask.createMany({
-      data: [
-        { projectId: newProject.id, title: 'Backfocus Camera', category: 'TECH', status: 'OP_PENDING' },
-        { projectId: newProject.id, title: 'Col·limar òptiques', category: 'TECH', status: 'OP_PENDING' },
-        { projectId: newProject.id, title: 'Revisar bateries', category: 'TECH', status: 'OP_PENDING' },
-        { projectId: newProject.id, title: 'Linkar teradeks', category: 'TECH', status: 'OP_PENDING' },
-        { projectId: newProject.id, title: 'Posar GPS', category: 'TECH', status: 'OP_PENDING' },
-      ],
+    await prisma.projectTask.create({
+      data: {
+        projectId: newProject.id,
+        title: 'Preparació tècnica',
+        category: 'TECH',
+        status: 'OP_PENDING',
+        checklistItems: {
+          create: [
+            { title: 'Backfocus Camera',  sortOrder: 0 },
+            { title: 'Col·limar òptiques', sortOrder: 1 },
+            { title: 'Revisar bateries',   sortOrder: 2 },
+            { title: 'Linkar teradeks',    sortOrder: 3 },
+            { title: 'Posar GPS',          sortOrder: 4 },
+          ],
+        },
+      },
     });
   } catch (err) {
-    logger.error(`Error creant tasques predeterminades per projecte ${newProject.id}:`, err.message);
+    logger.error(`Error creant tasca predeterminada per projecte ${newProject.id}:`, err.message);
   }
 
   return 'created';

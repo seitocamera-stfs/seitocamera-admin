@@ -106,25 +106,35 @@ router.use((req, res, next) => {
 // Tasques predeterminades per projecte
 // ===========================================
 
-// Tasques hardcoded legacy (fallback si no hi ha plantilles)
-const DEFAULT_PROJECT_TASKS = [
-  { title: 'Backfocus Camera', category: 'TECH' },
-  { title: 'Col·limar òptiques', category: 'TECH' },
-  { title: 'Revisar bateries', category: 'TECH' },
-  { title: 'Linkar teradeks', category: 'TECH' },
-  { title: 'Posar GPS', category: 'TECH' },
+// Tasques hardcoded legacy (fallback si no hi ha plantilles).
+// Es creen com a UNA SOLA tasca "Preparació tècnica" amb els ítems
+// com a checklist intern — així el llistat global de tasques no s'omple
+// de soroll: una sola entrada per projecte, amb el detall dins.
+const DEFAULT_TASK_TITLE = 'Preparació tècnica';
+const DEFAULT_CHECKLIST_ITEMS = [
+  'Backfocus Camera',
+  'Col·limar òptiques',
+  'Revisar bateries',
+  'Linkar teradeks',
+  'Posar GPS',
 ];
 
 async function createDefaultTasks(projectId, createdById = null) {
   try {
-    await prisma.projectTask.createMany({
-      data: DEFAULT_PROJECT_TASKS.map((t) => ({
+    await prisma.projectTask.create({
+      data: {
         projectId,
-        title: t.title,
-        category: t.category,
+        title: DEFAULT_TASK_TITLE,
+        category: 'TECH',
         status: 'OP_PENDING',
         createdById,
-      })),
+        checklistItems: {
+          create: DEFAULT_CHECKLIST_ITEMS.map((title, idx) => ({
+            title,
+            sortOrder: idx,
+          })),
+        },
+      },
     });
   } catch (err) {
     logger.error('Error creant tasques predeterminades:', err.message);
